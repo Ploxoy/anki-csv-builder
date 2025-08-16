@@ -8,6 +8,15 @@ from typing import List, Dict
 from openai import OpenAI
 
 st.set_page_config(page_title="Anki CSV Builder", layout="wide")
+# ==========================
+# Вспомогательные функции
+# ==========================
+
+def sanitize_field(value: str) -> str:
+    if value is None:
+        return ""
+    return str(value).replace("|", "∣").strip()
+
 
 # ==========================
 # Session state (prevents reset on rerun)
@@ -120,6 +129,7 @@ if uploaded_file is not None:
     try:
         file_text = uploaded_file.read().decode("utf-8")
     except UnicodeDecodeError:
+        uploaded_file.seek(0)    
         file_text = uploaded_file.read().decode("utf-16")
     st.session_state.input_data = parse_input(file_text)
 
@@ -140,33 +150,19 @@ def sanitize_field(value: str) -> str:
     # Не допускаем символ '|' в полях CSV
     return str(value).replace("|", "∣").strip()
 
-
 def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float) -> Dict:
-    system_content = (
+    """Совместимо с SDK >=1.0: без response_format. Просим СТРОГИЙ JSON и парсим output_text."""
+    system_instructions = (
         "Ты — опытный лексикограф NL→RU и автор учебных материалов. "
-        "Цель: для каждого слова сгенерировать строгий JSON-объект карточки Anki. "
-        "Требования: 1) одно естественное NL-предложение c cloze: целевое слово в {{c1::…}}. "
-        "Для разделимых глаголов обязателен формат {{c1::stam}} … {{c2::partikel}}; "
-        "2) точный перевод предложения на русский; 3) ровно 3 частотные коллокации, разделитель '; ' ; "
-        "4) короткая дефиниция NL; 5) перевод слова по-русски 1–2 слова; 6) символ '|' запрещён; "
-        "7) никаких фантазийных сочетаний, только естественные и частотные."
+        "Сгенерируй СТРОГО JSON-объект карточки Anki со структурой: "
+        "{woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short}. "
+        "Правила: 1) NL-предложение короткое, естественное; целевое слово в {{c1::…}}; "
+        "для разделимых глаголов: {{c1::stam}} … {{c2::partikel}}. "
+        "2) ru_sentence — точный перевод NL-предложения на русский. "
+        "3) collocaties — РОВНО 3 частотные связки, разделитель '; '. Никаких выдуманных сочетаний. "
+        "4) def_nl — короткая NL-дефиниция. 5) ru_short — 1–2 русских слова. "
+        "6) Символ '|' в текстах не использовать. Верни только JSON, без пояснений."
     )
-
-    schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "woord": {"type": "string"},
-            "cloze_sentence": {"type": "string"},
-            "ru_sentence": {"type": "string"},
-            "collocaties": {"type": "string"},
-            "def_nl": {"type": "string"},
-            "ru_short": {"type": "string"},
-        },
-        "required": [
-            "woord", "cloze_sentence", "ru_sentence", "collocaties", "def_nl", "ru_short"
-        ],
-    }
 
     user_payload = {
         "woord": row.get("woord", "").strip(),
@@ -174,36 +170,25 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float) 
         "ru_short": row.get("ru_short", "").strip(),
     }
 
-    try:
-        # Современный путь (1.60+): форматируем JSON по схеме
-        final = client.responses.create(
-            model=model,
-            input=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-            ],
-            # ВАЖНО: используем format/json_schema, а НЕ response_format
-            format="json_schema",
-            json_schema=schema,
-            temperature=temperature,
-        )
-        parsed = json.loads(final.output_text)
-    except TypeError:
-        # Fallback для более старых SDK: просим вернуть ЧИСТЫЙ JSON и парсим текст
-        final = client.responses.create(
-            model=model,
-            input=[
-                {"role": "system", "content": system_content + " Возвращай СТРОГО JSON без пояснений."},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-            ],
-            temperature=temperature,
-        )
-        text = getattr(final, "output_text", None) or ""
-        # Простой парсер JSON-блока
-        m = re.search(r"\{[\s\S]*\}", text)
-        parsed = json.loads(m.group(0)) if m else {}
+    # Responses API по официальному примеру: instructions + input
+    final = client.responses.create(
+        model=model,
+        instructions=system_instructions,
+        input=(
+            "Пользовательские данные:\n"
+            + json.dumps(user_payload, ensure_ascii=False)
+            + "\nВерни СТРОГО JSON с полями: "
+              "woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short."
+        ),
+        temperature=temperature,
+    )
 
-    # Санитизация полей '|' → '∣'
+    # Достаём текст и вырезаем JSON
+    text = getattr(final, "output_text", "") or ""
+    m = re.search(r"\{[\s\S]*\}", text)
+    parsed = json.loads(m.group(0)) if m else {}
+
+    # Санитизация '|' → '∣'
     def sf(x: str) -> str:
         return (x or "").replace("|", "∣").strip()
 
@@ -232,7 +217,7 @@ if st.session_state.input_data:
 
             for idx, row in enumerate(st.session_state.input_data):
                 try:
-                    card = call_openai_card(client, row)
+                    card = call_openai_card(client, row, model=model, temperature=temperature)
                     st.session_state.results.append(card)
                 except Exception as e:
                     st.error(f"Ошибка при обработке слова '{row.get('woord','?')}': {e}")
