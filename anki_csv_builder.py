@@ -255,10 +255,9 @@ if st.session_state.results:
     preview_df = pd.DataFrame(st.session_state.results)[:20]
     st.dataframe(preview_df, use_container_width=True)
 
-    # CSV буфер
+  # CSV буфер
     csv_buffer = io.StringIO()
-    writer = csv.writer(csv_buffer, delimiter='|', lineterminator='
-')
+    writer = csv.writer(csv_buffer, delimiter='|', lineterminator='\n')
     writer.writerow([
         "NL-слово",
         "Предложение NL (с cloze)",
