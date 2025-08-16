@@ -3,128 +3,292 @@ import pandas as pd
 import re
 import csv
 import io
-from openai import OpenAI
+import json
 from typing import List, Dict
+from openai import OpenAI
 
 st.set_page_config(page_title="Anki CSV Builder", layout="wide")
 
-# --- SIDEBAR ---
+# ==========================
+# Session state (prevents reset on rerun)
+# ==========================
+if "input_data" not in st.session_state:
+    st.session_state.input_data: List[Dict] = []
+if "results" not in st.session_state:
+    st.session_state.results: List[Dict] = []
+
+# ==========================
+# Sidebar: API, model, params
+# ==========================
 st.sidebar.header("🔐 API Settings")
-api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else st.sidebar.text_input("OpenAI API Key", type="password")
+api_key = (
+    st.secrets.get("OPENAI_API_KEY")
+    if "OPENAI_API_KEY" in st.secrets
+    else st.sidebar.text_input("OpenAI API Key", type="password")
+)
 
-model = st.sidebar.selectbox("Model", ["gpt-4o-mini", "gpt-4.1"], index=0)
+model = st.sidebar.selectbox(
+    "Model",
+    ["gpt-4o-mini", "gpt-4.1"],
+    index=0,
+)
+
 temperature = st.sidebar.slider("Temperature", 0.2, 0.8, 0.4, 0.1)
-stream_output = st.sidebar.checkbox("Stream output", value=False)
+stream_output = st.sidebar.checkbox("Stream output (beta)", value=False,
+    help="Streaming в Responses API: финальный JSON будет доступен после завершения стрима")
 
-# --- DEMO DATA ---
+# ==========================
+# Demo data
+# ==========================
 demo_words = [
     {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
     {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
     {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
     {"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
-    {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"}
+    {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
+    {"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
 ]
 
 st.title("📘 Anki CSV Builder — Cloze Cards from Dutch Words")
 
-# --- FILE UPLOAD ---
-uploaded_file = st.file_uploader("Upload een bestand (.txt / .md)", type=["txt", "md"])
+# ==========================
+# Parsers
+# ==========================
 
 def parse_input(text: str) -> List[Dict]:
-    rows = []
+    rows: List[Dict] = []
     lines = text.strip().splitlines()
-    md_table = re.compile(r"\|\s*\*\*(.*?)\*\*\s*\|")
 
-    for line in lines:
-        line = line.strip()
+    for raw in lines:
+        line = raw.strip()
         if not line:
             continue
 
+        # 1) Markdown-таблица: | **woord** | definitie NL | RU |
         if line.startswith("|") and "**" in line:
-            parts = [p.strip().strip("*") for p in line.strip("|").split("|")]
+            parts = [p.strip() for p in line.strip("|").split("|")]
             if len(parts) >= 3:
-                rows.append({"woord": parts[0], "def_nl": parts[1], "ru_short": parts[2]})
-        elif "\t" in line:
-            parts = line.split("\t")
-            if len(parts) == 2:
-                rows.append({"woord": parts[0].strip(), "def_nl": parts[1].strip()})
-        elif " — " in line:
-            parts = line.split(" — ")
-            if len(parts) == 3:
-                rows.append({"woord": parts[0], "def_nl": parts[1], "ru_short": parts[2]})
-            elif len(parts) == 2:
-                rows.append({"woord": parts[0], "def_nl": parts[1]})
-        else:
-            rows.append({"woord": line})
-    return rows
+                woord = re.sub(r"\*", "", parts[0]).strip()
+                def_nl = parts[1].strip()
+                ru_short = parts[2].strip()
+                entry = {"woord": woord}
+                if def_nl:
+                    entry["def_nl"] = def_nl
+                if ru_short:
+                    entry["ru_short"] = ru_short
+                rows.append(entry)
+            continue
 
-# --- INPUT PROCESSING ---
-input_data = []
-if uploaded_file:
-    file_text = uploaded_file.read().decode("utf-8")
-    input_data = parse_input(file_text)
-    st.success(f"✅ Распознано {len(input_data)} слов из файла")
-elif st.button("Try demo"):
-    input_data = demo_words
-    st.success("🔁 Используется демо-набор из 5 слов")
-
-if input_data:
-    st.subheader("🔍 Распознанные строки")
-    st.dataframe(pd.DataFrame(input_data))
-
-    if st.button("Сгенерировать CSV"):
-        client = OpenAI(api_key=api_key)
-
-        result_rows = []
-        progress = st.progress(0.0)
-        total = len(input_data)
-
-        for idx, row in enumerate(input_data):
-            prompt = {
-                "instruction": "Генерируй карточку Anki по образцу (cloze, RU, collocaties, def NL, RU short)",
-                "input": row,
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "woord": {"type": "string"},
-                        "cloze_sentence": {"type": "string"},
-                        "ru_sentence": {"type": "string"},
-                        "collocaties": {"type": "string"},
-                        "def_nl": {"type": "string"},
-                        "ru_short": {"type": "string"}
-                    },
-                    "required": ["woord", "cloze_sentence", "ru_sentence", "collocaties", "def_nl", "ru_short"]
-                }
-            }
-
-            try:
-                response = client.responses.create(
-                    model=model,
-                    input=prompt,
-                    temperature=temperature,
-                    stream=stream_output
-                )
-                result_rows.append(response.output)
-            except Exception as e:
-                st.error(f"Ошибка при обработке слова {row['woord']}: {str(e)}")
+        # 4) TSV: woord 	 def_nl  (2 колонки, без шапки)
+        if "	" in line:
+            tparts = [p.strip() for p in line.split("	")]
+            if len(tparts) == 2:
+                rows.append({"woord": tparts[0], "def_nl": tparts[1]})
                 continue
 
-            progress.progress((idx + 1) / total)
+        # 2) Построчный: woord — def NL — RU  |  woord — def NL
+        if " — " in line:
+            parts = [p.strip() for p in line.split(" — ")]
+            if len(parts) == 3:
+                rows.append({"woord": parts[0], "def_nl": parts[1], "ru_short": parts[2]})
+                continue
+            if len(parts) == 2:
+                rows.append({"woord": parts[0], "def_nl": parts[1]})
+                continue
 
-        # --- OUTPUT ---
-        st.subheader("📋 Предпросмотр карточек")
-        preview_df = pd.DataFrame(result_rows)[:20]
-        st.dataframe(preview_df)
+        # 3) Просто слово
+        rows.append({"woord": line})
 
-        csv_buffer = io.StringIO()
-        writer = csv.writer(csv_buffer, delimiter='|')
-        writer.writerow(["NL-слово", "Предложение NL (с cloze)", "Перевод RU", "Коллокации", "Определение NL", "Перевод слова RU"])
-        for r in result_rows:
-            writer.writerow([r['woord'], r['cloze_sentence'], r['ru_sentence'], r['collocaties'], r['def_nl'], r['ru_short']])
+    return rows
 
-        st.download_button(
-            label="📥 Скачать anki_cards.csv",
-            data=csv_buffer.getvalue(),
-            file_name="anki_cards.csv",
-            mime="text/csv"
+# ==========================
+# File upload + demo button
+# ==========================
+uploaded_file = st.file_uploader("Upload een bestand (.txt / .md)", type=["txt", "md"], accept_multiple_files=False)
+
+col_a, col_b = st.columns([1,1])
+with col_a:
+    if st.button("Try demo", type="secondary"):
+        st.session_state.input_data = demo_words
+        st.toast("🔁 Используется демо-набор из 6 слов", icon="✅")
+with col_b:
+    if st.button("Очистить", type="secondary"):
+        st.session_state.input_data = []
+        st.session_state.results = []
+
+if uploaded_file is not None:
+    try:
+        file_text = uploaded_file.read().decode("utf-8")
+    except UnicodeDecodeError:
+        file_text = uploaded_file.read().decode("utf-16")
+    st.session_state.input_data = parse_input(file_text)
+
+# Предпросмотр входных данных
+if st.session_state.input_data:
+    st.subheader("🔍 Распознанные строки")
+    st.dataframe(pd.DataFrame(st.session_state.input_data), use_container_width=True)
+else:
+    st.info("Загрузите файл или нажмите **Try demo**")
+
+# ==========================
+# Helpers
+# ==========================
+
+def sanitize_field(value: str) -> str:
+    if value is None:
+        return ""
+    # Не допускаем символ '|' в полях CSV
+    return str(value).replace("|", "∣").strip()
+
+
+def call_openai_card(client: OpenAI, row: Dict) -> Dict:
+    # Системные правила (RU для точности требований)
+    system_content = (
+        "Ты — опытный лексикограф NL→RU и автор учебных материалов. "
+        "Цель: для каждого слова сгенерировать строгий JSON-объект карточки Anki. "
+        "Требования: 1) одно естественное NL-предложение c cloze: целевое слово в {{c1::…}}. "
+        "Для разделимых глаголов обязателен формат {{c1::stam}} … {{c2::partikel}}; "
+        "2) точный перевод предложения на русский; 3) ровно 3 частотные коллокации, разделитель '; ' ; "
+        "4) короткая дефиниция NL; 5) перевод слова по-русски 1–2 слова; 6) символ '|' запрещён; "
+        "7) никаких фантазийных сочетаний, только естественные и частотные; 8) стиль современный NL."
+    )
+
+    schema = {
+        "name": "anki_card",
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "woord": {"type": "string"},
+                "cloze_sentence": {"type": "string"},
+                "ru_sentence": {"type": "string"},
+                "collocaties": {
+                    "type": "string",
+                    "description": "Ровно 3 коллокации, соединённые '; '"
+                },
+                "def_nl": {"type": "string"},
+                "ru_short": {"type": "string"}
+            },
+            "required": [
+                "woord", "cloze_sentence", "ru_sentence", "collocaties", "def_nl", "ru_short"
+            ]
+        }
+    }
+
+    user_payload = {
+        "woord": row.get("woord", "").strip(),
+        "def_nl": row.get("def_nl", "").strip(),
+        "ru_short": row.get("ru_short", "").strip(),
+    }
+
+    if stream_output:
+        with client.responses.stream(
+            model=model,
+            input=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": schema,
+                "strict": True,
+            },
+            temperature=temperature,
+        ) as stream:
+            # Можно слушать события при желании; здесь просто ждём финал
+            final = stream.get_final_response()
+            parsed = final.output_parsed
+    else:
+        final = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": schema,
+                "strict": True,
+            },
+            temperature=temperature,
         )
+        parsed = final.output_parsed
+
+    # Санитизация '|' и приведение к схеме
+    card = {
+        "woord": sanitize_field(parsed.get("woord", user_payload["woord"])) ,
+        "cloze_sentence": sanitize_field(parsed.get("cloze_sentence", "")),
+        "ru_sentence": sanitize_field(parsed.get("ru_sentence", "")),
+        "collocaties": sanitize_field(parsed.get("collocaties", "")),
+        "def_nl": sanitize_field(parsed.get("def_nl", user_payload.get("def_nl", ""))),
+        "ru_short": sanitize_field(parsed.get("ru_short", user_payload.get("ru_short", ""))),
+    }
+    return card
+
+# ==========================
+# Generate section
+# ==========================
+if st.session_state.input_data:
+    if st.button("Сгенерировать CSV", type="primary"):
+        if not api_key:
+            st.error("Укажи OPENAI_API_KEY в Secrets или в поле слева.")
+        else:
+            client = OpenAI(api_key=api_key)
+            st.session_state.results = []
+            progress = st.progress(0)
+            total = len(st.session_state.input_data)
+
+            for idx, row in enumerate(st.session_state.input_data):
+                try:
+                    card = call_openai_card(client, row)
+                    st.session_state.results.append(card)
+                except Exception as e:
+                    st.error(f"Ошибка при обработке слова '{row.get('woord','?')}': {e}")
+                finally:
+                    progress.progress(int((idx + 1) / max(total,1) * 100))
+
+# ==========================
+# Preview & download
+# ==========================
+if st.session_state.results:
+    st.subheader("📋 Предпросмотр карточек (первые 20)")
+    preview_df = pd.DataFrame(st.session_state.results)[:20]
+    st.dataframe(preview_df, use_container_width=True)
+
+    # CSV буфер
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer, delimiter='|', lineterminator='
+')
+    writer.writerow([
+        "NL-слово",
+        "Предложение NL (с cloze)",
+        "Перевод RU",
+        "Коллокации",
+        "Определение NL",
+        "Перевод слова RU",
+    ])
+    for r in st.session_state.results:
+        writer.writerow([
+            r.get('woord',''),
+            r.get('cloze_sentence',''),
+            r.get('ru_sentence',''),
+            r.get('collocaties',''),
+            r.get('def_nl',''),
+            r.get('ru_short',''),
+        ])
+
+    st.download_button(
+        label="📥 Скачать anki_cards.csv",
+        data=csv_buffer.getvalue(),
+        file_name="anki_cards.csv",
+        mime="text/csv",
+    )
+
+# ==========================
+# Footer help
+# ==========================
+st.caption(
+    "Советы: 1) добавляй качественные NL-дефиниции во вход — это улучшит примеры; "
+    "2) если видишь странные коллокации — перезапусти генерацию для конкретного слова, "
+    "3) символ '|' в текстах заменяется на '∣'."
+)
