@@ -141,8 +141,7 @@ def sanitize_field(value: str) -> str:
     return str(value).replace("|", "∣").strip()
 
 
-def call_openai_card(client: OpenAI, row: Dict) -> Dict:
-    # Системные правила (RU для точности требований)
+def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float) -> Dict:
     system_content = (
         "Ты — опытный лексикограф NL→RU и автор учебных материалов. "
         "Цель: для каждого слова сгенерировать строгий JSON-объект карточки Anki. "
@@ -150,29 +149,23 @@ def call_openai_card(client: OpenAI, row: Dict) -> Dict:
         "Для разделимых глаголов обязателен формат {{c1::stam}} … {{c2::partikel}}; "
         "2) точный перевод предложения на русский; 3) ровно 3 частотные коллокации, разделитель '; ' ; "
         "4) короткая дефиниция NL; 5) перевод слова по-русски 1–2 слова; 6) символ '|' запрещён; "
-        "7) никаких фантазийных сочетаний, только естественные и частотные; 8) стиль современный NL."
+        "7) никаких фантазийных сочетаний, только естественные и частотные."
     )
 
     schema = {
-        "name": "anki_card",
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "woord": {"type": "string"},
-                "cloze_sentence": {"type": "string"},
-                "ru_sentence": {"type": "string"},
-                "collocaties": {
-                    "type": "string",
-                    "description": "Ровно 3 коллокации, соединённые '; '"
-                },
-                "def_nl": {"type": "string"},
-                "ru_short": {"type": "string"}
-            },
-            "required": [
-                "woord", "cloze_sentence", "ru_sentence", "collocaties", "def_nl", "ru_short"
-            ]
-        }
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "woord": {"type": "string"},
+            "cloze_sentence": {"type": "string"},
+            "ru_sentence": {"type": "string"},
+            "collocaties": {"type": "string"},
+            "def_nl": {"type": "string"},
+            "ru_short": {"type": "string"},
+        },
+        "required": [
+            "woord", "cloze_sentence", "ru_sentence", "collocaties", "def_nl", "ru_short"
+        ],
     }
 
     user_payload = {
@@ -181,49 +174,48 @@ def call_openai_card(client: OpenAI, row: Dict) -> Dict:
         "ru_short": row.get("ru_short", "").strip(),
     }
 
-    if stream_output:
-        with client.responses.stream(
-            model=model,
-            input=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}
-            ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": schema,
-                "strict": True,
-            },
-            temperature=temperature,
-        ) as stream:
-            # Можно слушать события при желании; здесь просто ждём финал
-            final = stream.get_final_response()
-            parsed = final.output_parsed
-    else:
+    try:
+        # Современный путь (1.60+): форматируем JSON по схеме
         final = client.responses.create(
             model=model,
             input=[
                 {"role": "system", "content": system_content},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
             ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": schema,
-                "strict": True,
-            },
+            # ВАЖНО: используем format/json_schema, а НЕ response_format
+            format="json_schema",
+            json_schema=schema,
             temperature=temperature,
         )
-        parsed = final.output_parsed
+        parsed = json.loads(final.output_text)
+    except TypeError:
+        # Fallback для более старых SDK: просим вернуть ЧИСТЫЙ JSON и парсим текст
+        final = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": system_content + " Возвращай СТРОГО JSON без пояснений."},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+            ],
+            temperature=temperature,
+        )
+        text = getattr(final, "output_text", None) or ""
+        # Простой парсер JSON-блока
+        m = re.search(r"\{[\s\S]*\}", text)
+        parsed = json.loads(m.group(0)) if m else {}
 
-    # Санитизация '|' и приведение к схеме
-    card = {
-        "woord": sanitize_field(parsed.get("woord", user_payload["woord"])) ,
-        "cloze_sentence": sanitize_field(parsed.get("cloze_sentence", "")),
-        "ru_sentence": sanitize_field(parsed.get("ru_sentence", "")),
-        "collocaties": sanitize_field(parsed.get("collocaties", "")),
-        "def_nl": sanitize_field(parsed.get("def_nl", user_payload.get("def_nl", ""))),
-        "ru_short": sanitize_field(parsed.get("ru_short", user_payload.get("ru_short", ""))),
+    # Санитизация полей '|' → '∣'
+    def sf(x: str) -> str:
+        return (x or "").replace("|", "∣").strip()
+
+    return {
+        "woord": sf(parsed.get("woord", user_payload["woord"])),
+        "cloze_sentence": sf(parsed.get("cloze_sentence", "")),
+        "ru_sentence": sf(parsed.get("ru_sentence", "")),
+        "collocaties": sf(parsed.get("collocaties", "")),
+        "def_nl": sf(parsed.get("def_nl", user_payload.get("def_nl", ""))),
+        "ru_short": sf(parsed.get("ru_short", user_payload.get("ru_short", ""))),
     }
-    return card
+
 
 # ==========================
 # Generate section
