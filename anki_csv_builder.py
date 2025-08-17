@@ -201,10 +201,10 @@ _guid_label = st.sidebar.selectbox(
     "Anki GUID policy",
     ["stable (update/skip existing)", "unique per export (import as new)"],
     index=0,
-    help=("stable: те же заметки распознаются как уже существующие/обновляемые;
-"
+    help=("stable: те же заметки распознаются как уже существующие/обновляемые\n"
           "unique: каждый экспорт получает новый GUID — Anki считает их новыми заметками."),
 )
+
 st.session_state["csv_with_header"] = csv_with_header
 st.session_state["anki_guid_policy"] = "unique" if _guid_label.startswith("unique") else "stable"
 
@@ -500,8 +500,8 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float, 
 def generate_csv(results: List[Dict], L1_code: str, include_header: bool = True) -> str:
     meta = L1_LANGS[L1_code]
     csv_buffer = io.StringIO()
-    writer = csv.writer(csv_buffer, delimiter='|', lineterminator='
-')
+    writer = csv.writer(csv_buffer, delimiter='|', lineterminator='\n')
+
     if include_header:
         writer.writerow([
             "NL-слово",
