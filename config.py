@@ -168,3 +168,4 @@ def get_block_substrings() -> Tuple[str, ...]:
 def get_allowed_prefixes() -> Tuple[str, ...]:
     """Возвращает кортеж разрешенных префиксов"""
     return _ALLOWED_PREFIXES
+
