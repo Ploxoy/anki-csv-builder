@@ -191,6 +191,23 @@ L1_meta = L1_LANGS[L1_code]
 TMIN, TMAX, TDEF, TSTEP = CFG_TMIN, CFG_TMAX, CFG_TDEF, CFG_TSTEP
 temperature = st.sidebar.slider("Temperature", TMIN, TMAX, TDEF, TSTEP)
 
+# CSV/Anki export options
+csv_with_header = st.sidebar.checkbox(
+    "CSV: включить строку заголовка",
+    value=True,
+    help="Снимите галочку, если Anki импортирует первую строку как запись."
+)
+_guid_label = st.sidebar.selectbox(
+    "Anki GUID policy",
+    ["stable (update/skip existing)", "unique per export (import as new)"],
+    index=0,
+    help=("stable: те же заметки распознаются как уже существующие/обновляемые;
+"
+          "unique: каждый экспорт получает новый GUID — Anki считает их новыми заметками."),
+)
+st.session_state["csv_with_header"] = csv_with_header
+st.session_state["anki_guid_policy"] = "unique" if _guid_label.startswith("unique") else "stable"
+
 # Сохраняем выбор для доступа внутри функций
 st.session_state["prompt_profile"] = profile
 st.session_state["level"] = level
@@ -480,18 +497,20 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float, 
 # CSV генерация (динамическая шапка под L1)
 # ==========================
 
-def generate_csv(results: List[Dict], L1_code: str) -> str:
+def generate_csv(results: List[Dict], L1_code: str, include_header: bool = True) -> str:
     meta = L1_LANGS[L1_code]
     csv_buffer = io.StringIO()
-    writer = csv.writer(csv_buffer, delimiter='|', lineterminator='\n')
-    writer.writerow([
-        "NL-слово",
-        "Предложение NL (с cloze)",
-        f"{meta['csv_translation']} {meta['label']}",
-        "Коллокации (NL)",
-        "Определение NL",
-        f"{meta['csv_gloss']} {meta['label']}",
-    ])
+    writer = csv.writer(csv_buffer, delimiter='|', lineterminator='
+')
+    if include_header:
+        writer.writerow([
+            "NL-слово",
+            "Предложение NL (с cloze)",
+            f"{meta['csv_translation']} {meta['label']}",
+            "Коллокации (NL)",
+            "Определение NL",
+            f"{meta['csv_gloss']} {meta['label']}",
+        ])
     for r in results:
         writer.writerow([
             r.get('L2_word',''),
@@ -614,7 +633,18 @@ img{ max-width:100%; height:auto; }
 """.strip()
 
 
-def build_anki_package(cards: List[Dict], L1_label: str) -> bytes:
+def _compute_guid(c: Dict, policy: str, run_id: str) -> str:
+    base = f"{c.get('L2_word','')}|{c.get('L2_cloze','')}"
+    if policy == "unique":
+        base = base + "|" + run_id
+    try:
+        import genanki as _g
+        return _g.guid_for(base)
+    except Exception:
+        # Fallback: короткий SHA1
+        return hashlib.sha1(base.encode('utf-8')).hexdigest()[:10]
+
+def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_id: str) -> bytes:
     if not HAS_GENANKI:
         raise RuntimeError("genanki is not installed. Add 'genanki' to requirements.txt and redeploy.")
 
@@ -659,6 +689,7 @@ def build_anki_package(cards: List[Dict], L1_label: str) -> bytes:
                 c.get("L1_gloss", ""),
                 c.get("L1_hint", ""),
             ],
+            guid=_compute_guid(c, guid_policy, run_id),
             tags=list({
                 f"CEFR::{st.session_state.get('level','')}",
                 f"profile::{st.session_state.get('prompt_profile','')}",
@@ -683,6 +714,8 @@ if st.session_state.input_data:
             st.error("Укажи OPENAI_API_KEY в Secrets или в поле слева.")
         else:
             client = OpenAI(api_key=API_KEY)
+            # Запоминаем run_id для GUID'ов в этом прогоне
+            st.session_state.anki_run_id = st.session_state.get("anki_run_id") or str(int(time.time()))
             st.session_state.results = []
             st.session_state.model_id = model
             total = len(st.session_state.input_data)
@@ -710,7 +743,7 @@ if st.session_state.results:
     st.dataframe(preview_df, use_container_width=True)
 
     # CSV download
-    csv_data = generate_csv(st.session_state.results, L1_code)
+    csv_data = generate_csv(st.session_state.results, L1_code, include_header=st.session_state.get('csv_with_header', True))
     st.download_button(
         label="📥 Скачать anki_cards.csv",
         data=csv_data,
@@ -721,7 +754,12 @@ if st.session_state.results:
     # APKG download
     if HAS_GENANKI:
         try:
-            anki_bytes = build_anki_package(st.session_state.results, L1_label=L1_meta["label"])
+            anki_bytes = build_anki_package(
+                st.session_state.results,
+                L1_label=L1_meta["label"],
+                guid_policy=st.session_state.get("anki_guid_policy", "stable"),
+                run_id=st.session_state.get("anki_run_id", str(int(time.time())))
+            )
             st.download_button(
                 label="🧩 Скачать колоду Anki (.apkg)",
                 data=anki_bytes,
