@@ -4,52 +4,22 @@ import re
 import csv
 import io
 import json
+import time
 from typing import List, Dict
 from openai import OpenAI
-# ==========================
-# Модели: дефолтный список + динамическая подгрузка из API
-# ==========================
-
-
-DEFAULT_MODELS: List[str] = [
-    "gpt-5",
-    "gpt-5-mini",
-    "gpt-5-nano",
-    "gpt-4.1",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "o3-mini",
-]
-
-_PREFERRED_ORDER = {  # чем меньше число — тем выше в списке
-    "gpt-5": 0,
-    "gpt-5-mini": 1,
-    "gpt-5-nano": 2,
-    "gpt-4.1": 3,
-    "gpt-4o": 4,
-    "gpt-4o-mini": 5,
-    "o3": 6,
-    "o3-mini": 7,
-}
-# Модели, которые исключаем по подстроке в ID (нам нужен именно текст-генератор)
-_BLOCK_SUBSTRINGS = (
-    "audio", "realtime",           # gpt-4o-audio-*, gpt-4o-realtime-*
-    "embed", "embedding",          # text-embedding-*
-    "whisper", "asr", "transcribe","speech", "tts",  # ASR/TTS
-    "moderation",                  # модерация
-    "search",                      # поисковые/вспомогательные
-    "vision", "vision-preview",    # чисто визуальные/превью
-    "distill", "distilled",        # дистиллированные спец-модели
-    "batch", "preview"             # служебные/превью/батчевые
+from config import (
+    DEFAULT_MODELS, get_preferred_order, get_block_substrings, get_allowed_prefixes,
+    PROMPT_SYSTEM, DEMO_WORDS, PAGE_TITLE, PAGE_LAYOUT,
+    TEMPERATURE_MIN, TEMPERATURE_MAX, TEMPERATURE_DEFAULT, TEMPERATURE_STEP,
+    CSV_DELIMITER, CSV_LINETERMINATOR, PREVIEW_LIMIT, API_REQUEST_DELAY,
+    CSV_HEADERS, MESSAGES
 )
-
-# Разрешённые семейства (по префиксу) для текстовой генерации
-_ALLOWED_PREFIXES = ("gpt-5", "gpt-4.1", "gpt-4o", "o3")
 
 
 
 def _sort_key(model_id: str) -> tuple:
-    for k, rank in _PREFERRED_ORDER.items():
+    preferred_order = get_preferred_order()
+    for k, rank in preferred_order.items():
         if model_id.startswith(k):
             return (rank, model_id)
     return (999, model_id)
@@ -61,10 +31,12 @@ def get_model_options(api_key: str | None) -> List[str]:
         client = OpenAI(api_key=api_key)
         models = client.models.list()
         ids = []
+        allowed_prefixes = get_allowed_prefixes()
+        block_substrings = get_block_substrings()
         for m in getattr(models, "data", []) or []:
             mid = getattr(m, "id", "")
-            if any(mid.startswith(p) for p in _ALLOWED_PREFIXES) \
-               and not any(b in mid for b in _BLOCK_SUBSTRINGS):
+            if any(mid.startswith(p) for p in allowed_prefixes) \
+               and not any(b in mid for b in block_substrings):
                 ids.append(mid)
         if not ids:
             return DEFAULT_MODELS
@@ -73,47 +45,10 @@ def get_model_options(api_key: str | None) -> List[str]:
         return DEFAULT_MODELS
 
 
-# ===== Усиленный системный промпт для устойчивого заполнения всех полей =====
-PROMPT_SYSTEM = (
-    "Ты — опытный лексикограф NL→RU и автор учебных материалов. "
-    "Сгенерируй СТРОГО JSON-объект карточки Anki со структурой: "
-    "{woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short}.\n"
-    "ОБЩИЕ ПРАВИЛА (ОЧЕНЬ ВАЖНО):\n"
-    "• Верни ТОЛЬКО JSON БЕЗ пояснений и форматирования.\n"
-    "• НИ ОДНО поле не пустое. Запрещены пустые строки.\n"
-    "• Символ '|' в текстах запрещён.\n"
-    "• Если дано def_nl — строго следуй ему; не меняй базовое значение слова.\n"
-    "• Сохраняй часть речи: ru_short должен соответствовать части речи слова "
-    "(глагол→инфинитив; существительное→существительное; прилагательное→прилагательное).\n"
-    "• ru_sentence — ТОЧНЫЙ перевод NL-предложения, без перефраза.\n"
-    "• cloze_sentence — одно короткое естественное NL-предложение (8–14 слов, настоящее время, "
-    "без имён/цифр/кавычек); целевое слово внутри {{c1::…}}.\n"
-    "  Если слово — разделимый глагол: {{c1::stam}} … {{c2::partikel}}. Иначе только {{c1::…}}.\n"
-    "• collocaties — РОВНО 3 частотные связки, разделитель '; ' (точка с запятой и пробел).\n"
-    "  Каждая связка — 2–3 слова с целевым словом в естественной форме. Нельзя: бессмысленные пары "
-    "(например, 'een grote caissière'), редкие/книжные, имена собственные.\n"
-    "• Избегай редкой лексики; используй A2–B1 вокруг целевого слова.\n\n"
-    "ФОРМАТ ВЫВОДА: один JSON-объект с ключами: woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short.\n\n"
-    "ПРИМЕРЫ (стиль, НЕ копируй слова):\n"
-    "// Существительное\n"
-    "{\"woord\": \"boodschap\", \"cloze_sentence\": \"Hij doet elke dag de {{c1::boodschap}}.\", "
-    "\"ru_sentence\": \"Он делает покупки каждый день.\", "
-    "\"collocaties\": \"boodschappen doen; een boodschap doorgeven; een duidelijke boodschap\", "
-    "\"def_nl\": \"iets wat je wilt zeggen of inkopen die je doet\", \"ru_short\": \"покупка; послание\"}\n"
-    "// Разделимый глагол\n"
-    "{\"woord\": \"opruimen\", \"cloze_sentence\": \"Na het eten {{c1::ruimt}} hij de tafel {{c2::op}}.\", "
-    "\"ru_sentence\": \"После еды он убирает со стола.\", "
-    "\"collocaties\": \"de kamer opruimen; speelgoed opruimen; netjes opruimen\", "
-    "\"def_nl\": \"iets op zijn plaats leggen zodat het netjes is\", \"ru_short\": \"убирать\"}\n"
-    "// Прилагательное\n"
-    "{\"woord\": \"streng\", \"cloze_sentence\": \"De docent is vandaag {{c1::streng}}.\", "
-    "\"ru_sentence\": \"Преподаватель сегодня строгий.\", "
-    "\"collocaties\": \"strenge regels; een strenge docent; streng optreden\", "
-    "\"def_nl\": \"met veel eisen en weinig toelating\", \"ru_short\": \"строгий\"}"
-)
+# Системный промпт импортируется из config.py
 
 
-st.set_page_config(page_title="Anki CSV Builder", layout="wide")
+st.set_page_config(page_title=PAGE_TITLE, layout=PAGE_LAYOUT)
 # ==========================
 # Вспомогательные функции
 # ==========================
@@ -160,36 +95,26 @@ model = st.sidebar.selectbox(
     "Model",
     options,
     index=0,
-    help="Лучшее качество — gpt-5 (если доступен); баланс — gpt-4.1; быстрее/дешевле — gpt-4o / gpt-5-mini."
+    help=MESSAGES["help_temperature"]
 )
 if not _should_pass_temperature(model):
-    st.sidebar.caption("Температура недоступна для этой модели; она будет проигнорирована.")
+    st.sidebar.caption(MESSAGES["temperature_unavailable"])
 
 
 # (необязательно) точный ID снапшота модели
-custom = st.sidebar.text_input("Custom model id (optional)", placeholder="например, gpt-5-2025-08-07")
+custom = st.sidebar.text_input("Custom model id (optional)", placeholder=MESSAGES["placeholder_custom_model"])
 if custom.strip():
     model = custom.strip()
 
 
-temperature = st.sidebar.slider("Temperature", 0.2, 0.8, 0.4, 0.1)
+temperature = st.sidebar.slider("Temperature", TEMPERATURE_MIN, TEMPERATURE_MAX, TEMPERATURE_DEFAULT, TEMPERATURE_STEP)
 
 
 
 stream_output = st.sidebar.checkbox("Stream output (beta)", value=False,
-    help="Streaming в Responses API: финальный JSON будет доступен после завершения стрима")
+    help=MESSAGES["help_stream"])
 
-# ==========================
-# Demo data
-# ==========================
-demo_words = [
-    {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
-    {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
-    {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
-    {"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
-    {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
-    {"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
-]
+# Демо-данные импортируются из config.py
 
 st.title("📘 Anki CSV Builder — Cloze Cards from Dutch Words")
 
@@ -251,8 +176,8 @@ uploaded_file = st.file_uploader("Upload een bestand (.txt / .md)", type=["txt",
 col_a, col_b = st.columns([1,1])
 with col_a:
     if st.button("Try demo", type="secondary"):
-        st.session_state.input_data = demo_words
-        st.toast("🔁 Используется демо-набор из 6 слов", icon="✅")
+        st.session_state.input_data = DEMO_WORDS
+        st.toast(MESSAGES["demo_loaded"], icon="✅")
 with col_b:
     if st.button("Очистить", type="secondary"):
         st.session_state.input_data = []
@@ -342,7 +267,7 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float) 
 if st.session_state.input_data:
     if st.button("Сгенерировать CSV", type="primary"):
         if not api_key:
-            st.error("Укажи OPENAI_API_KEY в Secrets или в поле слева.")
+            st.error(MESSAGES["no_api_key"])
         else:
             client = OpenAI(api_key=api_key)
             st.session_state.results = []
@@ -350,6 +275,8 @@ if st.session_state.input_data:
             total = len(st.session_state.input_data)
 
             for idx, row in enumerate(st.session_state.input_data):
+                if idx > 0:  # не ждем перед первым запросом
+                    time.sleep(API_REQUEST_DELAY)
                 try:
                     card = call_openai_card(client, row, model=model, temperature=temperature)
                     st.session_state.results.append(card)
@@ -362,21 +289,14 @@ if st.session_state.input_data:
 # Preview & download
 # ==========================
 if st.session_state.results:
-    st.subheader("📋 Предпросмотр карточек (первые 20)")
-    preview_df = pd.DataFrame(st.session_state.results)[:20]
+    st.subheader(f"📋 Предпросмотр карточек (первые {PREVIEW_LIMIT})")
+    preview_df = pd.DataFrame(st.session_state.results)[:PREVIEW_LIMIT]
     st.dataframe(preview_df, use_container_width=True)
 
   # CSV буфер
     csv_buffer = io.StringIO()
-    writer = csv.writer(csv_buffer, delimiter='|', lineterminator='\n')
-    writer.writerow([
-        "NL-слово",
-        "Предложение NL (с cloze)",
-        "Перевод RU",
-        "Коллокации",
-        "Определение NL",
-        "Перевод слова RU",
-    ])
+    writer = csv.writer(csv_buffer, delimiter=CSV_DELIMITER, lineterminator=CSV_LINETERMINATOR)
+    writer.writerow(CSV_HEADERS)
     for r in st.session_state.results:
         writer.writerow([
             r.get('woord',''),
@@ -397,8 +317,4 @@ if st.session_state.results:
 # ==========================
 # Footer help
 # ==========================
-st.caption(
-    "Советы: 1) добавляй качественные NL-дефиниции во вход — это улучшит примеры; "
-    "2) если видишь странные коллокации — перезапусти генерацию для конкретного слова, "
-    "3) символ '|' в текстах заменяется на '∣'."
-)
+st.caption(MESSAGES["footer_tips"])
