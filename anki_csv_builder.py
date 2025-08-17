@@ -7,6 +7,46 @@ import json
 from typing import List, Dict
 from openai import OpenAI
 
+# ===== Усиленный системный промпт для устойчивого заполнения всех полей =====
+PROMPT_SYSTEM = (
+    "Ты — опытный лексикограф NL→RU и автор учебных материалов. "
+    "Сгенерируй СТРОГО JSON-объект карточки Anki со структурой: "
+    "{woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short}.\n"
+    "ОБЩИЕ ПРАВИЛА (ОЧЕНЬ ВАЖНО):\n"
+    "• Верни ТОЛЬКО JSON БЕЗ пояснений и форматирования.\n"
+    "• НИ ОДНО поле не пустое. Запрещены пустые строки.\n"
+    "• Символ '|' в текстах запрещён.\n"
+    "• Если дано def_nl — строго следуй ему; не меняй базовое значение слова.\n"
+    "• Сохраняй часть речи: ru_short должен соответствовать части речи слова "
+    "(глагол→инфинитив; существительное→существительное; прилагательное→прилагательное).\n"
+    "• ru_sentence — ТОЧНЫЙ перевод NL-предложения, без перефраза.\n"
+    "• cloze_sentence — одно короткое естественное NL-предложение (8–14 слов, настоящее время, "
+    "без имён/цифр/кавычек); целевое слово внутри {{c1::…}}.\n"
+    "  Если слово — разделимый глагол: {{c1::stam}} … {{c2::partikel}}. Иначе только {{c1::…}}.\n"
+    "• collocaties — РОВНО 3 частотные связки, разделитель '; ' (точка с запятой и пробел).\n"
+    "  Каждая связка — 2–3 слова с целевым словом в естественной форме. Нельзя: бессмысленные пары "
+    "(например, 'een grote caissière'), редкие/книжные, имена собственные.\n"
+    "• Избегай редкой лексики; используй A2–B1 вокруг целевого слова.\n\n"
+    "ФОРМАТ ВЫВОДА: один JSON-объект с ключами: woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short.\n\n"
+    "ПРИМЕРЫ (стиль, НЕ копируй слова):\n"
+    "// Существительное\n"
+    "{\"woord\": \"boodschap\", \"cloze_sentence\": \"Hij doet elke dag de {{c1::boodschap}}.\", "
+    "\"ru_sentence\": \"Он делает покупки каждый день.\", "
+    "\"collocaties\": \"boodschappen doen; een boodschap doorgeven; een duidelijke boodschap\", "
+    "\"def_nl\": \"iets wat je wilt zeggen of inkopen die je doet\", \"ru_short\": \"покупка; послание\"}\n"
+    "// Разделимый глагол\n"
+    "{\"woord\": \"opruimen\", \"cloze_sentence\": \"Na het eten {{c1::ruimt}} hij de tafel {{c2::op}}.\", "
+    "\"ru_sentence\": \"После еды он убирает со стола.\", "
+    "\"collocaties\": \"de kamer opruimen; speelgoed opruimen; netjes opruimen\", "
+    "\"def_nl\": \"iets op zijn plaats leggen zodat het netjes is\", \"ru_short\": \"убирать\"}\n"
+    "// Прилагательное\n"
+    "{\"woord\": \"streng\", \"cloze_sentence\": \"De docent is vandaag {{c1::streng}}.\", "
+    "\"ru_sentence\": \"Преподаватель сегодня строгий.\", "
+    "\"collocaties\": \"strenge regels; een strenge docent; streng optreden\", "
+    "\"def_nl\": \"met veel eisen en weinig toelating\", \"ru_short\": \"строгий\"}"
+)
+
+
 st.set_page_config(page_title="Anki CSV Builder", layout="wide")
 # ==========================
 # Вспомогательные функции
@@ -36,11 +76,20 @@ api_key = (
     else st.sidebar.text_input("OpenAI API Key", type="password")
 )
 
+# динамически получаем доступные модели (если ключ не задан — вернутся разумные дефолты)
+options = get_model_options(api_key)
 model = st.sidebar.selectbox(
     "Model",
-    ["gpt-4o-mini", "gpt-4.1"],
+    options,
     index=0,
+    help="Лучшее качество — gpt-5 (если доступен); баланс — gpt-4.1; быстрее/дешевле — gpt-4o / gpt-5-mini."
 )
+
+# (необязательно) поле для ручного ввода кастомного снапшота модели
+custom = st.sidebar.text_input("Custom model id (optional)", placeholder="например, gpt-5-2025-08-07")
+if custom.strip():
+    model = custom.strip()
+
 
 temperature = st.sidebar.slider("Temperature", 0.2, 0.8, 0.4, 0.1)
 stream_output = st.sidebar.checkbox("Stream output (beta)", value=False,
@@ -152,17 +201,7 @@ def sanitize_field(value: str) -> str:
 
 def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float) -> Dict:
     """Совместимо с SDK >=1.0: без response_format. Просим СТРОГИЙ JSON и парсим output_text."""
-    system_instructions = (
-        "Ты — опытный лексикограф NL→RU и автор учебных материалов. "
-        "Сгенерируй СТРОГО JSON-объект карточки Anki со структурой: "
-        "{woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short}. "
-        "Правила: 1) NL-предложение короткое, естественное; целевое слово в {{c1::…}}; "
-        "для разделимых глаголов: {{c1::stam}} … {{c2::partikel}}. "
-        "2) ru_sentence — точный перевод NL-предложения на русский. "
-        "3) collocaties — РОВНО 3 частотные связки, разделитель '; '. Никаких выдуманных сочетаний. "
-        "4) def_nl — короткая NL-дефиниция. 5) ru_short — 1–2 русских слова. "
-        "6) Символ '|' в текстах не использовать. Верни только JSON, без пояснений."
-    )
+    system_instructions = PROMPT_SYSTEM
 
     user_payload = {
         "woord": row.get("woord", "").strip(),
