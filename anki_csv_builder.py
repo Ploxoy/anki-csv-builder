@@ -9,7 +9,7 @@ from openai import OpenAI
 # ==========================
 # Модели: дефолтный список + динамическая подгрузка из API
 # ==========================
-from typing import List
+
 
 DEFAULT_MODELS: List[str] = [
     "gpt-5",
@@ -31,6 +31,22 @@ _PREFERRED_ORDER = {  # чем меньше число — тем выше в с
     "o3": 6,
     "o3-mini": 7,
 }
+# Модели, которые исключаем по подстроке в ID (нам нужен именно текст-генератор)
+_BLOCK_SUBSTRINGS = (
+    "audio", "realtime",           # gpt-4o-audio-*, gpt-4o-realtime-*
+    "embed", "embedding",          # text-embedding-*
+    "whisper", "asr", "transcribe","speech", "tts",  # ASR/TTS
+    "moderation",                  # модерация
+    "search",                      # поисковые/вспомогательные
+    "vision", "vision-preview",    # чисто визуальные/превью
+    "distill", "distilled",        # дистиллированные спец-модели
+    "batch", "preview"             # служебные/превью/батчевые
+)
+
+# Разрешённые семейства (по префиксу) для текстовой генерации
+_ALLOWED_PREFIXES = ("gpt-5", "gpt-4.1", "gpt-4o", "o3")
+
+
 
 def _sort_key(model_id: str) -> tuple:
     for k, rank in _PREFERRED_ORDER.items():
@@ -39,8 +55,6 @@ def _sort_key(model_id: str) -> tuple:
     return (999, model_id)
 
 def get_model_options(api_key: str | None) -> List[str]:
-    """Вернёт список доступных ID моделей. Сначала пытаемся спросить у API, иначе — дефолт."""
-    prefixes = ("gpt-5", "gpt-4.1", "gpt-4o", "o3")
     if not api_key:
         return DEFAULT_MODELS
     try:
@@ -49,13 +63,15 @@ def get_model_options(api_key: str | None) -> List[str]:
         ids = []
         for m in getattr(models, "data", []) or []:
             mid = getattr(m, "id", "")
-            if any(mid.startswith(p) for p in prefixes):
+            if any(mid.startswith(p) for p in _ALLOWED_PREFIXES) \
+               and not any(b in mid for b in _BLOCK_SUBSTRINGS):
                 ids.append(mid)
         if not ids:
             return DEFAULT_MODELS
         return sorted(set(ids), key=_sort_key)
     except Exception:
         return DEFAULT_MODELS
+
 
 # ===== Усиленный системный промпт для устойчивого заполнения всех полей =====
 PROMPT_SYSTEM = (
@@ -107,6 +123,20 @@ def sanitize_field(value: str) -> str:
         return ""
     return str(value).replace("|", "∣").strip()
 
+def _should_pass_temperature(model_id: str) -> bool:
+    """
+    Эвристика: не передавать temperature в семейства, где параметр не поддерживается.
+    Плюс учитываем то, что уже выучили на рантайме (session_state.no_temp_models).
+    """
+    no_temp = st.session_state.get("no_temp_models", set())
+    if model_id in no_temp:
+        return False
+    # известные семейства без поддержки temperature в Responses API
+    if model_id.startswith(("gpt-5", "o3")):
+        return False
+    return True
+
+
 
 # ==========================
 # Session state (prevents reset on rerun)
@@ -132,11 +162,15 @@ model = st.sidebar.selectbox(
     index=0,
     help="Лучшее качество — gpt-5 (если доступен); баланс — gpt-4.1; быстрее/дешевле — gpt-4o / gpt-5-mini."
 )
+if not _should_pass_temperature(model):
+    st.sidebar.caption("Температура недоступна для этой модели; она будет проигнорирована.")
+
 
 # (необязательно) точный ID снапшота модели
 custom = st.sidebar.text_input("Custom model id (optional)", placeholder="например, gpt-5-2025-08-07")
 if custom.strip():
     model = custom.strip()
+
 
 temperature = st.sidebar.slider("Temperature", 0.2, 0.8, 0.4, 0.1)
 
@@ -255,18 +289,33 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float) 
         "ru_short": row.get("ru_short", "").strip(),
     }
 
-    # Responses API по официальному примеру: instructions + input
-    final = client.responses.create(
+    # --- формируем kwargs c учётом поддержки temperature ---
+    kwargs = dict(
         model=model,
         instructions=system_instructions,
         input=(
             "Пользовательские данные:\n"
             + json.dumps(user_payload, ensure_ascii=False)
-            + "\nВерни СТРОГО JSON с полями: "
-              "woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short."
+            + "\nВерни СТРОГО JSON с полями: woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short."
         ),
-        temperature=temperature,
     )
+    if _should_pass_temperature(model):
+        kwargs["temperature"] = temperature
+
+    try:
+        final = client.responses.create(**kwargs)
+    except Exception as e:
+        msg = str(e)
+        # если модель не принимает temperature — запомним и повторим без него
+        if "Unsupported parameter: 'temperature'" in msg or "param': 'temperature'" in msg:
+            no_temp = st.session_state.get("no_temp_models", set())
+            no_temp.add(model)
+            st.session_state.no_temp_models = no_temp
+            kwargs.pop("temperature", None)
+            final = client.responses.create(**kwargs)
+        else:
+            raise
+
 
     # Достаём текст и вырезаем JSON
     text = getattr(final, "output_text", "") or ""
