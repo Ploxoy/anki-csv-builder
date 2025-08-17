@@ -6,6 +6,56 @@ import io
 import json
 from typing import List, Dict
 from openai import OpenAI
+# ==========================
+# Модели: дефолтный список + динамическая подгрузка из API
+# ==========================
+from typing import List
+
+DEFAULT_MODELS: List[str] = [
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "gpt-4.1",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "o3-mini",
+]
+
+_PREFERRED_ORDER = {  # чем меньше число — тем выше в списке
+    "gpt-5": 0,
+    "gpt-5-mini": 1,
+    "gpt-5-nano": 2,
+    "gpt-4.1": 3,
+    "gpt-4o": 4,
+    "gpt-4o-mini": 5,
+    "o3": 6,
+    "o3-mini": 7,
+}
+
+def _sort_key(model_id: str) -> tuple:
+    for k, rank in _PREFERRED_ORDER.items():
+        if model_id.startswith(k):
+            return (rank, model_id)
+    return (999, model_id)
+
+def get_model_options(api_key: str | None) -> List[str]:
+    """Вернёт список доступных ID моделей. Сначала пытаемся спросить у API, иначе — дефолт."""
+    prefixes = ("gpt-5", "gpt-4.1", "gpt-4o", "o3")
+    if not api_key:
+        return DEFAULT_MODELS
+    try:
+        client = OpenAI(api_key=api_key)
+        models = client.models.list()
+        ids = []
+        for m in getattr(models, "data", []) or []:
+            mid = getattr(m, "id", "")
+            if any(mid.startswith(p) for p in prefixes):
+                ids.append(mid)
+        if not ids:
+            return DEFAULT_MODELS
+        return sorted(set(ids), key=_sort_key)
+    except Exception:
+        return DEFAULT_MODELS
 
 # ===== Усиленный системный промпт для устойчивого заполнения всех полей =====
 PROMPT_SYSTEM = (
@@ -66,9 +116,7 @@ if "input_data" not in st.session_state:
 if "results" not in st.session_state:
     st.session_state.results: List[Dict] = []
 
-# ==========================
-# Sidebar: API, model, params
-# ==========================
+# --- SIDEBAR ---
 st.sidebar.header("🔐 API Settings")
 api_key = (
     st.secrets.get("OPENAI_API_KEY")
@@ -76,7 +124,7 @@ api_key = (
     else st.sidebar.text_input("OpenAI API Key", type="password")
 )
 
-# динамически получаем доступные модели (если ключ не задан — вернутся разумные дефолты)
+# динамически получаем доступные модели (если ключа нет — вернётся дефолтный список)
 options = get_model_options(api_key)
 model = st.sidebar.selectbox(
     "Model",
@@ -85,13 +133,15 @@ model = st.sidebar.selectbox(
     help="Лучшее качество — gpt-5 (если доступен); баланс — gpt-4.1; быстрее/дешевле — gpt-4o / gpt-5-mini."
 )
 
-# (необязательно) поле для ручного ввода кастомного снапшота модели
+# (необязательно) точный ID снапшота модели
 custom = st.sidebar.text_input("Custom model id (optional)", placeholder="например, gpt-5-2025-08-07")
 if custom.strip():
     model = custom.strip()
 
-
 temperature = st.sidebar.slider("Temperature", 0.2, 0.8, 0.4, 0.1)
+
+
+
 stream_output = st.sidebar.checkbox("Stream output (beta)", value=False,
     help="Streaming в Responses API: финальный JSON будет доступен после завершения стрима")
 
@@ -193,11 +243,7 @@ else:
 # Helpers
 # ==========================
 
-def sanitize_field(value: str) -> str:
-    if value is None:
-        return ""
-    # Не допускаем символ '|' в полях CSV
-    return str(value).replace("|", "∣").strip()
+
 
 def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float) -> Dict:
     """Совместимо с SDK >=1.0: без response_format. Просим СТРОГИЙ JSON и парсим output_text."""
