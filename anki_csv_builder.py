@@ -192,6 +192,69 @@ img{ max-width:100%; height:auto; }
 .hint[open] summary{ opacity:.75; text-decoration:none; }
 .hint-body{ margin-top:.25em; font-size: var(--fs-sm); }
 """.strip()
+	# Fallback: фиксированные заголовки CSV (NL-колонки)
+	CFG_CSV_HEADERS_FIXED = {
+		"nl_word": "NL-слово",
+		"nl_sentence_cloze": "Предложение NL (с cloze)",
+		"collocations_nl": "Коллокации (NL)",
+		"definition_nl": "Определение NL",
+	}
+	# Fallback: тексты UI/сообщений
+	CFG_MESSAGES = {
+		"app_title": "📘 Anki CSV/Anki Builder — Dutch Cloze Cards",
+		"sidebar_api_header": "🔐 API Settings",
+		"api_key_label": "OpenAI API Key",
+		"model_label": "Model",
+		"model_help": "Лучшее качество — gpt-5; баланс — gpt-4.1; быстрее — gpt-4o / gpt-5-mini.",
+		"profile_label": "Prompt profile",
+		"cefr_label": "CEFR",
+		"l1_label": "Your language (L1)",
+		"temp_label": "Temperature",
+		"csv_header_checkbox": "CSV: включить строку заголовка",
+		"csv_header_help": "Снимите галочку, если Anki импортирует первую строку как запись.",
+		"anki_guid_policy_label": "Anki GUID policy",
+		"anki_guid_policy_options": [
+			"stable (update/skip existing)",
+			"unique per export (import as new)"
+		],
+		"anki_guid_policy_help": (
+			"stable: те же заметки распознаются как уже существующие/обновляемые\n"
+			"unique: каждый экспорт получает новый GUID — Anki считает их новыми заметками."
+		),
+		"uploader_label": "Upload .txt / .md",
+		"recognized_rows_title": "🔍 Распознанные строки",
+		"upload_hint": "Загрузите файл или нажмите **Try demo**",
+		"try_demo_button": "Try demo",
+		"clear_button": "Очистить",
+		"generate_button": "Сгенерировать карточки",
+		"no_api_key": "Укажи OPENAI_API_KEY в Secrets или в поле слева.",
+		"preview_title_fmt": "📋 Предпросмотр карточек (первые {limit})",
+		"csv_download_label": "📥 Скачать anki_cards.csv",
+		"apkg_download_label": "🧩 Скачать колоду Anki (.apkg)",
+		"apkg_install_hint": "Для экспорта в .apkg добавь в requirements.txt строку 'genanki' и перезагрузи приложение.",
+		"error_card_processing_fmt": "Ошибка при обработке слова '{woord}': {error}",
+		"error_apkg_build_fmt": "Не удалось собрать .apkg: {error}",
+		"demo_loaded": "🔁 Демо-набор из 6 слов подставлен",
+		"footer_tips": (
+			"Лайфхаки: 1) Чем лучше NL-дефиниции на входе, тем точнее пример и глосс. "
+			"2) На уровнях B1+ примерно половина предложений будет со signaalwoorden. "
+			"3) Для некоторых моделей (gpt-5/o3) температура не поддерживается и будет игнорироваться."
+		),
+	}
+	# Fallback: идентификаторы/имена Anki
+	CFG_ANKI_MODEL_ID = 1607392319
+	CFG_ANKI_DECK_ID = 1970010101
+	CFG_ANKI_MODEL_NAME = "Dutch Cloze (L2/L1)"
+	CFG_ANKI_DECK_NAME = "Dutch • Cloze"
+	# Fallback: демо-данные
+	CFG_DEMO_WORDS = [
+		{"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
+		{"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
+		{"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
+		{"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
+		{"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
+		{"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
+	]
 
 # ==========================
 # Streamlit page config
