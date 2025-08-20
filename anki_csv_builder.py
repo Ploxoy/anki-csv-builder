@@ -8,6 +8,7 @@ import time
 import hashlib
 from typing import List, Dict, Tuple
 from openai import OpenAI
+from prompts import compose_instructions_en, PROMPT_PROFILES as PR_PROMPT_PROFILES
 
 # ==========================
 # Optional: Anki export (genanki)
@@ -33,6 +34,7 @@ try:
         PROMPT_PROFILES as CFG_PROMPT_PROFILES,
         L1_LANGS as CFG_L1_LANGS,
         CSV_HEADERS_LOCALIZATION as CFG_CSV_HEADERS_LOCALIZATION,
+        CSV_HEADERS_FIXED as CFG_CSV_HEADERS_FIXED,
         PAGE_TITLE as CFG_PAGE_TITLE,
         PAGE_LAYOUT as CFG_PAGE_LAYOUT,
         TEMPERATURE_MIN as CFG_TMIN,
@@ -41,6 +43,15 @@ try:
         TEMPERATURE_STEP as CFG_TSTEP,
         PREVIEW_LIMIT as CFG_PREVIEW_LIMIT,
         API_REQUEST_DELAY as CFG_API_DELAY,
+        FRONT_HTML_TEMPLATE as CFG_FRONT_HTML_TEMPLATE,
+        BACK_HTML_TEMPLATE as CFG_BACK_HTML_TEMPLATE,
+        CSS_STYLING as CFG_CSS_STYLING,
+        MESSAGES as CFG_MESSAGES,
+        ANKI_MODEL_ID as CFG_ANKI_MODEL_ID,
+        ANKI_DECK_ID as CFG_ANKI_DECK_ID,
+        ANKI_MODEL_NAME as CFG_ANKI_MODEL_NAME,
+        ANKI_DECK_NAME as CFG_ANKI_DECK_NAME,
+        DEMO_WORDS as CFG_DEMO_WORDS,
     )
 except Exception:
     # Fallback значения, если config.py временно отсутствует/неполный
@@ -80,6 +91,107 @@ except Exception:
     CFG_TMIN, CFG_TMAX, CFG_TDEF, CFG_TSTEP = 0.2, 0.8, 0.4, 0.1
     CFG_PREVIEW_LIMIT = 20
     CFG_API_DELAY = 0.0
+    # Fallback для шаблонов, если нет config.py
+    CFG_FRONT_HTML_TEMPLATE = """
+<div class="card-inner">
+  {{cloze:L2_cloze}}
+  <div class="hints">
+    {{#L1_gloss}}
+    <details class="hint">
+      <summary>{L1_LABEL}</summary>
+      <div class="hint-body">{{L1_gloss}}</div>
+    </details>
+    {{/L1_gloss}}
+
+    {{#L2_definition}}
+    <details class="hint">
+      <summary>NL</summary>
+      <div class="hint-body">{{L2_definition}}</div>
+    </details>
+    {{/L2_definition}}
+  </div>
+</div>
+""".strip()
+    CFG_BACK_HTML_TEMPLATE = """
+<div class="card-inner">
+  {{cloze:L2_cloze}}
+  <div class="answer">
+    {{#L1_sentence}}
+    <div class="section ru">{{L1_sentence}}</div>
+    {{/L1_sentence}}
+
+    {{#L2_collocations}}
+    <div class="section">
+      <ul class="colloc" id="colloc-list"></ul>
+      <script id="colloc-raw" type="text/plain">{{L2_collocations}}</script>
+      <script>
+        (function () {
+          var rawEl = document.getElementById('colloc-raw');
+          if (!rawEl) return;
+          var raw = rawEl.textContent || "";
+          var items = raw.split(/;\s*|\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
+          var ul = document.getElementById('colloc-list');
+          if (!ul) return;
+          for (var i = 0; i < items.length; i++) {
+            var li = document.createElement('li');
+            li.textContent = items[i];
+            ul.appendChild(li);
+          }
+        })();
+      </script>
+    </div>
+    {{/L2_collocations}}
+
+    {{#L2_definition}}
+    <div class="section def">{{L2_definition}}</div>
+    {{/L2_definition}}
+
+    {{#L2_word}}
+    <div class="section lemma">
+      <span class="lemma-nl">{{L2_word}}</span> — <span class="lemma-ru">{{L1_gloss}}</span>
+    </div>
+    {{/L2_word}}
+  </div>
+</div>
+""".strip()
+    CFG_CSS_STYLING = """
+/* ===== масштабирование и верстка ===== */
+:root{
+  --fs-base: clamp(18px, 1.2vw + 1.1vh, 28px);
+  --fs-sm: calc(var(--fs-base) * .9);
+  --fs-lg: calc(var(--fs-base) * 1.12);
+  --hl-col:#1976d2;
+  --hl-bg:rgba(25,118,210,.14);
+}
+html, body { height:100%; }
+.card{ font-size: var(--fs-base); line-height: 1.55; margin:0; min-height:100vh; display:flex; justify-content:center; align-items:flex-start; background: transparent; }
+.card-inner{ width: min(92vw, 80ch); padding: 2.5vh 3vw; }
+.answer { margin-top:.75em; }
+.section + .section { margin-top:.55em; padding-top:.45em; border-top:1px solid rgba(0,0,0,.14); }
+@media (prefers-color-scheme: dark){ .section + .section { border-top-color: rgba(255,255,255,.22); } }
+.ru { font-weight:600; font-size: var(--fs-lg); }
+.def { font-style: italic; opacity:.9; font-size: var(--fs-sm); }
+.lemma { font-weight:600; }
+.lemma-nl{ color:var(--hl-col); font-variant: small-caps; letter-spacing:.02em; }
+.lemma-ru{ opacity:.9; }
+.colloc{ margin:.1em 0 0 1.1em; padding:0; }
+.colloc li{ margin:.12em 0; }
+.cloze{ color:var(--hl-col); font-weight:700; }
+mark.hl{ background:var(--hl-bg); color:inherit; padding:0 .12em; border-radius:.18em; }
+.def-hint { margin-top:.5em; }
+.def-hint b { opacity:.8; margin-right:.35em; }
+.def-toggle{ list-style:none; cursor:pointer; display:inline-block; }
+.def-toggle::-webkit-details-marker{ display:none; }
+.def-toggle::before{ content: attr(data-closed); text-decoration: underline dotted; }
+.def-details[open] .def-toggle::before{ content: attr(data-open); text-decoration:none; opacity:.75; }
+img{ max-width:100%; height:auto; }
+@media (max-width: 420px){ .card-inner{ width: 94vw; padding: 2vh 3vw; } }
+.hints{ margin-top:.6em; display:flex; gap:1em 1.2em; flex-wrap:wrap; align-items:flex-start; }
+.hint summary{ cursor:pointer; text-decoration: underline dotted; list-style:none; display:inline-block; }
+.hint summary::-webkit-details-marker{ display:none; }
+.hint[open] summary{ opacity:.75; text-decoration:none; }
+.hint-body{ margin-top:.25em; font-size: var(--fs-sm); }
+""".strip()
 
 # ==========================
 # Streamlit page config
@@ -121,40 +233,21 @@ def get_model_options(api_key: str | None) -> List[str]:
         return DEFAULT_MODELS
 
 # ==========================
-# CEFR & signaalwoorden
+# Signaalwoorden и профили
 # ==========================
 SIGNALWORDS_B1: List[str] = CFG_SIGNALWORDS_B1
 SIGNALWORDS_B2_PLUS: List[str] = CFG_SIGNALWORDS_B2_PLUS
-
-CEFR_LENGTHS: Dict[str, Tuple[int, int] | None] = {
-    "A1": (6, 9),
-    "A2": (8, 12),
-    "B1": (10, 14),
-    "B2": (12, 16),
-    "C1": (14, 18),
-    "C2": None,  # no limit
-}
-
-LEVEL_RULES_EN: Dict[str, str] = {
-    "A1": "Use only very basic surrounding vocabulary. 6–9 words. No subordinate clauses, no passive, no perfect tenses.",
-    "A2": "Basic vocabulary. 8–12 words. May use modal verbs (kunnen, moeten) and simple past (was/had); still no complex clauses.",
-    "B1": "10–14 words. You MAY use a simple subordinate clause (omdat/als/terwijl). In roughly 50% of cases include ONE suitable Dutch signal word.",
-    "B2": "12–16 words. More complex structures allowed; passive allowed. Keep sentence natural. In ~50% of cases include ONE signal word from the extended list.",
-    "C1": "14–18 words. Advanced structures allowed; neutral-formal style.",
-    "C2": "No length limit; native-like naturalness and precision.",
-}
-
-PROMPT_PROFILES = CFG_PROMPT_PROFILES  # dict name->rule (EN)
+PROMPT_PROFILES = PR_PROMPT_PROFILES
 
 L1_LANGS = CFG_L1_LANGS  # code -> {label, name, csv_translation, csv_gloss}
 
 # ==========================
 # Sidebar (API, model, params)
 # ==========================
-st.sidebar.header("🔐 API Settings")
+st.sidebar.header(CFG_MESSAGES.get("sidebar_api_header", "🔐 API Settings"))
 API_KEY = (
     st.secrets.get("OPENAI_API_KEY") if "OPENAI_API_KEY" in st.secrets
-    else st.sidebar.text_input("OpenAI API Key", type="password")
+    else st.sidebar.text_input(CFG_MESSAGES.get("api_key_label", "OpenAI API Key"), type="password")
 )
 
 # Версия SDK (подсказка)
@@ -167,42 +260,41 @@ except Exception:
 # Модель (динамический список с фильтром)
 model_options = get_model_options(API_KEY)
 model = st.sidebar.selectbox(
-    "Model",
+    CFG_MESSAGES.get("model_label", "Model"),
     model_options,
     index=0,
-    help="Лучшее качество — gpt-5 (если доступен); баланс — gpt-4.1; быстрее/дешевле — gpt-4o / gpt-5-mini.",
+    help=CFG_MESSAGES.get("model_help", ""),
 )
 
 # Профиль промпта
 profile = st.sidebar.selectbox(
-    "Prompt profile",
+    CFG_MESSAGES.get("profile_label", "Prompt profile"),
     list(PROMPT_PROFILES.keys()),
     index=list(PROMPT_PROFILES.keys()).index("strict") if "strict" in PROMPT_PROFILES else 0,
 )
 
 # CEFR уровень
-level = st.sidebar.selectbox("CEFR", ["A1", "A2", "B1", "B2", "C1", "C2"], index=2)
+level = st.sidebar.selectbox(CFG_MESSAGES.get("cefr_label", "CEFR"), ["A1", "A2", "B1", "B2", "C1", "C2"], index=2)
 
 # L1 язык пользователя (переводы/глоссы)
-L1_code = st.sidebar.selectbox("Your language (L1)", list(L1_LANGS.keys()), index=0)
+L1_code = st.sidebar.selectbox(CFG_MESSAGES.get("l1_label", "Your language (L1)"), list(L1_LANGS.keys()), index=0)
 L1_meta = L1_LANGS[L1_code]
 
 # Температура (некоторые модели не принимают)
 TMIN, TMAX, TDEF, TSTEP = CFG_TMIN, CFG_TMAX, CFG_TDEF, CFG_TSTEP
-temperature = st.sidebar.slider("Temperature", TMIN, TMAX, TDEF, TSTEP)
+temperature = st.sidebar.slider(CFG_MESSAGES.get("temp_label", "Temperature"), TMIN, TMAX, TDEF, TSTEP)
 
 # CSV/Anki export options
 csv_with_header = st.sidebar.checkbox(
-    "CSV: включить строку заголовка",
+    CFG_MESSAGES.get("csv_header_checkbox", "CSV: включить строку заголовка"),
     value=True,
-    help="Снимите галочку, если Anki импортирует первую строку как запись."
+    help=CFG_MESSAGES.get("csv_header_help", "")
 )
 _guid_label = st.sidebar.selectbox(
-    "Anki GUID policy",
-    ["stable (update/skip existing)", "unique per export (import as new)"],
+    CFG_MESSAGES.get("anki_guid_policy_label", "Anki GUID policy"),
+    CFG_MESSAGES.get("anki_guid_policy_options", ["stable (update/skip existing)", "unique per export (import as new)"]),
     index=0,
-    help=("stable: те же заметки распознаются как уже существующие/обновляемые\n"
-          "unique: каждый экспорт получает новый GUID — Anki считает их новыми заметками."),
+    help=CFG_MESSAGES.get("anki_guid_policy_help", ""),
 )
 
 st.session_state["csv_with_header"] = csv_with_header
@@ -221,30 +313,23 @@ if "input_data" not in st.session_state:
 if "results" not in st.session_state:
     st.session_state.results: List[Dict] = []
 
-st.title("📘 Anki CSV/Anki Builder — Dutch Cloze Cards")
+st.title(CFG_MESSAGES.get("app_title", "📘 Anki CSV/Anki Builder — Dutch Cloze Cards"))
 
-# Демо
-DEMO_WORDS = [
-    {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
-    {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
-    {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
-    {"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
-    {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
-    {"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
-]
+# Демо из конфига
+DEMO_WORDS = CFG_DEMO_WORDS
 
 col_demo, col_clear = st.columns([1,1])
 with col_demo:
-    if st.button("Try demo", type="secondary"):
+    if st.button(CFG_MESSAGES.get("try_demo_button", "Try demo"), type="secondary"):
         st.session_state.input_data = DEMO_WORDS
-        st.toast("🔁 Демо-набор из 6 слов подставлен", icon="✅")
+        st.toast(CFG_MESSAGES.get("demo_loaded", "🔁 Demo loaded"), icon="✅")
 with col_clear:
-    if st.button("Очистить", type="secondary"):
+    if st.button(CFG_MESSAGES.get("clear_button", "Очистить"), type="secondary"):
         st.session_state.input_data = []
         st.session_state.results = []
 
 # Upload
-uploaded_file = st.file_uploader("Upload .txt / .md", type=["txt", "md"], accept_multiple_files=False)
+uploaded_file = st.file_uploader(CFG_MESSAGES.get("uploader_label", "Upload .txt / .md"), type=["txt", "md"], accept_multiple_files=False)
 
 # ==========================
 # Parsing входных форматов
@@ -299,10 +384,10 @@ if uploaded_file is not None:
 
 # Preview входных данных
 if st.session_state.input_data:
-    st.subheader("🔍 Распознанные строки")
+    st.subheader(CFG_MESSAGES.get("recognized_rows_title", "🔍 Распознанные строки"))
     st.dataframe(pd.DataFrame(st.session_state.input_data), use_container_width=True)
 else:
-    st.info("Загрузите файл или нажмите **Try demo**")
+    st.info(CFG_MESSAGES.get("upload_hint", "Загрузите файл или нажмите **Try demo**"))
 
 # ==========================
 # Helpers: sanitize, temperature policy, prompt compose
@@ -330,37 +415,7 @@ def _det_include_signalword(woord: str, level: str) -> bool:
     return False
 
 
-def compose_instructions_en(L1_code: str, level: str, profile: str) -> str:
-    L1_name = L1_LANGS[L1_code]["name"]
-    level_rule = LEVEL_RULES_EN[level]
-    profile_rule = PROMPT_PROFILES.get(profile, "")
-
-    base = f"""
-You are an expert Dutch→{L1_name} lexicographer and didactics writer.
-Return a STRICT JSON object with fields:
-- L2_word (the Dutch target word/lemma),
-- L2_cloze (ONE short natural Dutch sentence with cloze),
-- L1_sentence (an exact translation of that sentence into {L1_name}),
-- L2_collocations (EXACTLY 3 frequent Dutch collocations that contain the target word, joined with '; '),
-- L2_definition (ONE short Dutch definition),
-- L1_gloss (1–2 words in {L1_name} matching the word's part of speech and meaning).
-
-Hard requirements:
-- Output JSON ONLY, no explanations. No field may be empty. Do not use the '|' character.
-- Cloze: wrap the target in {{c1::...}}. If the word is a separable verb, use {{c1::stem}} … {{c2::particle}}; otherwise ONLY {{c1::...}} (no {{c2::...}}).
-- The Dutch sentence: natural; present tense by default; avoid names, digits, and quotes; modern Dutch; keep length within CEFR constraints.
-- L1_sentence: an exact, faithful translation.
-- L2_collocations: EXACTLY three frequent, natural combinations with the target word; join using '; '. Avoid odd or infrequent pairings and proper names. Signal words MAY appear here if natural, but are NOT required.
-- L2_definition: short Dutch definition. L1_gloss: 1–2 words in {L1_name}; obey any provided Dutch definition.
-""".strip()
-
-    # Level-specific rules
-    lvl = f"CEFR: {level}. {level_rule}".strip()
-
-    # Profile style
-    prof = f"Style: {profile_rule}".strip()
-
-    return base + "\n\n" + lvl + "\n" + prof
+# compose_instructions_en импортируется из prompts.py
 
 
 # ==========================
@@ -504,11 +559,11 @@ def generate_csv(results: List[Dict], L1_code: str, include_header: bool = True)
 
     if include_header:
         writer.writerow([
-            "NL-слово",
-            "Предложение NL (с cloze)",
+            CFG_CSV_HEADERS_FIXED.get("nl_word", "NL-слово"),
+            CFG_CSV_HEADERS_FIXED.get("nl_sentence_cloze", "Предложение NL (с cloze)"),
             f"{meta['csv_translation']} {meta['label']}",
-            "Коллокации (NL)",
-            "Определение NL",
+            CFG_CSV_HEADERS_FIXED.get("collocations_nl", "Коллокации (NL)"),
+            CFG_CSV_HEADERS_FIXED.get("definition_nl", "Определение NL"),
             f"{meta['csv_gloss']} {meta['label']}",
         ])
     for r in results:
@@ -526,111 +581,12 @@ def generate_csv(results: List[Dict], L1_code: str, include_header: bool = True)
 # Anki .apkg export (genanki)
 # ==========================
 
-ANKI_MODEL_ID = 1607392319  # произвольный стабильный int
-ANKI_DECK_ID = 1970010101   # произвольный стабильный int
+ANKI_MODEL_ID = CFG_ANKI_MODEL_ID
+ANKI_DECK_ID = CFG_ANKI_DECK_ID
 
-FRONT_HTML_TEMPLATE = """
-<div class="card-inner">
-  {{cloze:L2_cloze}}
-  <div class="hints">
-    {{#L1_gloss}}
-    <details class="hint">
-      <summary>{L1_LABEL}</summary>
-      <div class="hint-body">{{L1_gloss}}</div>
-    </details>
-    {{/L1_gloss}}
-
-    {{#L2_definition}}
-    <details class="hint">
-      <summary>NL</summary>
-      <div class="hint-body">{{L2_definition}}</div>
-    </details>
-    {{/L2_definition}}
-  </div>
-</div>
-""".strip()
-
-BACK_HTML_TEMPLATE = """
-<div class="card-inner">
-  {{cloze:L2_cloze}}
-  <div class="answer">
-    {{#L1_sentence}}
-    <div class="section ru">{{L1_sentence}}</div>
-    {{/L1_sentence}}
-
-    {{#L2_collocations}}
-    <div class="section">
-      <ul class="colloc" id="colloc-list"></ul>
-      <script id="colloc-raw" type="text/plain">{{L2_collocations}}</script>
-      <script>
-        (function () {
-          var rawEl = document.getElementById('colloc-raw');
-          if (!rawEl) return;
-          var raw = rawEl.textContent || "";
-          var items = raw.split(/;\s*|\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
-          var ul = document.getElementById('colloc-list');
-          if (!ul) return;
-          for (var i = 0; i < items.length; i++) {
-            var li = document.createElement('li');
-            li.textContent = items[i];
-            ul.appendChild(li);
-          }
-        })();
-      </script>
-    </div>
-    {{/L2_collocations}}
-
-    {{#L2_definition}}
-    <div class="section def">{{L2_definition}}</div>
-    {{/L2_definition}}
-
-    {{#L2_word}}
-    <div class="section lemma">
-      <span class="lemma-nl">{{L2_word}}</span> — <span class="lemma-ru">{{L1_gloss}}</span>
-    </div>
-    {{/L2_word}}
-  </div>
-</div>
-""".strip()
-
-CSS_STYLING = """
-/* ===== масштабирование и верстка ===== */
-:root{
-  --fs-base: clamp(18px, 1.2vw + 1.1vh, 28px);
-  --fs-sm: calc(var(--fs-base) * .9);
-  --fs-lg: calc(var(--fs-base) * 1.12);
-  --hl-col:#1976d2;
-  --hl-bg:rgba(25,118,210,.14);
-}
-html, body { height:100%; }
-.card{ font-size: var(--fs-base); line-height: 1.55; margin:0; min-height:100vh; display:flex; justify-content:center; align-items:flex-start; background: transparent; }
-.card-inner{ width: min(92vw, 80ch); padding: 2.5vh 3vw; }
-.answer { margin-top:.75em; }
-.section + .section { margin-top:.55em; padding-top:.45em; border-top:1px solid rgba(0,0,0,.14); }
-@media (prefers-color-scheme: dark){ .section + .section { border-top-color: rgba(255,255,255,.22); } }
-.ru { font-weight:600; font-size: var(--fs-lg); }
-.def { font-style: italic; opacity:.9; font-size: var(--fs-sm); }
-.lemma { font-weight:600; }
-.lemma-nl{ color:var(--hl-col); font-variant: small-caps; letter-spacing:.02em; }
-.lemma-ru{ opacity:.9; }
-.colloc{ margin:.1em 0 0 1.1em; padding:0; }
-.colloc li{ margin:.12em 0; }
-.cloze{ color:var(--hl-col); font-weight:700; }
-mark.hl{ background:var(--hl-bg); color:inherit; padding:0 .12em; border-radius:.18em; }
-.def-hint { margin-top:.5em; }
-.def-hint b { opacity:.8; margin-right:.35em; }
-.def-toggle{ list-style:none; cursor:pointer; display:inline-block; }
-.def-toggle::-webkit-details-marker{ display:none; }
-.def-toggle::before{ content: attr(data-closed); text-decoration: underline dotted; }
-.def-details[open] .def-toggle::before{ content: attr(data-open); text-decoration:none; opacity:.75; }
-img{ max-width:100%; height:auto; }
-@media (max-width: 420px){ .card-inner{ width: 94vw; padding: 2vh 3vw; } }
-.hints{ margin-top:.6em; display:flex; gap:1em 1.2em; flex-wrap:wrap; align-items:flex-start; }
-.hint summary{ cursor:pointer; text-decoration: underline dotted; list-style:none; display:inline-block; }
-.hint summary::-webkit-details-marker{ display:none; }
-.hint[open] summary{ opacity:.75; text-decoration:none; }
-.hint-body{ margin-top:.25em; font-size: var(--fs-sm); }
-""".strip()
+FRONT_HTML_TEMPLATE = CFG_FRONT_HTML_TEMPLATE
+BACK_HTML_TEMPLATE = CFG_BACK_HTML_TEMPLATE
+CSS_STYLING = CFG_CSS_STYLING
 
 
 def _compute_guid(c: Dict, policy: str, run_id: str) -> str:
@@ -654,7 +610,7 @@ def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_i
 
     model = genanki.Model(
         ANKI_MODEL_ID,
-        "Dutch Cloze (L2/L1)",
+        CFG_ANKI_MODEL_NAME,
         fields=[
             {"name": "L2_word"},
             {"name": "L2_cloze"},
@@ -675,7 +631,7 @@ def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_i
         model_type=genanki.Model.CLOZE,
     )
 
-    deck = genanki.Deck(ANKI_DECK_ID, "Dutch • Cloze")
+    deck = genanki.Deck(ANKI_DECK_ID, CFG_ANKI_DECK_NAME)
 
     for c in cards:
         note = genanki.Note(
@@ -709,9 +665,9 @@ def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_i
 # Generate section
 # ==========================
 if st.session_state.input_data:
-    if st.button("Сгенерировать карточки", type="primary"):
+    if st.button(CFG_MESSAGES.get("generate_button", "Сгенерировать карточки"), type="primary"):
         if not API_KEY:
-            st.error("Укажи OPENAI_API_KEY в Secrets или в поле слева.")
+            st.error(CFG_MESSAGES.get("no_api_key", "Укажи OPENAI_API_KEY в Secrets или в поле слева."))
         else:
             client = OpenAI(api_key=API_KEY)
             # Запоминаем run_id для GUID'ов в этом прогоне
@@ -728,7 +684,7 @@ if st.session_state.input_data:
                     )
                     st.session_state.results.append(card)
                 except Exception as e:
-                    st.error(f"Ошибка при обработке слова '{row.get('woord','?')}': {e}")
+                    st.error(CFG_MESSAGES.get("error_card_processing_fmt", "Ошибка при обработке слова '{woord}': {error}").format(woord=row.get('woord','?'), error=e))
                 finally:
                     progress.progress(int((idx + 1) / max(total,1) * 100))
                     if CFG_API_DELAY > 0:
@@ -738,14 +694,14 @@ if st.session_state.input_data:
 # Preview & downloads
 # ==========================
 if st.session_state.results:
-    st.subheader("📋 Предпросмотр карточек (первые 20)")
+    st.subheader(CFG_MESSAGES.get("preview_title_fmt", "📋 Предпросмотр карточек (первые {limit})").format(limit=CFG_PREVIEW_LIMIT))
     preview_df = pd.DataFrame(st.session_state.results)[:CFG_PREVIEW_LIMIT]
     st.dataframe(preview_df, use_container_width=True)
 
     # CSV download
     csv_data = generate_csv(st.session_state.results, L1_code, include_header=st.session_state.get('csv_with_header', True))
     st.download_button(
-        label="📥 Скачать anki_cards.csv",
+        label=CFG_MESSAGES.get("csv_download_label", "📥 Скачать anki_cards.csv"),
         data=csv_data,
         file_name="anki_cards.csv",
         mime="text/csv",
@@ -761,21 +717,17 @@ if st.session_state.results:
                 run_id=st.session_state.get("anki_run_id", str(int(time.time())))
             )
             st.download_button(
-                label="🧩 Скачать колоду Anki (.apkg)",
+                label=CFG_MESSAGES.get("apkg_download_label", "🧩 Скачать колоду Anki (.apkg)"),
                 data=anki_bytes,
                 file_name="dutch_cloze.apkg",
                 mime="application/octet-stream",
             )
         except Exception as e:
-            st.error(f"Не удалось собрать .apkg: {e}")
+            st.error(CFG_MESSAGES.get("error_apkg_build_fmt", "Не удалось собрать .apkg: {error}").format(error=e))
     else:
-        st.info("Для экспорта в .apkg добавь в requirements.txt строку 'genanki' и перезагрузи приложение.")
+        st.info(CFG_MESSAGES.get("apkg_install_hint", "Для экспорта в .apkg добавь в requirements.txt строку 'genanki' и перезагрузи приложение."))
 
 # ==========================
 # Footer
 # ==========================
-st.caption(
-    "Лайфхаки: 1) Чем лучше NL-дефиниции на входе, тем точнее пример и глосс. "
-    "2) На уровнях B1+ примерно половина предложений будет со signaalwoorden. "
-    "3) Для некоторых моделей (gpt-5/o3) температура не поддерживается и будет игнорироваться."
-)
+st.caption(CFG_MESSAGES.get("footer_tips", ""))
