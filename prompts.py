@@ -77,7 +77,7 @@ You are an expert Dutch→{L1_name} lexicographer and didactics writer.
 Return a STRICT JSON object with fields:
 - L2_word (the Dutch target word/lemma),
 - L2_cloze (ONE short natural Dutch sentence with cloze),
-- L1_sentence (an exact translation of that sentence into {L1_name}),
+- L1_sentence (an exact translation of that sentence into :{L1_name}),
 - L2_collocations (EXACTLY 3 frequent Dutch collocations that contain the target word, joined with '; '),
 - L2_definition (ONE short Dutch definition),
 - L1_gloss (1–2 words in {L1_name} matching the word's part of speech and meaning).
@@ -89,14 +89,6 @@ Hard requirements:
 - L1_sentence: an exact, faithful translation.
 - L2_collocations: EXACTLY three frequent, natural combinations with the target word; join using '; '. Avoid odd or infrequent pairings and proper names. Signal words MAY appear here if natural, but are NOT required.
 - L2_definition: short Dutch definition. L1_gloss: 1–2 words in {L1_name}; obey any provided Dutch definition.
-
-CLOZE COMPLIANCE (VERY IMPORTANT):
-- You MUST use exactly TWO curly braces on both sides: {{c1::...}} (and {{c2::...}} for separable verbs).
-- Never use single braces {c1::...} or other bracket styles.
-- BAD: {c1::raak}  GOOD: {{c1::raak}}
-- If the verb is NOT separable, do NOT output {{c2::...}} at all.
-- Ensure the final sentence contains at least one {{c1::...}} and all braces are balanced.
-
 """.strip()
 
     lvl = f"CEFR: {level}. {level_rule}".strip()

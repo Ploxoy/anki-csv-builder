@@ -1,0 +1,70 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+*.dylib
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+
+# --- Виртуальные окружения ---
+.venv/
+venv/
+env/
+ENV/
+.conda/
+.python-version
+
+# --- Тесты/линтеры/покрытие ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Streamlit ---
+# держим конфиги, но скрываем секреты
+.streamlit/secrets.toml
+.streamlit/secrets.*
+.streamlit/*credentials*
+# кеши Streamlit (опционально)
+.streamlit/cache/
+.streamlit/**/cache/
+
+# --- OS мусор ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- IDE/редакторы ---
+.vscode/
+.idea/
+*.code-workspace
+
+# --- Логи/временные файлы ---
+*.log
+logs/
+*.tmp
+*.temp
+
+# --- Экспорт Anki / данные ---
+# (если не хочешь коммитить выгрузки)
+*.apkg
+*.colpkg
+*.anki2
+/media/
+
+# CSV/TSV артефакты экспорта (по желанию):
+anki_cards.csv
+# *.csv
+# *.tsv
+
+# --- Среда ---
+.env
+.env.*
