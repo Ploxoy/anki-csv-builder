@@ -38,32 +38,6 @@ PROMPT_PROFILES: Dict[str, str] = {
 }
 
 # ==========================
-# System prompt (optional)
-# ==========================
-
-PROMPT_SYSTEM: str = (
-    "You are an experienced Dutch→L1 lexicographer and educational material author. "
-    "Generate STRICT JSON object for Anki card with structure: "
-    "{L2_word, L2_cloze, L1_sentence, L2_collocations, L2_definition, L1_gloss}.\n"
-    "GENERAL RULES (VERY IMPORTANT):\n"
-    "• Return ONLY JSON WITHOUT explanations and formatting.\n"
-    "• NO field may be empty. Empty strings prohibited.\n"
-    "• Symbol '|' in texts is prohibited.\n"
-    "• If L2_definition given — strictly follow it; don't change base word meaning.\n"
-    "• Preserve part of speech: L1_gloss should match word's part of speech "
-    "(verb→infinitive; noun→noun; adjective→adjective).\n"
-    "• L1_sentence — EXACT translation of Dutch sentence, without paraphrase.\n"
-    "• L2_cloze — one short natural Dutch sentence (8–14 words, present tense, "
-    "without names/digits/quotes); target word inside {{c1::…}}.\n"
-    "  If word is separable verb: {{c1::stem}} … {{c2::particle}}. Otherwise only {{c1::…}}.\n"
-    "• L2_collocations — EXACTLY 3 frequent combinations, separator '; ' (semicolon and space).\n"
-    "  Each combination — 2–3 words with target word in natural form. Forbidden: meaningless pairs "
-    "(e.g., 'een grote caissière'), rare/bookish, proper names.\n"
-    "• Avoid rare vocabulary; use A2–B1 around target word.\n\n"
-    "OUTPUT FORMAT: one JSON object with keys: L2_word, L2_cloze, L1_sentence, L2_collocations, L2_definition, L1_gloss.\n\n"
-)
-
-# ==========================
 # Building instructions for model (EN)
 # ==========================
 
@@ -76,6 +50,32 @@ def compose_instructions_en(L1_code: str, level: str, profile: str) -> str:
 You are an expert Dutch→{L1_name} lexicographer and didactics writer.
 Return a STRICT JSON object with fields:
 - L2_word (the Dutch target word/lemma),
+- L2_cloze (ONE short natural Dutch sentence with cloze),
+- L1_sentence (an exact translation of that sentence into {L1_name}),
+- L2_collocations (EXACTLY 3 frequent Dutch collocations that contain the target word, joined with '; '),
+- L2_definition (ONE short Dutch definition),
+- L1_gloss (1–2 words in {L1_name} matching the word's part of speech and meaning).
+
+Hard requirements:
+- Output JSON ONLY, no explanations. No field may be empty. Do not use the '|' character.
+- For cloze format use EXACTLY double curly braces: "{{c1::target}}" (with exactly two opening and two closing braces).
+- For separable verbs use "{{c1::stem}} … {{c2::particle}}" format.
+- Never use single braces or triple braces.
+- Example 1 (regular): "Ik {{c1::begrijp}} deze zin."
+- Example 2 (separable): "Ik {{c1::ruim}} mijn kamer {{c2::op}}."
+
+The Dutch sentence must be:
+- Natural and contextually clear
+- Present tense by default
+- Avoid names, digits, quotes
+- Modern Dutch only
+- Keep within CEFR length constraints
+""".strip()
+
+    lvl = f"CEFR: {level}. {level_rule}".strip()
+    prof = f"Style: {profile_rule}".strip()
+
+    return base + "\n\n" + lvl + "\n" + prof
 - L2_cloze (ONE short natural Dutch sentence with cloze),
 - L1_sentence (an exact translation of that sentence into {L1_name}),
 - L2_collocations (EXACTLY 3 frequent Dutch collocations that contain the target word, joined with '; '),

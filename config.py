@@ -88,12 +88,6 @@ CSV_HEADERS_FIXED: Dict[str, str] = {
 }
 
 # ==========================
-# System prompt
-# ==========================
-
-PROMPT_SYSTEM: str = ""  # moved to prompts.py when needed
-
-# ==========================
 # Demo data
 # ==========================
 
@@ -327,6 +321,12 @@ def get_preferred_order() -> Dict[str, int]:
     return _PREFERRED_ORDER.copy()
 
 def get_block_substrings() -> Tuple[str, ...]:
+    """Returns tuple of blocked substrings"""
+    return _BLOCK_SUBSTRINGS
+
+def get_allowed_prefixes() -> Tuple[str, ...]:
+    """Returns tuple of allowed prefixes"""
+    return _ALLOWED_PREFIXES
     """Returns tuple of blocked substrings"""
     return _BLOCK_SUBSTRINGS
 
