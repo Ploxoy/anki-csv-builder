@@ -23,7 +23,7 @@ except Exception:
 # Config (import with safe fallbacks)
 # ==========================
 try:
-    # Ваш файл с параметрами. Можно свободно редактировать списки/локализацию здесь.
+    # Configuration file with parameters. You can freely edit lists/localization here.
     from config import (
         DEFAULT_MODELS as CFG_DEFAULT_MODELS,
         _PREFERRED_ORDER as CFG_PREFERRED_ORDER,
@@ -54,7 +54,7 @@ try:
         DEMO_WORDS as CFG_DEMO_WORDS,
     )
 except Exception:
-    # Fallback значения, если config.py временно отсутствует/неполный
+    # Fallback values if config.py is temporarily missing/incomplete
     CFG_DEFAULT_MODELS = [
         "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4o", "gpt-4o-mini", "o3-mini"
     ]
@@ -80,10 +80,10 @@ except Exception:
         "creative": "Allow mild figurativeness if it keeps clarity and CEFR constraints.",
     }
     CFG_L1_LANGS = {
-        "RU": {"label": "RU", "name": "Russian", "csv_translation": "Перевод", "csv_gloss": "Перевод слова"},
+        "RU": {"label": "RU", "name": "Russian", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
         "EN": {"label": "EN", "name": "English", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
-        "ES": {"label": "ES", "name": "Spanish", "csv_translation": "Traducción", "csv_gloss": "Glosa"},
-        "DE": {"label": "DE", "name": "German", "csv_translation": "Übersetzung", "csv_gloss": "Kurzgloss"},
+        "ES": {"label": "ES", "name": "Spanish", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
+        "DE": {"label": "DE", "name": "German", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
     }
     CFG_CSV_HEADERS_LOCALIZATION = CFG_L1_LANGS
     CFG_PAGE_TITLE = "Anki CSV Builder — Cloze (NL)"
@@ -91,7 +91,7 @@ except Exception:
     CFG_TMIN, CFG_TMAX, CFG_TDEF, CFG_TSTEP = 0.2, 0.8, 0.4, 0.1
     CFG_PREVIEW_LIMIT = 20
     CFG_API_DELAY = 0.0
-    # Fallback для шаблонов, если нет config.py
+    # Fallback templates if config.py unavailable
     CFG_FRONT_HTML_TEMPLATE = """
 <div class="card-inner">
   {{cloze:L2_cloze}}
@@ -122,21 +122,26 @@ except Exception:
 
     {{#L2_collocations}}
     <div class="section">
-      <ul class="colloc" id="colloc-list"></ul>
-      <script id="colloc-raw" type="text/plain">{{L2_collocations}}</script>
+      <div class="colloc-container"></div>
       <script>
         (function () {
-          var rawEl = document.getElementById('colloc-raw');
-          if (!rawEl) return;
-          var raw = rawEl.textContent || "";
-          var items = raw.split(/;\s*|\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
-          var ul = document.getElementById('colloc-list');
-          if (!ul) return;
+          var collocText = "{{L2_collocations}}";
+          if (!collocText || collocText.trim() === "") return;
+          
+          var items = collocText.split(';').map(function (s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+          var container = document.querySelector('.colloc-container');
+          if (!container || items.length === 0) return;
+          
+          var ul = document.createElement('ul');
+          ul.className = 'colloc';
+          
           for (var i = 0; i < items.length; i++) {
             var li = document.createElement('li');
             li.textContent = items[i];
             ul.appendChild(li);
           }
+          
+          container.appendChild(ul);
         })();
       </script>
     </div>
@@ -155,7 +160,7 @@ except Exception:
 </div>
 """.strip()
     CFG_CSS_STYLING = """
-/* ===== масштабирование и верстка ===== */
+/* ===== Scaling and layout ===== */
 :root{
   --fs-base: clamp(18px, 1.2vw + 1.1vh, 28px);
   --fs-sm: calc(var(--fs-base) * .9);
@@ -192,61 +197,61 @@ img{ max-width:100%; height:auto; }
 .hint[open] summary{ opacity:.75; text-decoration:none; }
 .hint-body{ margin-top:.25em; font-size: var(--fs-sm); }
 """.strip()
-    # Fallback: фиксированные заголовки CSV (NL-колонки)
+    # Fallback: fixed CSV headers (NL columns)
     CFG_CSV_HEADERS_FIXED = {
-        "nl_word": "NL-слово",
-        "nl_sentence_cloze": "Предложение NL (с cloze)",
-        "collocations_nl": "Коллокации (NL)",
-        "definition_nl": "Определение NL",
+        "nl_word": "Dutch Word",
+        "nl_sentence_cloze": "Dutch Sentence (with cloze)",
+        "collocations_nl": "Collocations (Dutch)",
+        "definition_nl": "Definition (Dutch)",
     }
-    # Fallback: тексты UI/сообщений
+    # Fallback: UI/message texts
     CFG_MESSAGES = {
         "app_title": "📘 Anki CSV/Anki Builder — Dutch Cloze Cards",
         "sidebar_api_header": "🔐 API Settings",
         "api_key_label": "OpenAI API Key",
         "model_label": "Model",
-        "model_help": "Лучшее качество — gpt-5; баланс — gpt-4.1; быстрее — gpt-4o / gpt-5-mini.",
+        "model_help": "Best quality — gpt-5; balanced — gpt-4.1; faster — gpt-4o / gpt-5-mini.",
         "profile_label": "Prompt profile",
-        "cefr_label": "CEFR",
+        "cefr_label": "CEFR Level",
         "l1_label": "Your language (L1)",
         "temp_label": "Temperature",
-        "csv_header_checkbox": "CSV: включить строку заголовка",
-        "csv_header_help": "Снимите галочку, если Anki импортирует первую строку как запись.",
+        "csv_header_checkbox": "CSV: include header row",
+        "csv_header_help": "Uncheck if Anki imports the first row as a record.",
         "anki_guid_policy_label": "Anki GUID policy",
         "anki_guid_policy_options": [
             "stable (update/skip existing)",
             "unique per export (import as new)"
         ],
         "anki_guid_policy_help": (
-            "stable: те же заметки распознаются как уже существующие/обновляемые\n"
-            "unique: каждый экспорт получает новый GUID — Anki считает их новыми заметками."
+            "stable: same notes are recognized as existing/updatable\n"
+            "unique: each export gets a new GUID — Anki treats them as new notes."
         ),
         "uploader_label": "Upload .txt / .md",
-        "recognized_rows_title": "🔍 Распознанные строки",
-        "upload_hint": "Загрузите файл или нажмите **Try demo**",
+        "recognized_rows_title": "🔍 Recognized rows",
+        "upload_hint": "Upload a file or click **Try demo**",
         "try_demo_button": "Try demo",
-        "clear_button": "Очистить",
-        "generate_button": "Сгенерировать карточки",
-        "no_api_key": "Укажи OPENAI_API_KEY в Secrets или в поле слева.",
-        "preview_title_fmt": "📋 Предпросмотр карточек (первые {limit})",
-        "csv_download_label": "📥 Скачать anki_cards.csv",
-        "apkg_download_label": "🧩 Скачать колоду Anki (.apkg)",
-        "apkg_install_hint": "Для экспорта в .apkg добавь в requirements.txt строку 'genanki' и перезагрузи приложение.",
-        "error_card_processing_fmt": "Ошибка при обработке слова '{woord}': {error}",
-        "error_apkg_build_fmt": "Не удалось собрать .апkg: {error}",
-        "demo_loaded": "🔁 Демо-набор из 6 слов подставлен",
+        "clear_button": "Clear",
+        "generate_button": "Generate cards",
+        "no_api_key": "Please provide OPENAI_API_KEY in Secrets or in the field on the left.",
+        "preview_title_fmt": "📋 Card preview (first {limit})",
+        "csv_download_label": "📥 Download anki_cards.csv",
+        "apkg_download_label": "🧩 Download Anki deck (.apkg)",
+        "apkg_install_hint": "To export to .apkg, add 'genanki' to requirements.txt and redeploy the app.",
+        "error_card_processing_fmt": "Error processing word '{woord}': {error}",
+        "error_apkg_build_fmt": "Failed to build .apkg: {error}",
+        "demo_loaded": "🔁 Demo set of 6 words loaded",
         "footer_tips": (
-            "Лайфхаки: 1) Чем лучше NL-дефиниции на входе, тем точнее пример и глосс. "
-            "2) На уровнях B1+ примерно половина предложений будет со signaalwoorden. "
-            "3) Для некоторых моделей (gpt-5/o3) температура не поддерживается и будет игнорироваться."
+            "Tips: 1) Better NL definitions on input = more accurate examples and glosses. "
+            "2) At B1+ levels, roughly half the sentences will include signaalwoorden. "
+            "3) Some models (gpt-5/o3) don't support temperature and will ignore it."
         ),
     }
-    # Fallback: идентификаторы/имена Anki
+    # Fallback: Anki identifiers/names
     CFG_ANKI_MODEL_ID = 1607392319
     CFG_ANKI_DECK_ID = 1970010101
     CFG_ANKI_MODEL_NAME = "Dutch Cloze (L2/L1)"
     CFG_ANKI_DECK_NAME = "Dutch • Cloze"
-    # Fallback: демо-данные
+    # Fallback: demo data
     CFG_DEMO_WORDS = [
         {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
         {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
@@ -278,7 +283,7 @@ def _sort_key(model_id: str) -> tuple:
 
 
 def get_model_options(api_key: str | None) -> List[str]:
-    """Получить доступные модели из API, отфильтрованные под текстовую генерацию."""
+    """Get available models from API, filtered for text generation."""
     if not api_key:
         return DEFAULT_MODELS
     try:
@@ -296,7 +301,7 @@ def get_model_options(api_key: str | None) -> List[str]:
         return DEFAULT_MODELS
 
 # ==========================
-# Signaalwoorden и профили
+# Signal words and profiles
 # ==========================
 SIGNALWORDS_B1: List[str] = CFG_SIGNALWORDS_B1
 SIGNALWORDS_B2_PLUS: List[str] = CFG_SIGNALWORDS_B2_PLUS
@@ -313,14 +318,14 @@ API_KEY = (
     else st.sidebar.text_input(CFG_MESSAGES.get("api_key_label", "OpenAI API Key"), type="password")
 )
 
-# Версия SDK (подсказка)
+# SDK version (hint)
 try:
     import openai as _openai
     st.sidebar.caption(f"OpenAI SDK: v{_openai.__version__}")
 except Exception:
     pass
 
-# Модель (динамический список с фильтром)
+# Model (dynamic list with filter)
 model_options = get_model_options(API_KEY)
 model = st.sidebar.selectbox(
     CFG_MESSAGES.get("model_label", "Model"),
@@ -329,21 +334,23 @@ model = st.sidebar.selectbox(
     help=CFG_MESSAGES.get("model_help", ""),
 )
 
-# Профиль промпта
+# Prompt profile
 profile = st.sidebar.selectbox(
     CFG_MESSAGES.get("profile_label", "Prompt profile"),
     list(PROMPT_PROFILES.keys()),
     index=list(PROMPT_PROFILES.keys()).index("strict") if "strict" in PROMPT_PROFILES else 0,
 )
 
-# CEFR уровень
-level = st.sidebar.selectbox(CFG_MESSAGES.get("cefr_label", "CEFR"), ["A1", "A2", "B1", "B2", "C1", "C2"], index=2)
+# CEFR level
+level = st.sidebar.selectbox(CFG_MESSAGES.get("cefr_label", "CEFR Level"), ["A1", "A2", "B1", "B2", "C1", "C2"], index=2)
 
-# L1 язык пользователя (переводы/глоссы)
+# L1 user language (translations/glosses)
 L1_code = st.sidebar.selectbox(CFG_MESSAGES.get("l1_label", "Your language (L1)"), list(L1_LANGS.keys()), index=0)
 L1_meta = L1_LANGS[L1_code]
+# Add debug option to the sidebar
+st.session_state["debug"] = st.sidebar.checkbox("DEBUG: Show debug info", value=False)
 
-# Температура (некоторые модели не принимают)
+# Temperature (some models don't accept it)
 TMIN, TMAX, TDEF, TSTEP = CFG_TMIN, CFG_TMAX, CFG_TDEF, CFG_TSTEP
 temperature = st.sidebar.slider(CFG_MESSAGES.get("temp_label", "Temperature"), TMIN, TMAX, TDEF, TSTEP)
 
@@ -363,7 +370,7 @@ _guid_label = st.sidebar.selectbox(
 st.session_state["csv_with_header"] = csv_with_header
 st.session_state["anki_guid_policy"] = "unique" if _guid_label.startswith("unique") else "stable"
 
-# Сохраняем выбор для доступа внутри функций
+# Save choices for access within functions
 st.session_state["prompt_profile"] = profile
 st.session_state["level"] = level
 st.session_state["L1_code"] = L1_code
@@ -378,7 +385,7 @@ if "results" not in st.session_state:
 
 st.title(CFG_MESSAGES.get("app_title", "📘 Anki CSV/Anki Builder — Dutch Cloze Cards"))
 
-# Демо из конфига
+# Demo from config
 DEMO_WORDS = CFG_DEMO_WORDS
 
 col_demo, col_clear = st.columns([1,1])
@@ -387,7 +394,7 @@ with col_demo:
         st.session_state.input_data = DEMO_WORDS
         st.toast(CFG_MESSAGES.get("demo_loaded", "🔁 Demo loaded"), icon="✅")
 with col_clear:
-    if st.button(CFG_MESSAGES.get("clear_button", "Очистить"), type="secondary"):
+    if st.button(CFG_MESSAGES.get("clear_button", "Clear"), type="secondary"):
         st.session_state.input_data = []
         st.session_state.results = []
 
@@ -395,7 +402,7 @@ with col_clear:
 uploaded_file = st.file_uploader(CFG_MESSAGES.get("uploader_label", "Upload .txt / .md"), type=["txt", "md"], accept_multiple_files=False)
 
 # ==========================
-# Parsing входных форматов
+# Parsing input formats
 # ==========================
 
 def parse_input(text: str) -> List[Dict]:
@@ -404,7 +411,7 @@ def parse_input(text: str) -> List[Dict]:
         line = raw.strip()
         if not line:
             continue
-        # 1) Markdown-таблица: | **woord** | definitie NL | RU |
+        # 1) Markdown table: | **woord** | definitie NL | RU |
         if line.startswith("|") and "**" in line:
             parts = [p.strip() for p in line.strip("|").split("|")]
             if len(parts) >= 3:
@@ -418,13 +425,13 @@ def parse_input(text: str) -> List[Dict]:
                     entry["ru_short"] = ru_short
                 rows.append(entry)
             continue
-        # 4) TSV: woord \t def_nl
+        # 2) TSV: woord \t def_nl
         if "\t" in line:
             tparts = [p.strip() for p in line.split("\t")]
             if len(tparts) == 2:
                 rows.append({"woord": tparts[0], "def_nl": tparts[1]})
                 continue
-        # 2) Построчный: woord — def NL — RU  |  woord — def NL
+        # 3) Line format: woord — def NL — RU  |  woord — def NL
         if " — " in line:
             parts = [p.strip() for p in line.split(" — ")]
             if len(parts) == 3:
@@ -433,7 +440,7 @@ def parse_input(text: str) -> List[Dict]:
             if len(parts) == 2:
                 rows.append({"woord": parts[0], "def_nl": parts[1]})
                 continue
-        # 3) Просто слово
+        # 4) Just word
         rows.append({"woord": line})
     return rows
 
@@ -445,12 +452,12 @@ if uploaded_file is not None:
         file_text = uploaded_file.read().decode("utf-16")
     st.session_state.input_data = parse_input(file_text)
 
-# Preview входных данных
+# Preview input data
 if st.session_state.input_data:
-    st.subheader(CFG_MESSAGES.get("recognized_rows_title", "🔍 Распознанные строки"))
+    st.subheader(CFG_MESSAGES.get("recognized_rows_title", "🔍 Recognized rows"))
     st.dataframe(pd.DataFrame(st.session_state.input_data), use_container_width=True)
 else:
-    st.info(CFG_MESSAGES.get("upload_hint", "Загрузите файл или нажмите **Try demo**"))
+    st.info(CFG_MESSAGES.get("upload_hint", "Upload a file or click **Try demo**"))
 
 # ==========================
 # Helpers: sanitize, temperature policy, prompt compose
@@ -459,7 +466,11 @@ else:
 def sanitize(value: str) -> str:
     if value is None:
         return ""
-    return str(value).replace("|", "∣").strip()
+    s = str(value).replace("|", "∣").strip()
+    # Fix cloze markers by properly escaping curly braces
+    s = re.sub(r'\{(?![\{])', '{{', s)  # Single { -> {{
+    s = re.sub(r'(?<![}])\}', '}}', s)  # Single } -> }}
+    return s
 
 
 def _should_pass_temperature(model_id: str) -> bool:
@@ -478,7 +489,7 @@ def _det_include_signalword(woord: str, level: str) -> bool:
     return False
 
 
-# compose_instructions_en импортируется из prompts.py
+# compose_instructions_en imported from prompts.py
 
 
 # ==========================
@@ -537,7 +548,7 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float, 
         "ALLOWED_SIGNALWORDS": sig_list,
     }
 
-    # Формируем kwargs с учётом поддержки temperature
+    # Form kwargs with temperature support consideration
     kwargs = dict(
         model=model,
         instructions=instructions,
@@ -564,7 +575,7 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float, 
 
     parsed = extract_json_block(getattr(resp, "output_text", ""))
 
-    # Санитизация
+    # Sanitization
     card = {
         "L2_word": sanitize(parsed.get("L2_word", payload["L2_word"])),
         "L2_cloze": sanitize(parsed.get("L2_cloze", "")),
@@ -574,7 +585,7 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float, 
         "L1_gloss": sanitize(parsed.get("L1_gloss", payload.get("preferred_L1_gloss", ""))),
     }
 
-    # Валидация + один repair-pass при необходимости
+    # Validation + one repair pass if needed
     problems = validate_card(card)
     if problems:
         repair_prompt = instructions + "\n\nREPAIR: The previous JSON has issues: " + "; ".join(problems) + ". " \
@@ -609,10 +620,16 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float, 
                 "L1_gloss": sanitize(parsed2.get("L1_gloss", card["L1_gloss"])),
             }
 
+    # Debug logging
+    if st.session_state.get("debug"):
+        st.write("Raw GPT response:", getattr(resp, "output_text", ""))
+        st.write("Parsed JSON block:", parsed)
+        st.write("Sanitized card:", card)
+
     return card
 
 # ==========================
-# CSV генерация (динамическая шапка под L1)
+# CSV generation (dynamic header for L1)
 # ==========================
 
 def generate_csv(results: List[Dict], L1_code: str, include_header: bool = True) -> str:
@@ -622,11 +639,11 @@ def generate_csv(results: List[Dict], L1_code: str, include_header: bool = True)
 
     if include_header:
         writer.writerow([
-            CFG_CSV_HEADERS_FIXED.get("nl_word", "NL-слово"),
-            CFG_CSV_HEADERS_FIXED.get("nl_sentence_cloze", "Предложение NL (с cloze)"),
+            CFG_CSV_HEADERS_FIXED.get("nl_word", "Dutch Word"),
+            CFG_CSV_HEADERS_FIXED.get("nl_sentence_cloze", "Dutch Sentence (with cloze)"),
             f"{meta['csv_translation']} {meta['label']}",
-            CFG_CSV_HEADERS_FIXED.get("collocations_nl", "Коллокации (NL)"),
-            CFG_CSV_HEADERS_FIXED.get("definition_nl", "Определение NL"),
+            CFG_CSV_HEADERS_FIXED.get("collocations_nl", "Collocations (Dutch)"),
+            CFG_CSV_HEADERS_FIXED.get("definition_nl", "Definition (Dutch)"),
             f"{meta['csv_gloss']} {meta['label']}",
         ])
     for r in results:
@@ -660,14 +677,15 @@ def _compute_guid(c: Dict, policy: str, run_id: str) -> str:
         import genanki as _g
         return _g.guid_for(base)
     except Exception:
-        # Fallback: короткий SHA1
+        # Fallback: short SHA1
         return hashlib.sha1(base.encode('utf-8')).hexdigest()[:10]
+
 
 def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_id: str) -> bytes:
     if not HAS_GENANKI:
         raise RuntimeError("genanki is not installed. Add 'genanki' to requirements.txt and redeploy.")
 
-    # Подставляем заголовок хинта
+    # Substitute hint header
     front = FRONT_HTML_TEMPLATE.replace("{L1_LABEL}", L1_label)
     back = BACK_HTML_TEMPLATE
 
@@ -719,7 +737,7 @@ def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_i
         deck.add_note(note)
 
     pkg = genanki.Package(deck)
-    # Если позже будут медиа — pkg.media_files = [...]
+    # If media files later — pkg.media_files = [...]
     bio = io.BytesIO()
     pkg.write_to_file(bio)
     return bio.getvalue()
@@ -728,12 +746,12 @@ def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_i
 # Generate section
 # ==========================
 if st.session_state.input_data:
-    if st.button(CFG_MESSAGES.get("generate_button", "Сгенерировать карточки"), type="primary"):
+    if st.button(CFG_MESSAGES.get("generate_button", "Generate cards"), type="primary"):
         if not API_KEY:
-            st.error(CFG_MESSAGES.get("no_api_key", "Укажи OPENAI_API_KEY в Secrets или в поле слева."))
+            st.error(CFG_MESSAGES.get("no_api_key", "Please provide OPENAI_API_KEY in Secrets or in the field on the left."))
         else:
             client = OpenAI(api_key=API_KEY)
-            # Запоминаем run_id для GUID'ов в этом прогоне
+            # Remember run_id for GUIDs in this run
             st.session_state.anki_run_id = st.session_state.get("anki_run_id") or str(int(time.time()))
             st.session_state.results = []
             st.session_state.model_id = model
@@ -747,7 +765,7 @@ if st.session_state.input_data:
                     )
                     st.session_state.results.append(card)
                 except Exception as e:
-                    st.error(CFG_MESSAGES.get("error_card_processing_fmt", "Ошибка при обработке слова '{woord}': {error}").format(woord=row.get('woord','?'), error=e))
+                    st.error(CFG_MESSAGES.get("error_card_processing_fmt", "Error processing word '{woord}': {error}").format(woord=row.get('woord','?'), error=e))
                 finally:
                     progress.progress(int((idx + 1) / max(total,1) * 100))
                     if CFG_API_DELAY > 0:
@@ -757,14 +775,14 @@ if st.session_state.input_data:
 # Preview & downloads
 # ==========================
 if st.session_state.results:
-    st.subheader(CFG_MESSAGES.get("preview_title_fmt", "📋 Предпросмотр карточек (первые {limit})").format(limit=CFG_PREVIEW_LIMIT))
+    st.subheader(CFG_MESSAGES.get("preview_title_fmt", "📋 Card preview (first {limit})").format(limit=CFG_PREVIEW_LIMIT))
     preview_df = pd.DataFrame(st.session_state.results)[:CFG_PREVIEW_LIMIT]
     st.dataframe(preview_df, use_container_width=True)
 
     # CSV download
     csv_data = generate_csv(st.session_state.results, L1_code, include_header=st.session_state.get('csv_with_header', True))
     st.download_button(
-        label=CFG_MESSAGES.get("csv_download_label", "📥 Скачать anki_cards.csv"),
+        label=CFG_MESSAGES.get("csv_download_label", "📥 Download anki_cards.csv"),
         data=csv_data,
         file_name="anki_cards.csv",
         mime="text/csv",
@@ -780,15 +798,15 @@ if st.session_state.results:
                 run_id=st.session_state.get("anki_run_id", str(int(time.time())))
             )
             st.download_button(
-                label=CFG_MESSAGES.get("apkg_download_label", "🧩 Скачать колоду Anki (.apkg)"),
+                label=CFG_MESSAGES.get("apkg_download_label", "🧩 Download Anki deck (.apkg)"),
                 data=anki_bytes,
                 file_name="dutch_cloze.apkg",
                 mime="application/octet-stream",
             )
         except Exception as e:
-            st.error(CFG_MESSAGES.get("error_apkg_build_fmt", "Не удалось собрать .apkg: {error}").format(error=e))
+            st.error(CFG_MESSAGES.get("error_apkg_build_fmt", "Failed to build .apkg: {error}").format(error=e))
     else:
-        st.info(CFG_MESSAGES.get("apkg_install_hint", "Для экспорта в .apkg добавь в requirements.txt строку 'genanki' и перезагрузи приложение."))
+        st.info(CFG_MESSAGES.get("apkg_install_hint", "To export to .apkg, add 'genanki' to requirements.txt and redeploy the app."))
 
 # ==========================
 # Footer

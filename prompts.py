@@ -3,13 +3,13 @@ from typing import Dict
 try:
     from config import L1_LANGS
 except Exception:
-    # Минимальный фоллбэк, если config недоступен
+    # Minimal fallback if config unavailable
     L1_LANGS = {
-        "RU": {"label": "RU", "name": "Russian", "csv_translation": "Перевод", "csv_gloss": "Перевод слова"}
+        "RU": {"label": "RU", "name": "Russian", "csv_translation": "Translation", "csv_gloss": "Word gloss"}
     }
 
 # ==========================
-# CEFR правила/длины и стили профилей
+# CEFR rules/lengths and profile styles
 # ==========================
 
 CEFR_LENGTHS: Dict[str, tuple[int, int] | None] = {
@@ -38,33 +38,33 @@ PROMPT_PROFILES: Dict[str, str] = {
 }
 
 # ==========================
-# Системный промпт (опционально)
+# System prompt (optional)
 # ==========================
 
 PROMPT_SYSTEM: str = (
-    "Ты — опытный лексикограф NL→RU и автор учебных материалов. "
-    "Сгенерируй СТРОГО JSON-объект карточки Anki со структурой: "
+    "You are an experienced NL→RU lexicographer and educational material author. "
+    "Generate STRICT JSON object for Anki card with structure: "
     "{woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short}.\n"
-    "ОБЩИЕ ПРАВИЛА (ОЧЕНЬ ВАЖНО):\n"
-    "• Верни ТОЛЬКО JSON БЕЗ пояснений и форматирования.\n"
-    "• НИ ОДНО поле не пустое. Запрещены пустые строки.\n"
-    "• Символ '|' в текстах запрещён.\n"
-    "• Если дано def_nl — строго следуй ему; не меняй базовое значение слова.\n"
-    "• Сохраняй часть речи: ru_short должен соответствовать части речи слова "
-    "(глагол→инфинитив; существительное→существительное; прилагательное→прилагательное).\n"
-    "• ru_sentence — ТОЧНЫЙ перевод NL-предложения, без перефраза.\n"
-    "• cloze_sentence — одно короткое естественное NL-предложение (8–14 слов, настоящее время, "
-    "без имён/цифр/кавычек); целевое слово внутри {{c1::…}}.\n"
-    "  Если слово — разделимый глагол: {{c1::stam}} … {{c2::partikel}}. Иначе только {{c1::…}}.\n"
-    "• collocaties — РОВНО 3 частотные связки, разделитель '; ' (точка с запятой и пробел).\n"
-    "  Каждая связка — 2–3 слова с целевым словом в естественной форме. Нельзя: бессмысленные пары "
-    "(например, 'een grote caissière'), редкие/книжные, имена собственные.\n"
-    "• Избегай редкой лексики; используй A2–B1 вокруг целевого слова.\n\n"
-    "ФОРМАТ ВЫВОДА: один JSON-объект с ключами: woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short.\n\n"
+    "GENERAL RULES (VERY IMPORTANT):\n"
+    "• Return ONLY JSON WITHOUT explanations and formatting.\n"
+    "• NO field may be empty. Empty strings prohibited.\n"
+    "• Symbol '|' in texts is prohibited.\n"
+    "• If def_nl given — strictly follow it; don't change base word meaning.\n"
+    "• Preserve part of speech: ru_short should match word's part of speech "
+    "(verb→infinitive; noun→noun; adjective→adjective).\n"
+    "• ru_sentence — EXACT translation of NL sentence, without paraphrase.\n"
+    "• cloze_sentence — one short natural NL sentence (8–14 words, present tense, "
+    "without names/digits/quotes); target word inside {{c1::…}}.\n"
+    "  If word is separable verb: {{c1::stem}} … {{c2::particle}}. Otherwise only {{c1::…}}.\n"
+    "• collocaties — EXACTLY 3 frequent combinations, separator '; ' (semicolon and space).\n"
+    "  Each combination — 2–3 words with target word in natural form. Forbidden: meaningless pairs "
+    "(e.g., 'een grote caissière'), rare/bookish, proper names.\n"
+    "• Avoid rare vocabulary; use A2–B1 around target word.\n\n"
+    "OUTPUT FORMAT: one JSON object with keys: woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short.\n\n"
 )
 
 # ==========================
-# Построение инструкций для модели (EN)
+# Building instructions for model (EN)
 # ==========================
 
 def compose_instructions_en(L1_code: str, level: str, profile: str) -> str:
@@ -77,25 +77,25 @@ You are an expert Dutch→{L1_name} lexicographer and didactics writer.
 Return a STRICT JSON object with fields:
 - L2_word (the Dutch target word/lemma),
 - L2_cloze (ONE short natural Dutch sentence with cloze),
-- L1_sentence (an exact translation of that sentence into :{L1_name}),
+- L1_sentence (an exact translation of that sentence into {L1_name}),
 - L2_collocations (EXACTLY 3 frequent Dutch collocations that contain the target word, joined with '; '),
 - L2_definition (ONE short Dutch definition),
 - L1_gloss (1–2 words in {L1_name} matching the word's part of speech and meaning).
 
 Hard requirements:
 - Output JSON ONLY, no explanations. No field may be empty. Do not use the '|' character.
-- Cloze: wrap the target in {{c1::...}}. If the word is a separable verb, use {{c1::stem}} … {{c2::particle}}; otherwise ONLY {{c1::...}} (no {{c2::...}}).
-- The Dutch sentence: natural; present tense by default; avoid names, digits, and quotes; modern Dutch; keep length within CEFR constraints.
-- L1_sentence: an exact, faithful translation.
-- L2_collocations: EXACTLY three frequent, natural combinations with the target word; join using '; '. Avoid odd or infrequent pairings and proper names. Signal words MAY appear here if natural, but are NOT required.
-- L2_definition: short Dutch definition. L1_gloss: 1–2 words in {L1_name}; obey any provided Dutch definition.
-CLOZE COMPLIANCE (VERY IMPORTANT):
-- You MUST use exactly TWO curly braces on both sides: {{c1::...}} (and {{c2::...}} for separable verbs).
-- Never use single braces {c1::...} or other bracket styles.
-- BAD: {c1::raak}  GOOD: {{c1::raak}}
-- If the verb is NOT separable, do NOT output {{c2::...}} at all.
-- Ensure the final sentence contains at least one {{c1::...}} and all braces are balanced.
+- For cloze format use EXACTLY double curly braces: "{{c1::target}}" (with exactly two opening and two closing braces).
+- For separable verbs use "{{c1::stem}} … {{c2::particle}}" format.
+- Never use single braces or triple braces.
+- Example 1 (regular): "Ik {{c1::begrijp}} deze zin."
+- Example 2 (separable): "Ik {{c1::ruim}} mijn kamer {{c2::op}}."
 
+The Dutch sentence must be:
+- Natural and contextually clear
+- Present tense by default
+- Avoid names, digits, quotes
+- Modern Dutch only
+- Keep within CEFR length constraints
 """.strip()
 
     lvl = f"CEFR: {level}. {level_rule}".strip()
