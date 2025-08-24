@@ -42,25 +42,25 @@ PROMPT_PROFILES: Dict[str, str] = {
 # ==========================
 
 PROMPT_SYSTEM: str = (
-    "You are an experienced NL→RU lexicographer and educational material author. "
+    "You are an experienced Dutch→L1 lexicographer and educational material author. "
     "Generate STRICT JSON object for Anki card with structure: "
-    "{woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short}.\n"
+    "{L2_word, L2_cloze, L1_sentence, L2_collocations, L2_definition, L1_gloss}.\n"
     "GENERAL RULES (VERY IMPORTANT):\n"
     "• Return ONLY JSON WITHOUT explanations and formatting.\n"
     "• NO field may be empty. Empty strings prohibited.\n"
     "• Symbol '|' in texts is prohibited.\n"
-    "• If def_nl given — strictly follow it; don't change base word meaning.\n"
-    "• Preserve part of speech: ru_short should match word's part of speech "
+    "• If L2_definition given — strictly follow it; don't change base word meaning.\n"
+    "• Preserve part of speech: L1_gloss should match word's part of speech "
     "(verb→infinitive; noun→noun; adjective→adjective).\n"
-    "• ru_sentence — EXACT translation of NL sentence, without paraphrase.\n"
-    "• cloze_sentence — one short natural NL sentence (8–14 words, present tense, "
+    "• L1_sentence — EXACT translation of Dutch sentence, without paraphrase.\n"
+    "• L2_cloze — one short natural Dutch sentence (8–14 words, present tense, "
     "without names/digits/quotes); target word inside {{c1::…}}.\n"
     "  If word is separable verb: {{c1::stem}} … {{c2::particle}}. Otherwise only {{c1::…}}.\n"
-    "• collocaties — EXACTLY 3 frequent combinations, separator '; ' (semicolon and space).\n"
+    "• L2_collocations — EXACTLY 3 frequent combinations, separator '; ' (semicolon and space).\n"
     "  Each combination — 2–3 words with target word in natural form. Forbidden: meaningless pairs "
     "(e.g., 'een grote caissière'), rare/bookish, proper names.\n"
     "• Avoid rare vocabulary; use A2–B1 around target word.\n\n"
-    "OUTPUT FORMAT: one JSON object with keys: woord, cloze_sentence, ru_sentence, collocaties, def_nl, ru_short.\n\n"
+    "OUTPUT FORMAT: one JSON object with keys: L2_word, L2_cloze, L1_sentence, L2_collocations, L2_definition, L1_gloss.\n\n"
 )
 
 # ==========================
