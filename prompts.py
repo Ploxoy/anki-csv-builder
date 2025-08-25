@@ -1,106 +1,85 @@
+# prompts.py — v2 (terse/strict)
 from typing import Dict
 
 try:
-    from config import L1_LANGS
+    from config import (  # type: ignore
+        L1_LANGS as CFG_L1_LANGS,
+        LEVEL_RULES_EN as CFG_LEVEL_RULES_EN,
+        PROMPT_PROFILES as CFG_PROMPT_PROFILES,
+    )
 except Exception:
-    # Minimal fallback if config unavailable
-    L1_LANGS = {
-        "RU": {"label": "RU", "name": "Russian", "csv_translation": "Translation", "csv_gloss": "Word gloss"}
+    CFG_L1_LANGS = {
+        "RU": {"label": "RU", "name": "Russian", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
+        "EN": {"label": "EN", "name": "English", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
+        "ES": {"label": "ES", "name": "Spanish", "csv_translation": "Traducción", "csv_gloss": "Glosa"},
+        "DE": {"label": "DE", "name": "German", "csv_translation": "Übersetzung", "csv_gloss": "Kurzgloss"},
+    }
+    CFG_LEVEL_RULES_EN: Dict[str, str] = {
+        "A1": "6–9 words; no subclauses; no passive; no perfect.",
+        "A2": "8–12 words; may use modal verbs; simple past allowed; no complex clauses.",
+        "B1": "10–14 words; simple subclause allowed (omdat/als/terwijl); ~50% with one signal word.",
+        "B2": "12–16 words; complex allowed; passive allowed; ~50% with one signal word (extended list).",
+        "C1": "14–18 words; advanced structures; neutral‑formal.",
+        "C2": "No length limit; native‑like precision.",
+    }
+    CFG_PROMPT_PROFILES: Dict[str, str] = {
+        "strict":   "Literal and concise.",
+        "balanced": "Natural and clear.",
+        "exam":     "Neutral‑formal; precise; no colloquialisms.",
+        "creative": "Mild figurativeness if clarity is kept.",
     }
 
-# ==========================
-# CEFR rules/lengths and profile styles
-# ==========================
+L1_LANGS = CFG_L1_LANGS
+LEVEL_RULES_EN = CFG_LEVEL_RULES_EN
+PROMPT_PROFILES = CFG_PROMPT_PROFILES
 
-CEFR_LENGTHS: Dict[str, tuple[int, int] | None] = {
-    "A1": (6, 9),
-    "A2": (8, 12),
-    "B1": (10, 14),
-    "B2": (12, 16),
-    "C1": (14, 18),
-    "C2": None,  # no limit
-}
 
-LEVEL_RULES_EN: Dict[str, str] = {
-    "A1": "Use only very basic surrounding vocabulary. 6–9 words. No subordinate clauses, no passive, no perfect tenses.",
-    "A2": "Basic vocabulary. 8–12 words. May use modal verbs (kunnen, moeten) and simple past (was/had); still no complex clauses.",
-    "B1": "10–14 words. You MAY use a simple subordinate clause (omdat/als/terwijl). In roughly 50% of cases include ONE suitable Dutch signal word.",
-    "B2": "12–16 words. More complex structures allowed; passive allowed. Keep sentence natural. In ~50% of cases include ONE signal word from the extended list.",
-    "C1": "14–18 words. Advanced structures allowed; neutral-formal style.",
-    "C2": "No length limit; native-like naturalness and precision.",
-}
-
-PROMPT_PROFILES: Dict[str, str] = {
-    "strict": "Be literal and concise; avoid figurative language; keep the simplest structure that satisfies CEFR.",
-    "balanced": "Natural and clear; minor synonymy allowed if it improves fluency.",
-    "exam": "Neutral-formal register; precise; avoid colloquialisms.",
-    "creative": "Allow mild figurativeness if it keeps clarity and CEFR constraints.",
-}
-
-# ==========================
-# Building instructions for model (EN)
-# ==========================
+from string import Template  # add this import at the top of prompts.py
 
 def compose_instructions_en(L1_code: str, level: str, profile: str) -> str:
+    """
+    Terse, strict instruction for Responses API; L2 is Dutch, L1 is user-selected.
+    Uses string.Template so braces like {c1::...} and {{c1::...}} remain literal.
+    """
     L1_name = L1_LANGS[L1_code]["name"]
-    level_rule = LEVEL_RULES_EN[level]
-    profile_rule = PROMPT_PROFILES.get(profile, "")
+    lvl = LEVEL_RULES_EN.get(level, "")
+    prof = PROMPT_PROFILES.get(profile, "")
 
-    base = f"""
-You are an expert Dutch→{L1_name} lexicographer and didactics writer.
-Return a STRICT JSON object with fields:
-- L2_word (the Dutch target word/lemma),
-- L2_cloze (ONE short natural Dutch sentence with cloze),
-- L1_sentence (an exact translation of that sentence into {L1_name}),
-- L2_collocations (EXACTLY 3 frequent Dutch collocations that contain the target word, joined with '; '),
-- L2_definition (ONE short Dutch definition),
-- L1_gloss (1–2 words in {L1_name} matching the word's part of speech and meaning).
+    tpl = Template("""
+You are a Dutch→${L1_NAME} lexicographer. Produce exactly ONE JSON object with fields:
+L2_word, L2_cloze, L1_sentence, L2_collocations, L2_definition, L1_gloss.
 
-Hard requirements:
-- Output JSON ONLY, no explanations. No field may be empty. Do not use the '|' character.
-- For cloze format use EXACTLY double curly braces: "{{{{c1::target}}}}" (with exactly two opening and two closing braces).
-- For separable verbs use "{{{{c1::stem}}}} … {{{{c2::particle}}}}" format.
-- Never use single braces or triple braces.
-- Example 1 (regular): "Ik {{{{c1::begrijp}}}} deze zin."
-- Example 2 (separable): "Ik {{{{c1::ruim}}}} mijn kamer {{{{c2::op}}}}."
+DO:
+- Use ONE natural Dutch sentence.
+- Cloze MUST use exactly double braces: {{c1::...}}. For separable verbs: {{c1::stem}} … {{c2::particle}}. Never output {{c2::...}} unless separable.
+- Keep the sentence within CEFR guidance: ${LEVEL} → ${LEVEL_RULE}
+- L1_sentence: faithful translation to ${L1_NAME}.
+- L2_collocations: EXACTLY 3 frequent, natural collocations containing the target word; join with '; '.
+- L2_definition: short Dutch definition.
+- L1_gloss: 1–2 words in ${L1_NAME} matching the part of speech/meaning.
+- If input JSON says INCLUDE_SIGNALWORD=true and provides ALLOWED_SIGNALWORDS, include exactly ONE suitable signal word in the sentence (only if natural).
 
-The Dutch sentence must be:
-- Natural and contextually clear
-- Present tense by default
-- Avoid names, digits, quotes
-- Modern Dutch only
-- Keep within CEFR length constraints
-""".strip()
+DON'T:
+- No extra text around JSON. No pipes '|' anywhere. No proper names/dates/digits/quotes. No empty fields.
+- No single braces {c1::word} or triple braces {{{c1::word}}}.
 
-    lvl = f"CEFR: {level}. {level_rule}".strip()
-    prof = f"Style: {profile_rule}".strip()
+CLOZE COMPLIANCE (VERY IMPORTANT):
+- You MUST use exactly TWO curly braces on both sides: {{c1::...}} (and {{c2::...}} for separable verbs).
+- BAD: {c1::raak}    GOOD: {{c1::raak}}
+- If the verb is NOT separable, do NOT output {{c2::...}} at all.
+- Ensure the final sentence contains at least one {{c1::...}} and all braces are balanced.
 
-    return base + "\n\n" + lvl + "\n" + prof
-- L2_cloze (ONE short natural Dutch sentence with cloze),
-- L1_sentence (an exact translation of that sentence into {L1_name}),
-- L2_collocations (EXACTLY 3 frequent Dutch collocations that contain the target word, joined with '; '),
-- L2_definition (ONE short Dutch definition),
-- L1_gloss (1–2 words in {L1_name} matching the word's part of speech and meaning).
+Examples:
+- Regular: Ik {{c1::begrijp}} deze zin.
+- Separable: Ik {{c1::ruim}} mijn kamer {{c2::op}}.
 
-Hard requirements:
-- Output JSON ONLY, no explanations. No field may be empty. Do not use the '|' character.
-- For cloze format use EXACTLY double curly braces: "{{c1::target}}" (with exactly two opening and two closing braces).
-- For separable verbs use "{{c1::stem}} … {{c2::particle}}" format.
-- Never use single braces or triple braces.
-- Example 1 (regular): "Ik {{c1::begrijp}} deze zin."
-- Example 2 (separable): "Ik {{c1::ruim}} mijn kamer {{c2::op}}."
+Style: ${PROFILE}
+""".strip())
 
-The Dutch sentence must be:
-- Natural and contextually clear
-- Present tense by default
-- Avoid names, digits, quotes
-- Modern Dutch only
-- Keep within CEFR length constraints
-""".strip()
-
-    lvl = f"CEFR: {level}. {level_rule}".strip()
-    prof = f"Style: {profile_rule}".strip()
-
-    return base + "\n\n" + lvl + "\n" + prof
-
+    return tpl.substitute(
+        L1_NAME=L1_name,
+        LEVEL=level,
+        LEVEL_RULE=lvl,
+        PROFILE=prof,
+    )
 
