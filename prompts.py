@@ -58,11 +58,11 @@ Return a STRICT JSON object with fields:
 
 Hard requirements:
 - Output JSON ONLY, no explanations. No field may be empty. Do not use the '|' character.
-- For cloze format use EXACTLY double curly braces: "{{c1::target}}" (with exactly two opening and two closing braces).
-- For separable verbs use "{{c1::stem}} … {{c2::particle}}" format.
+- For cloze format use EXACTLY double curly braces: "{{{{c1::target}}}}" (with exactly two opening and two closing braces).
+- For separable verbs use "{{{{c1::stem}}}} … {{{{c2::particle}}}}" format.
 - Never use single braces or triple braces.
-- Example 1 (regular): "Ik {{c1::begrijp}} deze zin."
-- Example 2 (separable): "Ik {{c1::ruim}} mijn kamer {{c2::op}}."
+- Example 1 (regular): "Ik {{{{c1::begrijp}}}} deze zin."
+- Example 2 (separable): "Ik {{{{c1::ruim}}}} mijn kamer {{{{c2::op}}}}."
 
 The Dutch sentence must be:
 - Natural and contextually clear

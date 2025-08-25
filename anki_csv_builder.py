@@ -356,7 +356,7 @@ temperature = st.sidebar.slider(CFG_MESSAGES.get("temp_label", "Temperature"), T
 
 # CSV/Anki export options
 csv_with_header = st.sidebar.checkbox(
-    CFG_MESSAGES.get("csv_header_checkbox", "CSV: включить строку заголовка"),
+    CFG_MESSAGES.get("csv_header_checkbox", "CSV: include header row"),
     value=True,
     help=CFG_MESSAGES.get("csv_header_help", "")
 )
