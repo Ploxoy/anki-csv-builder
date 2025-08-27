@@ -161,6 +161,12 @@ csv_with_header = st.sidebar.checkbox(
     value=True,
     help="Uncheck if your Anki import treats the first row as a record."
 )
+csv_anki_header = st.sidebar.checkbox(
+    "CSV: use Anki field names",
+    value=True,
+    help="Header row will be: L2_word|L2_cloze|L1_sentence|L2_collocations|L2_definition|L1_gloss|L1_hint"
+)
+
 _guid_label = st.sidebar.selectbox(
     "Anki GUID policy",
     ["stable (update/skip existing)", "unique per export (import as new)"],
@@ -519,25 +525,33 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
 
 
 # ----- CSV generation -----
-def generate_csv(results: List[Dict], L1_code: str, include_header: bool = True, include_extras: bool = False) -> str:
-    """Build CSV with '|' delimiter; optional header and metadata columns."""
+def generate_csv(
+    results: List[Dict],
+    L1_code: str,
+    include_header: bool = True,
+    include_extras: bool = False,
+    anki_field_header: bool = True,
+) -> str:
+    """Build CSV with '|' delimiter; optional localized or Anki-field header."""
     meta = L1_LANGS[L1_code]
     csv_buffer = io.StringIO()
     writer = csv.writer(csv_buffer, delimiter='|', lineterminator='\n')
 
-    header = [
-        "NL-слово",
-        "Предложение NL (с cloze)",
-        f"{meta['csv_translation']} {meta['label']}",
-        "Коллокации (NL)",
-        "Определение NL",
-        f"{meta['csv_gloss']} {meta['label']}",
-        "Подсказка (L1)",
-    ]
-    if include_extras:
-        header += ["CEFR", "Profile", "Model", "L1"]
-
     if include_header:
+        if anki_field_header:
+            header = ["L2_word","L2_cloze","L1_sentence","L2_collocations","L2_definition","L1_gloss","L1_hint"]
+        else:
+            header = [
+                "NL-слово",
+                "Предложение NL (с cloze)",
+                f"{meta['csv_translation']} {meta['label']}",
+                "Коллокации (NL)",
+                "Определение NL",
+                f"{meta['csv_gloss']} {meta['label']}",
+                "Подсказка (L1)",
+            ]
+        if include_extras:
+            header += ["CEFR", "Profile", "Model", "L1"]
         writer.writerow(header)
 
     for r in results:
@@ -560,6 +574,7 @@ def generate_csv(results: List[Dict], L1_code: str, include_header: bool = True,
         writer.writerow(row)
 
     return csv_buffer.getvalue()
+
 
 # ----- Anki .apkg export -----
 ANKI_MODEL_ID = 1607392319  # stable random int
@@ -743,10 +758,13 @@ if st.session_state.results:
     st.dataframe(preview_df, use_container_width=True)
 
     csv_data = generate_csv(
-        st.session_state.results, L1_code,
+        st.session_state.results,
+        L1_code,
         include_header=st.session_state.get("csv_with_header", True),
-        include_extras=True
+        include_extras=True,
+    anki_field_header=csv_anki_header,  
     )
+
     st.download_button(
         label="📥 Download anki_cards.csv",
         data=csv_data,
