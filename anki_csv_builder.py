@@ -53,6 +53,8 @@ try:
         FRONT_HTML_TEMPLATE as CFG_FRONT_HTML_TEMPLATE,
         BACK_HTML_TEMPLATE as CFG_BACK_HTML_TEMPLATE,
         CSS_STYLING as CFG_CSS_STYLING,
+        CSV_DELIMITER as CFG_CSV_DELIM,
+        CSV_LINETERMINATOR as CFG_CSV_EOL,
     )
 except Exception:
     # Minimal fallback config
@@ -90,6 +92,8 @@ except Exception:
     CFG_FRONT_HTML_TEMPLATE = """<div class="card-inner">{{cloze:L2_cloze}}</div>"""
     CFG_BACK_HTML_TEMPLATE = """<div class="card-inner">{{cloze:L2_cloze}}<div class="answer">{{L1_sentence}}</div></div>"""
     CFG_CSS_STYLING = ""
+    CFG_CSV_DELIM = '|'
+    CFG_CSV_EOL = '\n'
 
 # Import the prompt builder
 from prompts import compose_instructions_en, PROMPT_PROFILES as PR_PROMPT_PROFILES  # type: ignore
@@ -157,10 +161,18 @@ except Exception:
     pass
 
 model_options = get_model_options(API_KEY)
+
+# -- changed: prefer "gpt-4.1-mini" as the default selection if available --
+_default_model_preferred = "gpt-4.1-mini"
+try:
+    _default_index = model_options.index(_default_model_preferred)
+except ValueError:
+    _default_index = 0
+
 model = st.sidebar.selectbox(
     "Model",
     model_options,
-    index=0,
+    index=_default_index,
     help="Best quality — gpt-5 (if available); balanced — gpt-4.1; faster/cheaper — gpt-4o / gpt-5-mini.",
 )
 
@@ -177,6 +189,13 @@ L1_meta = L1_LANGS[L1_code]
 
 TMIN, TMAX, TDEF, TSTEP = CFG_TMIN, CFG_TMAX, CFG_TDEF, CFG_TSTEP
 temperature = st.sidebar.slider("Temperature", TMIN, TMAX, TDEF, TSTEP)
+
+# Add a checkbox to control token limiting
+limit_tokens = st.sidebar.checkbox(
+    "Limit output tokens",
+    value=True,
+    help="Check to limit the number of output tokens. Uncheck to allow unlimited tokens."
+)
 
 # CSV & Anki export options
 csv_with_header = st.sidebar.checkbox(
@@ -233,7 +252,7 @@ uploaded_file = st.file_uploader("Upload .txt / .md", type=["txt", "md"], accept
 def parse_input(text: str) -> List[Dict]:
     """
     Supported formats:
-      1) Markdown table row: | **woord** | definitie NL | RU |
+      1) Markdown table row: | woord | definitie NL | RU |
       2) Line: 'woord — definitie NL — RU' or 'woord — definitie NL'
       3) Single word per line
       4) TSV (2 cols): 'woord\\tdef_nl'
@@ -243,26 +262,34 @@ def parse_input(text: str) -> List[Dict]:
         line = raw.strip()
         if not line:
             continue
-        # 1) Markdown table
-        if line.startswith("|") and "**" in line:
+
+        # 1) Markdown table: skip headers/separators like |---| or |:---:|
+        if line.startswith("|"):
+            compact = re.sub(r"\s+", "", line)
+            if re.match(r"^\|\:?-{3,}[\|\:\-]{0,}\:?$", compact):
+                # alignment/separator row → skip
+                continue
             parts = [p.strip() for p in line.strip("|").split("|")]
-            if len(parts) >= 3:
-                woord = re.sub(r"\*", "", parts[0]).strip()
+            if len(parts) >= 2:
+                # remove markdown bold/italics from cell 0
+                woord = re.sub(r"[*_`]", "", parts[0]).strip()
                 def_nl = parts[1].strip()
-                ru_short = parts[2].strip()
-                entry = {"woord": woord}
+                entry = {"woord": woord} if woord else {}
                 if def_nl:
                     entry["def_nl"] = def_nl
-                if ru_short:
-                    entry["ru_short"] = ru_short
-                rows.append(entry)
-            continue
+                if len(parts) >= 3 and parts[2].strip():
+                    entry["ru_short"] = parts[2].strip()
+                if entry:
+                    rows.append(entry)
+                continue
+
         # 4) TSV (2 cols)
         if "\t" in line:
             tparts = [p.strip() for p in line.split("\t")]
-            if len(tparts) == 2:
+            if len(tparts) == 2 and tparts[0]:
                 rows.append({"woord": tparts[0], "def_nl": tparts[1]})
                 continue
+
         # 2) Line with em-dash
         if " — " in line:
             parts = [p.strip() for p in line.split(" — ")]
@@ -272,6 +299,7 @@ def parse_input(text: str) -> List[Dict]:
             if len(parts) == 2:
                 rows.append({"woord": parts[0], "def_nl": parts[1]})
                 continue
+
         # 3) Single word
         rows.append({"woord": line})
     return rows
@@ -316,17 +344,130 @@ def _det_include_signalword(woord: str, level: str) -> bool:
     return False
 
 # ----- JSON extraction and validation -----
+RE_CODE_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
+RE_FIRST_OBJECT = re.compile(r"\{[\s\S]*\}")
+
+REQUIRED_KEYS = {"L2_word","L2_cloze","L1_sentence","L2_collocations","L2_definition","L1_gloss"}
+
+def _try_parse_candidate(s: str) -> Dict:
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict) and REQUIRED_KEYS.issubset(obj.keys()):
+            return obj
+    except Exception:
+        pass
+    return {}
+
+def _brace_scan_pick(text: str) -> Dict:
+    """
+    Scan text and try every {...} span with brace-balancing.
+    Return the first dict that parses and has all required keys.
+    """
+    opens = []
+    for i, ch in enumerate(text):
+        if ch == "{":
+            opens.append(i)
+        elif ch == "}" and opens:
+            start = opens.pop()
+            chunk = text[start:i+1]
+            obj = _try_parse_candidate(chunk)
+            if obj:
+                return obj
+    return {}
+
 def extract_json_block(text: str) -> Dict:
-    """Extract first {...} block and parse JSON; return {} on failure."""
+    """
+    Robustly extract the JSON object from model output.
+    Supports fenced code blocks, plain text with multiple objects, and balanced-brace scanning.
+    """
     if not text:
         return {}
-    m = re.search(r"\{[\s\S]*\}", text)
-    if not m:
-        return {}
+
+    # 1) Try fenced code block ```json ... ```
+    m = RE_CODE_FENCE.search(text)
+    if m:
+        cand = m.group(1).strip()
+        obj = _try_parse_candidate(cand)
+        if obj:
+            return obj
+        # Some models still add prose around; try brace-scan inside fence
+        obj = _brace_scan_pick(cand)
+        if obj:
+            return obj
+
+    # 2) Try to find any {...} in the whole text (first pass: greedy regex then validate)
+    m2 = RE_FIRST_OBJECT.search(text)
+    if m2:
+        cand2 = m2.group(0)
+        obj = _try_parse_candidate(cand2)
+        if obj:
+            return obj
+
+    # 3) Final attempt: balanced-brace scan over the full text
+    obj = _brace_scan_pick(text)
+    if obj:
+        return obj
+
+    return {}
+
+
+# --- new helper: безопасно получить текст ответа ---
+def _get_response_text(resp) -> str:
+    if not resp:
+        return ""
+    # Try direct attribute
+    text = getattr(resp, "output_text", None)
+    if text:
+        return text
+    # Newer SDK objects: resp.output[0].content[0].text.value
     try:
-        return json.loads(m.group(0))
+        parts = []
+        for out in getattr(resp, "output", []) or []:
+            for item in getattr(out, "content", []) or []:
+                # gpt-5/o3 return objects with .text.value
+                txt_obj = getattr(item, "text", None)
+                if txt_obj and hasattr(txt_obj, "value"):
+                    parts.append(txt_obj.value)
+                elif isinstance(item, dict):
+                    if "text" in item and isinstance(item["text"], dict) and "value" in item["text"]:
+                        parts.append(item["text"]["value"])
+                    elif "text" in item:
+                        parts.append(item["text"])
+                elif hasattr(item, "text"):
+                    parts.append(item.text)
+        if parts:
+            return "".join(parts)
     except Exception:
+        pass
+    return str(resp)
+def _get_response_parsed(resp) -> Dict:
+    """Extract parsed JSON from Responses API (gpt-5/o3 structured outputs)."""
+    if not resp:
         return {}
+    # Fast path (SDK convenience):
+    try:
+        p = getattr(resp, "output_parsed", None)
+        if isinstance(p, dict) and p:
+            return p
+    except Exception:
+        pass
+    # Walk the new structure: resp.output[*].content[*].parsed
+    try:
+        for out in (getattr(resp, "output", None) or []):
+            content = getattr(out, "content", None) or []
+            for item in content:
+                # object attribute
+                if hasattr(item, "parsed"):
+                    p = getattr(item, "parsed")
+                    if isinstance(p, dict) and p:
+                        return p
+                # dict-ish fallback
+                if isinstance(item, dict) and isinstance(item.get("parsed"), dict) and item["parsed"]:
+                    return item["parsed"]
+    except Exception:
+        pass
+    return {}
+
 
 def validate_card(card: Dict) -> List[str]:
     """Field presence, cloze presence, collocations len=3, gloss len<=2, no pipes."""
@@ -453,6 +594,23 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
         '"L1_gloss": "<1-2 ' + L1_LANGS[L1_code]["name"] + ' words>"'
         '}'
     )
+    json_schema = {
+    "name": "AnkiClozeCard",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["L2_word","L2_cloze","L1_sentence","L2_collocations","L2_definition","L1_gloss"],
+        "properties": {
+            "L2_word":        {"type":"string","minLength":1},
+            "L2_cloze":       {"type":"string","minLength":1},
+            "L1_sentence":    {"type":"string","minLength":1},
+            "L2_collocations":{"type":"string","minLength":1},
+            "L2_definition":  {"type":"string","minLength":1},
+            "L1_gloss":       {"type":"string","minLength":1},
+        },
+    },
+}
 
     kwargs = dict(
         model=model,
@@ -463,14 +621,27 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
             json_template
         ),
     )
+
+    if limit_tokens:
+        kwargs["max_output_tokens"] = 3000
     if _should_pass_temperature(model):
         kwargs["temperature"] = temperature
 
     # --- First request ---
     try:
         resp = client.responses.create(**kwargs)
+        parsed = getattr(resp, "output_parsed", None)
+        if not parsed:
+            parsed = extract_json_block(_get_response_text(resp))
     except Exception as e:
         msg = str(e)
+        st.error(f"OpenAI API Error: {msg}")  # Enhanced error logging
+        st.error(f"Request kwargs: {kwargs}") # Log the request parameters
+        try:
+            st.error(f"Response text: {_get_response_text(resp)}") # Log the response text if available
+        except:
+            pass
+
         if "Unsupported parameter: 'temperature'" in msg or "param': 'temperature'" in msg:
             no_temp = st.session_state.get("no_temp_models", set())
             no_temp.add(model)
@@ -480,7 +651,12 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
         else:
             raise
 
-    parsed = extract_json_block(getattr(resp, "output_text", ""))
+    parsed = _get_response_parsed(resp)  # предпочитаем structured outputs
+    if not parsed:
+        raw_response = _get_response_text(resp)
+        st.write(f"Raw GPT-5 Response: {raw_response}")  # Log raw response
+        parsed = extract_json_block(raw_response)  # фолбэк на текст
+
 
     # Sanitize and collect fields
     card = {
@@ -511,12 +687,27 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
             instructions=repair_prompt,
             input=("Previous JSON:\n" + json.dumps(card, ensure_ascii=False)),
         )
+        if limit_tokens:
+            repair_kwargs["max_output_tokens"] = 3000
         if _should_pass_temperature(model):
             repair_kwargs["temperature"] = temperature
+
         try:
             resp2 = client.responses.create(**repair_kwargs)
+            parsed2 = _get_response_parsed(resp2) or extract_json_block(_get_response_text(resp2))
+            if not parsed:
+                raw_preview = (getattr(resp2, "output_text", "") or "").strip()
+                if raw_preview:
+                    st.warning("Model returned non-parsable output; showing first 300 chars for debugging.")
+                    st.code(raw_preview[:300] + ("…" if len(raw_preview) > 300 else ""), language="text")
         except Exception as e:
             msg = str(e)
+            st.error(f"Repair request OpenAI API Error: {msg}") # Enhanced error logging for repair
+            st.error(f"Repair request kwargs: {repair_kwargs}") # Log repair request parameters
+            try:
+                st.error(f"Repair response text: {_get_response_text(resp2)}") # Log repair response text
+            except:
+                pass
             if "Unsupported parameter: 'temperature'" in msg or "param': 'temperature'" in msg:
                 no_temp = st.session_state.get("no_temp_models", set())
                 no_temp.add(model)
@@ -525,7 +716,7 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
                 resp2 = client.responses.create(**repair_kwargs)
             else:
                 raise
-        parsed2 = extract_json_block(getattr(resp2, "output_text", ""))
+        parsed2 = extract_json_block(_get_response_text(resp2))
         if parsed2:
             card.update({
                 "L2_word": sanitize(parsed2.get("L2_word", card["L2_word"])),
@@ -548,10 +739,10 @@ def generate_csv(
     include_extras: bool = False,
     anki_field_header: bool = True,
 ) -> str:
-    """Build CSV with '|' delimiter; optional localized or Anki-field header."""
+    """Build CSV with configured delimiter; optional localized or Anki-field header."""
     meta = L1_LANGS[L1_code]
     csv_buffer = io.StringIO()
-    writer = csv.writer(csv_buffer, delimiter='|', lineterminator='\n')
+    writer = csv.writer(csv_buffer, delimiter=CFG_CSV_DELIM, lineterminator=CFG_CSV_EOL)
 
     if include_header:
         if anki_field_header:
@@ -728,5 +919,5 @@ if st.session_state.results:
 st.caption(
     "Tips: 1) Better Dutch definitions on input → better examples and glosses. "
     "2) From B1, ~50% of sentences include a signal word. "
-    "3) Some models (gpt-5/o3) ignore temperature and will be retried zonder it."
+    "3) Some models (gpt-5/o3) ignore temperature and will be retried without it."
 )

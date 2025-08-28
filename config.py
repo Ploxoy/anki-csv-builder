@@ -80,10 +80,10 @@ LEVEL_RULES_EN: Dict[str, str] = {
 # ==========================
 
 L1_LANGS: Dict[str, Dict[str, str]] = {
-    "RU": {"label": "RU", "name": "Russian", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
+    "RU": {"label": "RU", "name": "Russian", "csv_translation": "Перевод", "csv_gloss": "Перевод слова"},
     "EN": {"label": "EN", "name": "English", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
-    "ES": {"label": "ES", "name": "Spanish", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
-    "DE": {"label": "DE", "name": "German", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
+    "ES": {"label": "ES", "name": "Spanish", "csv_translation": "Traducción", "csv_gloss": "Glosa"},
+    "DE": {"label": "DE", "name": "German", "csv_translation": "Übersetzung", "csv_gloss": "Kurzgloss"},
 }
 
 # For compatibility if separate map expected elsewhere
