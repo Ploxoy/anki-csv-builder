@@ -65,6 +65,16 @@ PROMPT_PROFILES: Dict[str, str] = {
     "creative": "Allow mild figurativeness if it keeps clarity and CEFR constraints.",
 }
 
+# CEFR level rules for prompts
+LEVEL_RULES_EN: Dict[str, str] = {
+    "A1": "6–9 words; no subclauses; no passive; no perfect.",
+    "A2": "8–12 words; may use modal verbs; simple past allowed; no complex clauses.",
+    "B1": "10–14 words; simple subclause allowed (omdat/als/terwijl); ~50% with one signal word.",
+    "B2": "12–16 words; complex allowed; passive allowed; ~50% with one signal word (extended list).",
+    "C1": "14–18 words; advanced structures; neutral‑formal.",
+    "C2": "No length limit; native‑like precision.",
+}
+
 # ==========================
 # L1 languages and CSV header localizations
 # ==========================
@@ -230,7 +240,7 @@ BACK_HTML_TEMPLATE: str = """
   {{cloze:L2_cloze}}
   <div class="answer">
     {{#L1_sentence}}
-    <div class="section ru">{{L1_sentence}}</div>
+    <div class="section l1">{{L1_sentence}}</div>
     {{/L1_sentence}}
 
     {{#L2_collocations}}
@@ -266,7 +276,7 @@ BACK_HTML_TEMPLATE: str = """
 
     {{#L2_word}}
     <div class="section lemma">
-      <span class="lemma-nl">{{L2_word}}</span> — <span class="lemma-ru">{{L1_gloss}}</span>
+      <span class="lemma-nl">{{L2_word}}</span> — <span class="lemma-l1">{{L1_gloss}}</span>
     </div>
     {{/L2_word}}
   </div>
@@ -321,12 +331,6 @@ def get_preferred_order() -> Dict[str, int]:
     return _PREFERRED_ORDER.copy()
 
 def get_block_substrings() -> Tuple[str, ...]:
-    """Returns tuple of blocked substrings"""
-    return _BLOCK_SUBSTRINGS
-
-def get_allowed_prefixes() -> Tuple[str, ...]:
-    """Returns tuple of allowed prefixes"""
-    return _ALLOWED_PREFIXES
     """Returns tuple of blocked substrings"""
     return _BLOCK_SUBSTRINGS
 

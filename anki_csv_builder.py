@@ -37,6 +37,7 @@ try:
         SIGNALWORDS_B2_PLUS as CFG_SIGNALWORDS_B2_PLUS,
         PROMPT_PROFILES as CFG_PROMPT_PROFILES,
         L1_LANGS as CFG_L1_LANGS,
+        DEMO_WORDS as CFG_DEMO_WORDS,
         PAGE_TITLE as CFG_PAGE_TITLE,
         PAGE_LAYOUT as CFG_PAGE_LAYOUT,
         TEMPERATURE_MIN as CFG_TMIN,
@@ -45,6 +46,13 @@ try:
         TEMPERATURE_STEP as CFG_TSTEP,
         PREVIEW_LIMIT as CFG_PREVIEW_LIMIT,
         API_REQUEST_DELAY as CFG_API_DELAY,
+        ANKI_MODEL_ID as CFG_ANKI_MODEL_ID,
+        ANKI_DECK_ID as CFG_ANKI_DECK_ID,
+        ANKI_MODEL_NAME as CFG_ANKI_MODEL_NAME,
+        ANKI_DECK_NAME as CFG_ANKI_DECK_NAME,
+        FRONT_HTML_TEMPLATE as CFG_FRONT_HTML_TEMPLATE,
+        BACK_HTML_TEMPLATE as CFG_BACK_HTML_TEMPLATE,
+        CSS_STYLING as CFG_CSS_STYLING,
     )
 except Exception:
     # Minimal fallback config
@@ -62,11 +70,26 @@ except Exception:
                     "EN": {"label": "EN", "name": "English", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
                     "ES": {"label": "ES", "name": "Spanish", "csv_translation": "Traducción", "csv_gloss": "Glosa"},
                     "DE": {"label": "DE", "name": "German", "csv_translation": "Übersetzung", "csv_gloss": "Kurzgloss"}}
+    CFG_DEMO_WORDS = [
+        {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
+        {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
+        {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
+        {"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
+        {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
+        {"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
+    ]
     CFG_PAGE_TITLE = "Anki CSV Builder — Cloze (NL)"
     CFG_PAGE_LAYOUT = "wide"
     CFG_TMIN, CFG_TMAX, CFG_TDEF, CFG_TSTEP = 0.2, 0.8, 0.4, 0.1
     CFG_PREVIEW_LIMIT = 20
     CFG_API_DELAY = 0.0
+    CFG_ANKI_MODEL_ID = 1607392319
+    CFG_ANKI_DECK_ID = 1970010101
+    CFG_ANKI_MODEL_NAME = "Dutch Cloze (L2/L1)"
+    CFG_ANKI_DECK_NAME = "Dutch • Cloze"
+    CFG_FRONT_HTML_TEMPLATE = """<div class="card-inner">{{cloze:L2_cloze}}</div>"""
+    CFG_BACK_HTML_TEMPLATE = """<div class="card-inner">{{cloze:L2_cloze}}<div class="answer">{{L1_sentence}}</div></div>"""
+    CFG_CSS_STYLING = ""
 
 # Import the prompt builder
 from prompts import compose_instructions_en, PROMPT_PROFILES as PR_PROMPT_PROFILES  # type: ignore
@@ -186,14 +209,7 @@ st.session_state["L1_code"] = L1_code
 st.title("📘 Anki CSV/Anki Builder — Dutch Cloze Cards")
 
 # ----- Demo & clear -----
-DEMO_WORDS = [
-    {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
-    {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
-    {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
-    {"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
-    {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
-    {"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
-]
+DEMO_WORDS = CFG_DEMO_WORDS
 
 if "input_data" not in st.session_state:
     st.session_state.input_data: List[Dict] = []
@@ -335,7 +351,7 @@ def validate_card(card: Dict) -> List[str]:
 # ----- Cloze auto-fix helpers -----
 _SEP_PARTICLES = {
     "aan","af","achter","bij","binnen","buiten","door","heen","in","langs","mee",
-    "na","nader","om","omhoog","omlaag","omver","onder","оп","over","samen",
+    "na","nader","om","omhoog","omlaag","omver","onder","op","over","samen",
     "tegen","thuis","toe","uit","vast","voor","voort","weg","weer","wijzer","terug"
 }
 # Fix typo: replace "оп" with "op" if someone pastes Cyrillic 'п'
@@ -577,89 +593,6 @@ def generate_csv(
 
 
 # ----- Anki .apkg export -----
-ANKI_MODEL_ID = 1607392319  # stable random int
-ANKI_DECK_ID = 1970010101   # stable random int
-
-FRONT_HTML_TEMPLATE = """
-<div class="card-inner">
-  {{cloze:L2_cloze}}
-  <div class="hints">
-    {{#L1_gloss}}
-    <details class="hint">
-      <summary>{L1_LABEL}</summary>
-      <div class="hint-body">{{L1_gloss}}</div>
-    </details>
-    {{/L1_gloss}}
-
-    {{#L2_definition}}
-    <details class="hint">
-      <summary>NL</summary>
-      <div class="hint-body">{{L2_definition}}</div>
-    </details>
-    {{/L2_definition}}
-  </div>
-</div>
-""".strip()
-
-BACK_HTML_TEMPLATE = """
-<div class="card-inner">
-  {{cloze:L2_cloze}}
-  <div class="answer">
-    {{#L1_sentence}}
-    <div class="section ru">{{L1_sentence}}</div>
-    {{/L1_sentence}}
-
-    {{#L2_collocations}}
-    <div class="section">
-      <div class="colloc">{{L2_collocations}}</div>
-    </div>
-    {{/L2_collocations}}
-
-    {{#L2_definition}}
-    <div class="section def">{{L2_definition}}</div>
-    {{/L2_definition}}
-
-    {{#L2_word}}
-    <div class="section lemma">
-      <span class="lemma-nl">{{L2_word}}</span> — <span class="lemma-ru">{{L1_gloss}}</span>
-    </div>
-    {{/L2_word}}
-  </div>
-</div>
-""".strip()
-
-CSS_STYLING = """
-:root{
-  --fs-base: clamp(18px, 1.2vw + 1.1vh, 28px);
-  --fs-sm: calc(var(--fs-base) * .9);
-  --fs-lg: calc(var(--fs-base) * 1.12);
-  --hl-col:#1976d2;
-  --hl-bg:rgba(25,118,210,.14);
-}
-html, body { height:100%; }
-.card{ font-size: var(--fs-base); line-height: 1.55; margin:0; min-height:100vh; display:flex; justify-content:center; align-items:flex-start; background: transparent; }
-.card-inner{ width: min(92vw, 80ch); padding: 2.5vh 3vw; }
-.answer { margin-top:.75em; }
-.section + .section { margin-top:.55em; padding-top:.45em; border-top:1px solid rgba(0,0,0,.14); }
-@media (prefers-color-scheme: dark){ .section + .section { border-top-color: rgba(255,255,255,.22); } }
-.ru { font-weight:600; font-size: var(--fs-lg); }
-.def { font-style: italic; opacity:.9; font-size: var(--fs-sm); }
-.lemma { font-weight:600; }
-.lemma-nl{ color:var(--hl-col); font-variant: small-caps; letter-spacing:.02em; }
-.lemma-ru{ opacity:.9; }
-.colloc{ margin:.1em 0 0 1.1em; padding:0; }
-.colloc li{ margin:.12em 0; }
-.cloze{ color:var(--hl-col); font-weight:700; }
-mark.hl{ background:var(--hl-bg); color:inherit; padding:0 .12em; border-radius:.18em; }
-img{ max-width:100%; height:auto; }
-@media (max-width: 420px){ .card-inner{ width: 94vw; padding: 2vh 3vw; } }
-.hints{ margin-top:.6em; display:flex; gap:1em 1.2em; flex-wrap:wrap; align-items:flex-start; }
-.hint summary{ cursor:pointer; text-decoration: underline dotted; list-style:none; display:inline-block; }
-.hint summary::-webkit-details-marker{ display:none; }
-.hint[open] summary{ opacity:.75; text-decoration:none; }
-.hint-body{ margin-top:.25em; font-size: var(--fs-sm); }
-""".strip()
-
 def _compute_guid(c: Dict, policy: str, run_id: str) -> str:
     """Stable GUID (content-based), or unique-per-export if policy=='unique'."""
     base = f"{c.get('L2_word','')}|{c.get('L2_cloze','')}"
@@ -675,12 +608,12 @@ def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_i
     if not HAS_GENANKI:
         raise RuntimeError("genanki is not installed. Add 'genanki' to requirements.txt and redeploy.")
 
-    front = FRONT_HTML_TEMPLATE.replace("{L1_LABEL}", L1_label)
-    back = BACK_HTML_TEMPLATE
+    front = CFG_FRONT_HTML_TEMPLATE.replace("{L1_LABEL}", L1_label)
+    back = CFG_BACK_HTML_TEMPLATE
 
     model = genanki.Model(
-        ANKI_MODEL_ID,
-        "Dutch Cloze (L2/L1)",
+        CFG_ANKI_MODEL_ID,
+        CFG_ANKI_MODEL_NAME,
         fields=[
             {"name": "L2_word"},
             {"name": "L2_cloze"},
@@ -691,11 +624,11 @@ def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_i
             {"name": "L1_hint"},
         ],
         templates=[{"name": "Cloze", "qfmt": front, "afmt": back}],
-        css=CSS_STYLING,
+        css=CFG_CSS_STYLING,
         model_type=genanki.Model.CLOZE,
     )
 
-    deck = genanki.Deck(ANKI_DECK_ID, "Dutch • Cloze")
+    deck = genanki.Deck(CFG_ANKI_DECK_ID, CFG_ANKI_DECK_NAME)
 
     for c in cards:
         note = genanki.Note(
@@ -762,7 +695,7 @@ if st.session_state.results:
         L1_code,
         include_header=st.session_state.get("csv_with_header", True),
         include_extras=True,
-    anki_field_header=csv_anki_header,  
+        anki_field_header=csv_anki_header,  
     )
 
     st.download_button(
@@ -795,5 +728,5 @@ if st.session_state.results:
 st.caption(
     "Tips: 1) Better Dutch definitions on input → better examples and glosses. "
     "2) From B1, ~50% of sentences include a signal word. "
-    "3) Some models (gpt-5/o3) ignore temperature and will be retried without it."
+    "3) Some models (gpt-5/o3) ignore temperature and will be retried zonder it."
 )
