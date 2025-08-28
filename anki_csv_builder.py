@@ -28,6 +28,11 @@ except Exception:
 
 # Config (import with safe fallbacks)
 try:
+    from config import SIGNALWORD_GROUPS as CFG_SIGNALWORD_GROUPS
+except Exception:
+    CFG_SIGNALWORD_GROUPS = {}
+
+try:
     from config import (  # type: ignore
         DEFAULT_MODELS as CFG_DEFAULT_MODELS,
         _PREFERRED_ORDER as CFG_PREFERRED_ORDER,
@@ -106,6 +111,103 @@ DEFAULT_MODELS: List[str] = CFG_DEFAULT_MODELS
 _PREFERRED_ORDER = CFG_PREFERRED_ORDER
 _BLOCK_SUBSTRINGS = CFG_BLOCK_SUBSTRINGS
 _ALLOWED_PREFIXES = CFG_ALLOWED_PREFIXES
+
+
+_LEVEL_ORDER = ["A1","A2","B1","B2","C1","C2"]
+
+def _levels_up_to(level: str) -> list[str]:
+    """Inclusive list of levels from A1 up to 'level' (for pooling)."""
+    try:
+        idx = _LEVEL_ORDER.index(level)
+    except ValueError:
+        idx = 2  # default B1
+    return _LEVEL_ORDER[:idx+1]
+
+def _build_signal_pool(level: str) -> dict[str, list[str]]:
+    """
+    Build per-group pool using SIGNALWORD_GROUPS up to the current level.
+    Example: for B2 include A1+A2+B1+B2 entries.
+    """
+    pool: dict[str, list[str]] = {}
+    lvls = set(_levels_up_to(level))
+    for grp, by_lvl in (CFG_SIGNALWORD_GROUPS or {}).items():
+        items: list[str] = []
+        for lv, arr in by_lvl.items():
+            if lv in lvls:
+                items.extend(arr)
+        if items:
+            pool[grp] = items
+    return pool
+
+def _init_sig_usage():
+    """Session-persistent usage counter for signal words (per run)."""
+    if "sig_usage" not in st.session_state:
+        st.session_state.sig_usage = {}  # word -> count
+    if "sig_last" not in st.session_state:
+        st.session_state.sig_last = None
+
+def _choose_signalwords(level: str, n: int = 3, force_balance: bool = False) -> list[str]:
+    """
+    Pick a small shuffled set of candidates with light balancing:
+    - pool includes groups up to 'level'
+    - prefer words with smallest usage count
+    - avoid immediate repetition (do not include last used)
+    - ensure group diversity if possible
+    """
+    _init_sig_usage()
+    pool = _build_signal_pool(level)
+    if not pool:
+        return []
+
+    # Flatten with (word, group) pairs
+    pairs: list[tuple[str,str]] = []
+    for g, arr in pool.items():
+        for w in arr:
+            pairs.append((w, g))
+
+    # Sort by usage count (ascending), then by group name to stabilize
+    used = st.session_state.sig_usage
+    last = st.session_state.sig_last
+    pairs.sort(key=lambda wg: (used.get(wg[0], 0), wg[1], wg[0]))
+
+    result: list[str] = []
+    seen_groups: set[str] = set()
+
+    for w, g in pairs:
+        if w == last:
+            continue  # avoid immediate repetition
+        # If force_balance, try to spread across groups first
+        if force_balance and g in seen_groups:
+            continue
+        result.append(w)
+        seen_groups.add(g)
+        if len(result) >= n:
+            break
+
+    # Fallback if we couldn't reach n because of strict spread
+    if len(result) < n:
+        for w, g in pairs:
+            if w == last or w in result:
+                continue
+            result.append(w)
+            if len(result) >= n:
+                break
+
+    return result
+
+def _note_signalword_used(sentence: str, allowed: list[str]) -> None:
+    """If any allowed signal word appears in the final sentence, increment its usage and remember last."""
+    if not sentence or not allowed:
+        return
+    low = sentence.lower()
+    for w in allowed:
+        # rough containment; avoids strict tokenization but works well for our use
+        if w.lower() in low:
+            st.session_state.sig_usage[w] = st.session_state.sig_usage.get(w, 0) + 1
+            st.session_state.sig_last = w
+            break
+
+
 
 def _sort_key(model_id: str) -> tuple:
     for k, rank in _PREFERRED_ORDER.items():
@@ -195,6 +297,13 @@ limit_tokens = st.sidebar.checkbox(
     "Limit output tokens",
     value=True,
     help="Check to limit the number of output tokens. Uncheck to allow unlimited tokens."
+)
+
+# Add a checkbox to control raw response display
+display_raw_response = st.sidebar.checkbox(
+    "Display raw responses",
+    value=False,
+    help="Check to display raw responses from the OpenAI API."
 )
 
 # CSV & Anki export options
@@ -568,9 +677,9 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
 
     # Decide whether to include a signal word
     include_sig = _det_include_signalword(row.get("woord", ""), level)
-    sig_list = SIGNALWORDS_B1 if level == "B1" else (
-        SIGNALWORDS_B2_PLUS if level in ("B2", "C1", "C2") else []
-    )
+    # For B2+ we enforce stronger balancing; for B1 we just suggest
+    force_balance = level in ("B2","C1","C2")
+    sig_list = _choose_signalwords(level, n=3, force_balance=force_balance)
 
     # Payload to send (input data)
     payload = {
@@ -654,7 +763,8 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
     parsed = _get_response_parsed(resp)  # предпочитаем structured outputs
     if not parsed:
         raw_response = _get_response_text(resp)
-        st.write(f"Raw GPT-5 Response: {raw_response}")  # Log raw response
+        if display_raw_response:
+            st.write(f"Raw GPT-5 Response: {raw_response}")  # Log raw response
         parsed = extract_json_block(raw_response)  # фолбэк на текст
 
 
@@ -705,17 +815,11 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
             st.error(f"Repair request OpenAI API Error: {msg}") # Enhanced error logging for repair
             st.error(f"Repair request kwargs: {repair_kwargs}") # Log repair request parameters
             try:
-                st.error(f"Repair response text: {_get_response_text(resp2)}") # Log repair response text
+                raw_response2 = _get_response_text(resp2)
+                if display_raw_response:
+                    st.error(f"Repair response text: {raw_response2}") # Log repair response text
             except:
                 pass
-            if "Unsupported parameter: 'temperature'" in msg or "param': 'temperature'" in msg:
-                no_temp = st.session_state.get("no_temp_models", set())
-                no_temp.add(model)
-                st.session_state.no_temp_models = no_temp
-                repair_kwargs.pop("temperature", None)
-                resp2 = client.responses.create(**repair_kwargs)
-            else:
-                raise
         parsed2 = extract_json_block(_get_response_text(resp2))
         if parsed2:
             card.update({
@@ -726,6 +830,8 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
                 "L2_definition": sanitize(parsed2.get("L2_definition", card["L2_definition"])),
                 "L1_gloss": sanitize(parsed2.get("L1_gloss", card["L1_gloss"])),
             })
+    
+    _note_signalword_used(card.get("L2_cloze",""), sig_list)
 
     return card
 
