@@ -1,11 +1,10 @@
 """
-Configuration for Anki CSV Builder
+Configuration file for Anki CSV Builder.
+Contains all configurable constants, templates, and demo data.
 """
 
-from typing import List, Dict, Tuple
-
 # ==========================
-# Models: default list + dynamic loading from API
+# OpenAI Models Configuration
 # ==========================
 
 DEFAULT_MODELS: List[str] = [
@@ -17,6 +16,8 @@ DEFAULT_MODELS: List[str] = [
     "gpt-4o-mini",
     "o3-mini",
 ]
+
+FALLBACK_MODEL = "gpt-4o-mini"
 
 _PREFERRED_ORDER: Dict[str, int] = {  # lower number = higher in list
     "gpt-5": 0,
@@ -117,18 +118,23 @@ PROMPT_PROFILES: Dict[str, str] = {
     "creative": "Allow mild figurativeness if it keeps clarity and CEFR constraints.",
 }
 
-# CEFR level rules for prompts
-LEVEL_RULES_EN: Dict[str, str] = {
-    "A1": "6–9 words; no subclauses; no passive; no perfect.",
-    "A2": "8–12 words; may use modal verbs; simple past allowed; no complex clauses.",
-    "B1": "10–14 words; simple subclause allowed (omdat/als/terwijl); ~50% with one signal word.",
-    "B2": "12–16 words; complex allowed; passive allowed; ~50% with one signal word (extended list).",
-    "C1": "14–18 words; advanced structures; neutral‑formal.",
-    "C2": "No length limit; native‑like precision.",
-}
+# ==========================
+# Temperature Configuration
+# ==========================
+
+DEFAULT_TEMPERATURE = 0.3
+MIN_TEMPERATURE = 0.0
+MAX_TEMPERATURE = 2.0
 
 # ==========================
-# L1 languages and CSV header localizations
+# CEFR Levels Configuration
+# ==========================
+
+CEFR_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
+DEFAULT_CEFR_LEVEL = "B1"
+
+# ==========================
+# Language Configuration
 # ==========================
 
 L1_LANGS: Dict[str, Dict[str, str]] = {
@@ -150,113 +156,107 @@ CSV_HEADERS_FIXED: Dict[str, str] = {
 }
 
 # ==========================
-# Demo data
+# CSV Export Configuration
 # ==========================
 
-DEMO_WORDS: List[Dict[str, str]] = [
-    {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
-    {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
-    {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
-    {"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
-    {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
-    {"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
-]
+CSV_DELIMITER = "|"  # Pipe delimiter for Anki compatibility
 
 # ==========================
-# UI settings
+# Validation Rules
 # ==========================
 
-PAGE_TITLE: str = "Anki CSV/Anki Builder — Dutch Cloze Cards"
-PAGE_LAYOUT: str = "wide"
-
-# Temperature slider settings
-TEMPERATURE_MIN: float = 0.2
-TEMPERATURE_MAX: float = 0.8
-TEMPERATURE_DEFAULT: float = 0.4
-TEMPERATURE_STEP: float = 0.1
-
-# CSV settings
-CSV_DELIMITER: str = '|'
-CSV_LINETERMINATOR: str = '\n'
-
-# Preview settings
-PREVIEW_LIMIT: int = 20
-
-# Delay between API requests (in seconds)
-API_REQUEST_DELAY: float = 0.1
+MAX_COLLOCATIONS = 3
+MIN_COLLOCATIONS = 3
+MAX_L1_GLOSS_WORDS = 2
 
 # ==========================
-# CSV headers
+# Anki Template Configuration
 # ==========================
 
-CSV_HEADERS: List[str] = [
-    "Dutch Word",
-    "Dutch Sentence (with cloze)",
-    "Translation",
-    "Collocations",
-    "Dutch Definition",
-    "Word Gloss",
-]
+# HTML templates for front and back of flashcards
+ANKI_FRONT_TEMPLATE = """
+<!-- Front template with cloze deletion and collocations -->
+<div class="card">
+    <!-- ...existing code... -->
+</div>
+"""
+
+ANKI_BACK_TEMPLATE = """
+<!-- Back template showing answer with translation and definition -->
+<div class="card">
+    <!-- ...existing code... -->
+</div>
+"""
+
+ANKI_CSS = """
+/* CSS styling for flashcards with responsive design */
+.card {
+    /* ...existing code... */
+}
+"""
 
 # ==========================
-# Messages and hints
+# Demo Data
 # ==========================
 
-MESSAGES = {
-    # General hints
-    "demo_loaded": "🔁 Demo set of 6 words loaded",
-    "no_api_key": "Please provide OPENAI_API_KEY in Secrets or in the field on the left.",
-    "temperature_unavailable": "Temperature unavailable for this model; it will be ignored.",
-    "help_temperature": "Best quality — gpt-5 (if available); balanced — gpt-4.1; faster/cheaper — gpt-4o / gpt-5-mini.",
-    "help_stream": "Streaming in Responses API: final JSON will be available after stream completion",
-    "placeholder_custom_model": "e.g., gpt-5-2025-08-07",
-    "footer_tips": (
-        "Tips: 1) Better NL definitions on input = more accurate examples and glosses. "
-        "2) At B1+ levels, roughly half the sentences will include signaalwoorden. "
-        "3) Some models (gpt-5/o3) don't support temperature and will ignore it."
-    ),
-
-    # UI texts
-    "app_title": "📘 Anki CSV/Anki Builder — Dutch Cloze Cards",
-    "sidebar_api_header": "🔐 API Settings",
-    "api_key_label": "OpenAI API Key",
-    "model_label": "Model",
-    "model_help": "Best quality — gpt-5 (if available); balanced — gpt-4.1; faster/cheaper — gpt-4o / gpt-5-mini.",
-    "profile_label": "Prompt profile",
-    "cefr_label": "CEFR Level",
-    "l1_label": "Your language (L1)",
-    "temp_label": "Temperature",
-    "csv_header_checkbox": "CSV: include header row",
-    "csv_header_help": "Uncheck if Anki imports the first row as a record.",
-    "anki_guid_policy_label": "Anki GUID policy",
-    "anki_guid_policy_options": [
-        "stable (update/skip existing)",
-        "unique per export (import as new)"
-    ],
-    "anki_guid_policy_help": (
-        "stable: same notes are recognized as existing/updatable\n"
-        "unique: each export gets a new GUID — Anki treats them as new notes."
-    ),
-    "uploader_label": "Upload .txt / .md",
-    "recognized_rows_title": "🔍 Recognized rows",
-    "upload_hint": "Upload a file or click Try demo",
-    "try_demo_button": "Try demo",
-    "clear_button": "Clear",
-    "generate_button": "Generate cards",
-    "preview_title_fmt": "📋 Card preview (first {limit})",
-    "csv_download_label": "📥 Download anki_cards.csv",
-    "apkg_download_label": "🧩 Download Anki deck (.apkg)",
-    "apkg_install_hint": "To export to .apkg, add 'genanki' to requirements.txt and redeploy the app.",
-
-    # Error messages (format strings)
-    "error_card_processing_fmt": "Error processing word '{woord}': {error}",
-    "error_apkg_build_fmt": "Failed to build .apkg: {error}",
+# Sample input data for testing and demonstration
+DEMO_DATA = {
+    "simple": """opruimen
+aanraken
+bedanken""",
+    
+    "with_context": """opruimen | Ik ga mijn kamer opruimen voordat mijn ouders thuiskomen.
+aanraken | Je mag de schilderijen in het museum niet aanraken.
+bedanken | Ik wil je bedanken voor je hulp met mijn huiswerk.""",
+    
+    "markdown_table": """| Dutch Word | Context |
+|------------|---------|
+| opruimen | Ik ga mijn kamer opruimen voordat mijn ouders thuiskomen. |
+| aanraken | Je mag de schilderijen in het museum niet aanraken. |
+| bedanken | Ik wil je bedanken voor je hulp met mijn huiswerk. |"""
 }
 
 # ==========================
-# Anki: identifiers and names
+# System Messages
 # ==========================
 
+# Error messages and user feedback text
+MESSAGES = {
+    "api_error": "Error calling OpenAI API: {error}",
+    "json_parse_error": "Could not parse JSON response",
+    "validation_error": "Card validation failed: {error}",
+    "repair_failed": "Failed to repair invalid card",
+    "export_success": "Export completed successfully",
+    "no_cards_generated": "No valid cards were generated",
+}
+
+# ==========================
+# Regular Expressions
+# ==========================
+
+# Patterns for text processing and validation
+REGEX_PATTERNS = {
+    "json_extraction": r"\{[\s\S]*\}",  # Extract JSON from response
+    "cloze_marker": r"\{\{c\d+::[^}]+\}\}",  # Validate cloze deletion format
+    "single_brace": r'\{(?![\{])',  # Find single opening braces
+    "single_brace_close": r'(?<![}])\}',  # Find single closing braces
+}
+
+# ==========================
+# Configuration utility functions
+# ==========================
+
+def get_preferred_order() -> Dict[str, int]:
+    """Returns dictionary of preferred model ordering"""
+    return _PREFERRED_ORDER.copy()
+
+def get_block_substrings() -> Tuple[str, ...]:
+    """Returns tuple of blocked substrings"""
+    return _BLOCK_SUBSTRINGS
+
+def get_allowed_prefixes() -> Tuple[str, ...]:
+    """Returns tuple of allowed prefixes"""
+    return _ALLOWED_PREFIXES
 ANKI_MODEL_ID: int = 1607392319
 ANKI_DECK_ID: int = 1970010101
 ANKI_MODEL_NAME: str = "Dutch Cloze (L2/L1)"

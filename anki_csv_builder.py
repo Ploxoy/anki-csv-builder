@@ -520,7 +520,7 @@ def extract_json_block(text: str) -> Dict:
     return {}
 
 
-# --- new helper: безопасно получить текст ответа ---
+# --- new helper: safely get response text ---
 def _get_response_text(resp) -> str:
     if not resp:
         return ""

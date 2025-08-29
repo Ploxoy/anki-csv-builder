@@ -1,5 +1,11 @@
-# prompts.py — v2 (terse/strict)
+"""
+Prompt engineering module for CEFR-level specific instruction generation.
+Handles dynamic L1 language support and signal word inclusion logic.
+"""
+
+import random
 from typing import Dict
+from string import Template  # add this import at the top of prompts.py
 
 try:
     from config import (  # type: ignore
@@ -32,9 +38,6 @@ except Exception:
 L1_LANGS = CFG_L1_LANGS
 LEVEL_RULES_EN = CFG_LEVEL_RULES_EN
 PROMPT_PROFILES = CFG_PROMPT_PROFILES
-
-
-from string import Template  # add this import at the top of prompts.py
 
 def compose_instructions_en(L1_code: str, level: str, profile: str) -> str:
     """
@@ -82,4 +85,95 @@ Style: ${PROFILE}
         LEVEL_RULE=lvl,
         PROFILE=prof,
     )
+
+def get_cefr_specific_instructions(cefr_level):
+    """
+    Get CEFR level-specific instruction modifications.
+    
+    Args:
+        cefr_level (str): CEFR level
+    
+    Returns:
+        str: Additional instructions specific to the CEFR level
+    """
+    
+    cefr_modifications = {
+        "A1": """
+        - Use simple present tense and basic vocabulary
+        - Keep sentences short and straightforward
+        - Focus on everyday topics and common situations
+        """,
+        
+        "A2": """
+        - Include simple past and future tenses
+        - Use familiar topics and routine activities
+        - Introduce basic connecting words
+        """,
+        
+        "B1": """
+        - Use variety of tenses including perfect tenses
+        - Include more complex sentence structures
+        - Cover familiar and some unfamiliar topics
+        - May include basic signaalwoorden
+        """,
+        
+        "B2": """
+        - Use sophisticated grammar structures
+        - Include abstract concepts and complex ideas
+        - Use varied vocabulary and expressions
+        - Include signaalwoorden when appropriate
+        """,
+        
+        "C1": """
+        - Use advanced grammar and complex structures
+        - Include nuanced meanings and subtle distinctions
+        - Cover wide range of topics including specialized areas
+        - Use signaalwoorden effectively
+        """,
+        
+        "C2": """
+        - Use near-native level complexity
+        - Include idiomatic expressions and cultural references
+        - Master all grammatical structures
+        - Use signaalwoorden naturally and effectively
+        """
+    }
+    
+    return cefr_modifications.get(cefr_level, cefr_modifications["B1"])
+
+def get_separable_verb_instruction():
+    """
+    Get specific instructions for handling separable verbs in cloze format.
+    
+    Returns:
+        str: Instructions for proper separable verb cloze formatting
+    """
+    
+    return """
+    For separable verbs (like opruimen, aanraken):
+    - Use format: {{c1::stem}} ... {{c2::particle}} 
+    - Example: Ik ga mijn kamer {{c1::op}}ruimen -> Ik {{c1::ruim}} mijn kamer {{c2::op}}
+    - Ensure both parts are marked as separate cloze deletions
+    """
+
+def get_language_specific_notes(L1_language):
+    """
+    Get language-specific notes for translation and definition quality.
+    
+    Args:
+        L1_language (str): Target L1 language code
+    
+    Returns:
+        str: Language-specific instruction notes
+    """
+    
+    language_notes = {
+        "ru": "Provide natural Russian translations avoiding literal word-for-word translation.",
+        "en": "Use clear, concise English definitions and translations.",
+        "de": "Provide German translations that respect grammatical differences from Dutch.",
+        "fr": "Use appropriate French equivalents, considering false friends between Dutch and French.",
+        "es": "Provide Spanish translations that are natural and contextually appropriate.",
+    }
+    
+    return language_notes.get(L1_language, "Provide natural translations in the target language.")
 
