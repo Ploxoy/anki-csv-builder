@@ -18,6 +18,7 @@ import pandas as pd
 import streamlit as st
 from typing import List, Dict, Tuple
 from openai import OpenAI
+from core.parser import parse_input
 
 # Optional: Anki export (genanki)
 try:
@@ -420,7 +421,7 @@ if uploaded_file is not None:
     except UnicodeDecodeError:
         uploaded_file.seek(0)
         file_text = uploaded_file.read().decode("utf-16")
-    st.session_state.input_data = parse_input(file_text)
+   # st.session_state.input_data = parse_input(file_text)
 
 # Preview input
 if st.session_state.input_data:
