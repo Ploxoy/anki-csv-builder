@@ -101,7 +101,15 @@ except Exception:
     CFG_CSV_EOL = '\n'
 
 # Import the prompt builder
-from prompts import compose_instructions_en, PROMPT_PROFILES as PR_PROMPT_PROFILES  # type: ignore
+from prompts import compose_instructions_en, PROMPT_PROFILES as PR_PROMPT_PROFILES  
+from core.sanitize_validate import (
+    sanitize,
+    normalize_cloze_braces,
+    force_wrap_first_match,
+    try_separable_verb_wrap,
+    validate_card,
+)
+from core.parsing import parse_input
 
 # Streamlit page config
 st.set_page_config(page_title=CFG_PAGE_TITLE, layout=CFG_PAGE_LAYOUT)
@@ -340,9 +348,9 @@ st.title("📘 Anki CSV/Anki Builder — Dutch Cloze Cards")
 DEMO_WORDS = CFG_DEMO_WORDS
 
 if "input_data" not in st.session_state:
-    st.session_state.input_data: List[Dict] = []
+    st.session_state.input_data: List[Dict] = [] # type: ignore
 if "results" not in st.session_state:
-    st.session_state.results: List[Dict] = []
+    st.session_state.results: List[Dict] = [] # type: ignore
 
 col_demo, col_clear = st.columns([1, 1])
 with col_demo:
@@ -358,60 +366,7 @@ with col_clear:
 uploaded_file = st.file_uploader("Upload .txt / .md", type=["txt", "md"], accept_multiple_files=False)
 
 # ----- Parsing helpers -----
-def parse_input(text: str) -> List[Dict]:
-    """
-    Supported formats:
-      1) Markdown table row: | woord | definitie NL | RU |
-      2) Line: 'woord — definitie NL — RU' or 'woord — definitie NL'
-      3) Single word per line
-      4) TSV (2 cols): 'woord\\tdef_nl'
-    """
-    rows: List[Dict] = []
-    for raw in text.strip().splitlines():
-        line = raw.strip()
-        if not line:
-            continue
 
-        # 1) Markdown table: skip headers/separators like |---| or |:---:|
-        if line.startswith("|"):
-            compact = re.sub(r"\s+", "", line)
-            if re.match(r"^\|\:?-{3,}[\|\:\-]{0,}\:?$", compact):
-                # alignment/separator row → skip
-                continue
-            parts = [p.strip() for p in line.strip("|").split("|")]
-            if len(parts) >= 2:
-                # remove markdown bold/italics from cell 0
-                woord = re.sub(r"[*_`]", "", parts[0]).strip()
-                def_nl = parts[1].strip()
-                entry = {"woord": woord} if woord else {}
-                if def_nl:
-                    entry["def_nl"] = def_nl
-                if len(parts) >= 3 and parts[2].strip():
-                    entry["ru_short"] = parts[2].strip()
-                if entry:
-                    rows.append(entry)
-                continue
-
-        # 4) TSV (2 cols)
-        if "\t" in line:
-            tparts = [p.strip() for p in line.split("\t")]
-            if len(tparts) == 2 and tparts[0]:
-                rows.append({"woord": tparts[0], "def_nl": tparts[1]})
-                continue
-
-        # 2) Line with em-dash
-        if " — " in line:
-            parts = [p.strip() for p in line.split(" — ")]
-            if len(parts) == 3:
-                rows.append({"woord": parts[0], "def_nl": parts[1], "ru_short": parts[2]})
-                continue
-            if len(parts) == 2:
-                rows.append({"woord": parts[0], "def_nl": parts[1]})
-                continue
-
-        # 3) Single word
-        rows.append({"woord": line})
-    return rows
 
 # Read upload
 if uploaded_file is not None:
@@ -430,12 +385,6 @@ else:
     st.info("Upload a file or click **Try demo**")
 
 # ----- Helpers: sanitize, temperature, signaalwoord policy -----
-def sanitize(value: str) -> str:
-    """Replace forbidden pipe to avoid CSV breakage; strip whitespace."""
-    if value is None:
-        return ""
-    return str(value).replace("|", "∣").strip()
-
 def _should_pass_temperature(model_id: str) -> bool:
     """Some models (gpt-5/o3) do not accept temperature."""
     no_temp = st.session_state.get("no_temp_models", set())
@@ -598,73 +547,6 @@ def validate_card(card: Dict) -> List[str]:
         problems.append("L1_gloss must be 1–2 words")
     return problems
 
-# ----- Cloze auto-fix helpers -----
-_SEP_PARTICLES = {
-    "aan","af","achter","bij","binnen","buiten","door","heen","in","langs","mee",
-    "na","nader","om","omhoog","omlaag","omver","onder","op","over","samen",
-    "tegen","thuis","toe","uit","vast","voor","voort","weg","weer","wijzer","terug"
-}
-# Fix typo: replace "оп" with "op" if someone pastes Cyrillic 'п'
-_SEP_PARTICLES.discard("оп")
-_SEP_PARTICLES.add("op")
-
-def _normalize_cloze_braces(txt: str) -> str:
-    """Normalize single to double braces without duplicating existing {{c1::…}}/{{c2::…}}."""
-    if not txt:
-        return txt
-    # Only upgrade single-brace openings that are NOT already preceded by '{'
-    txt = re.sub(r"(?<!\{)\{c([12])::", r"{{c\1::", txt)
-    # Fix obvious missing closing '}}' for c1/c2 spans
-    txt = re.sub(r"(\{\{c[12]::[^}]*)(?<!\})\}", r"\1}}", txt)
-    # Collapse runs of 3+ opening braces before c1/c2 down to exactly 2
-    txt = re.sub(r"\{ {0,}\{ {0,}\{+(?=c[12]::)", r"{{", txt)
-    # Collapse 3+ closing braces after a cloze span down to exactly 2
-    txt = re.sub(r"\}{3,}", r"}}", txt)
-    return txt
-
-
-def _force_wrap_first_match(lemma: str, sentence: str) -> str:
-    """
-    If {{c1::...}} is missing, wrap the first plausible wordform.
-    Heuristic: lemma and its rough verb stem (drop final -en).
-    """
-    if not lemma or not sentence or "{{c1::" in sentence:
-        return sentence
-    base = lemma.lower()
-    candidates = {base}
-    if base.endswith("en"):
-        candidates.add(base[:-2])
-    for m in re.finditer(r"[A-Za-zÀ-ÿ]+", sentence):
-        w = m.group(0)
-        wl = w.lower()
-        if any(wl.startswith(c) or c.startswith(wl) for c in candidates):
-            return sentence[:m.start()] + "{{c1::" + w + "}}" + sentence[m.end():]
-    return sentence
-
-def _try_separable_verb_wrap(lemma: str, sentence: str) -> str:
-    """
-    Add {{c2::particle}} only if:
-    - there is {{c1::...}} already,
-    - NO existing {{c2::...}},
-    - token matches a separable particle that is ALSO a prefix of the lemma.
-      e.g., lemma 'aanraken' → allowed particle: 'aan' (NOT 'in').
-    """
-    if "{{c1::" not in sentence or "{{c2::" in sentence:
-        return sentence
-    if not lemma:
-        return sentence
-
-    lemma_lc = lemma.lower()
-    allowed = [p for p in _SEP_PARTICLES if lemma_lc.startswith(p)]
-    if not allowed:
-        return sentence
-
-    tokens = list(re.finditer(r"\b([A-Za-zÀ-ÿ]+)\b", sentence))
-    for m in reversed(tokens):
-        tok = m.group(1).lower()
-        if tok in allowed:
-            return sentence[:m.start()] + "{{c2::" + m.group(1) + "}}" + sentence[m.end():]
-    return sentence
 
 
 # ----- OpenAI call -----
@@ -780,10 +662,10 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
     }
 
     # --- Local cloze auto-fixes BEFORE validation ---
-    clz = _normalize_cloze_braces(card["L2_cloze"])
+    clz = normalize_cloze_braces(card["L2_cloze"])
     if "{{c1::" not in clz:
-        clz = _force_wrap_first_match(card["L2_word"], clz)
-    clz = _try_separable_verb_wrap(card["L2_word"], clz)
+        clz = force_wrap_first_match(card["L2_word"], clz)
+    clz = try_separable_verb_wrap(card["L2_word"], clz)
     card["L2_cloze"] = clz
 
     # --- Validation + one repair-pass if needed ---
