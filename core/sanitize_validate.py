@@ -138,24 +138,133 @@ def validate_card(card: Dict[str, str]) -> List[str]:
 _TOKEN_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]{1,39}$")
 
 
-def is_probably_dutch_word(woord: str) -> Tuple[bool, str | None]:
-    """Heuristic plausibility check for a Dutch lemma.
-    Returns (ok, reason_if_not_ok_or_flag).
-    - ok=True  → looks plausible
-    - ok=False → reason contains an explanation
+def is_probably_dutch_word(
+    woord: str,
+    allow_multiword: bool = True,
+    allow_articles: bool = True,
+    min_len: int = 2,
+    max_len: int = 40,
+) -> tuple[bool, str | None]:
     """
-    if not isinstance(woord, str) or not woord.strip():
+    Heuristic plausibility check for a Dutch lemma.
+
+    Returns (ok, reason). If ok==False, `reason` explains why.
+
+    Strategy:
+    - Normalize whitespace and remove invisible chars.
+    - Optionally strip leading articles ('de', 'het', 'een').
+    - Tokenize by whitespace and hyphen.
+    - Use wordfreq (if available) to detect strong EN/NL signals.
+    - Fallback to morphological heuristics (suffixes, digraphs, long alpha tokens).
+    """
+    if not isinstance(woord, str) or not woord:
         return False, "empty"
+
+    # Normalize and clean common invisible whitespace characters
     w = woord.strip()
-    if " " in w:
-        return False, "contains space"
-    if len(w) < 2 or len(w) > 40:
+    w = w.replace("\u00A0", " ")  # NO-BREAK SPACE
+    w = w.replace("\u200B", "")   # ZERO WIDTH SPACE
+    w = w.replace("\uFEFF", "")   # ZERO WIDTH NO-BREAK SPACE (BOM)
+    w = re.sub(r"\s+", " ", w).strip()
+
+    # Length checks after normalization
+    if len(w) < min_len or len(w) > max_len:
         return False, "length out of range"
-    if any(ch.isdigit() for ch in w):
-        return False, "contains digit"
-    if not _TOKEN_RE.match(w):
-        return False, "forbidden chars"
-    if len(w) >= 3 and w.isupper():
-        # likely acronym
-        return False, "all-caps token"
-    return True, None
+
+    # Optionally strip leading Dutch article
+    if allow_articles:
+        low = w.lower()
+        if low.startswith("de "):
+            w = w[len("de "):].strip()
+        elif low.startswith("het "):
+            w = w[len("het "):].strip()
+        elif low.startswith("een "):
+            w = w[len("een "):].strip()
+
+    if not w:
+        return False, "empty after removing article"
+
+    # Tokenize: split on whitespace and hyphen
+    tokens = [t for t in re.split(r"[\s\-]+", w) if t]
+    if not tokens:
+        return False, "empty tokens"
+
+    # Quick reject if multiword disallowed
+    if not allow_multiword and len(tokens) > 1:
+        return False, "contains space"
+
+    # Wordfreq config & thresholds
+    try:
+        from wordfreq import zipf_frequency  # type: ignore
+        have_wordfreq = True
+    except Exception:
+        have_wordfreq = False
+
+    Z_MIN = 2.5        # minimum zipf to consider 'common'
+    DIFF_EN = 1.5      # en - nl difference to strongly mark as EN
+    DIFF_NL = 1.0      # nl - en difference to strongly mark as NL
+    LONG_ALPHA_MIN = 6
+
+    # Morphological hints
+    dutch_suffixes = ("en", "ing", "heid", "tje", "aat", "isch", "lijk", "baar", "schap", "kunde")
+    dutch_digraphs = ("ij", "oe", "ui", "eu", "aa", "ee", "oo", "ou", "ch", "sch")
+
+    token_results = []  # collect per-token verdicts
+
+    for tok in tokens:
+        if not tok:
+            return False, "empty token"
+        # Reject digits
+        if any(ch.isdigit() for ch in tok):
+            return False, "contains digit"
+        # Allowed chars check
+        if not _TOKEN_RE.match(tok):
+            return False, "forbidden chars"
+        # Reject all-caps acronyms (>=3)
+        if len(tok) >= 3 and tok.isupper():
+            return False, "all-caps token"
+
+        tl = tok.lower()
+        token_ok = False
+        token_reason = None
+
+        # wordfreq-based decision if available
+        if have_wordfreq:
+            try:
+                z_nl = zipf_frequency(tok, "nl")
+                z_en = zipf_frequency(tok, "en")
+            except Exception:
+                z_nl = z_en = None
+
+            if z_nl is not None and z_en is not None:
+                # Strong EN signal -> reject whole input
+                if (z_en >= Z_MIN) and (z_en - (z_nl or 0.0) >= DIFF_EN):
+                    return False, "likely English word"
+                # Strong NL signal -> accept this token
+                if (z_nl >= Z_MIN) and ((z_nl - (z_en or 0.0)) >= DIFF_NL):
+                    token_ok = True
+        # Morphological heuristics (fallback / supplement)
+        if not token_ok:
+            if any(tl.endswith(suf) for suf in dutch_suffixes) or any(dg in tl for dg in dutch_digraphs):
+                token_ok = True
+            elif len(tl) >= LONG_ALPHA_MIN and tl.isalpha():
+                # accept long alphabetic compound (common in Dutch compounds)
+                token_ok = True
+            elif 2 <= len(tl) <= 3 and tl.isalpha():
+                # short 2-3 letter tokens often valid (e.g., 'zijn', 'zij' etc.)
+                token_ok = True
+
+        token_results.append((tok, token_ok))
+        if not token_ok:
+            token_reason = f"token '{tok}' suspicious"
+            # For multiword, defer final decision after checking other tokens
+            if len(tokens) == 1:
+                return False, token_reason
+
+    # Multiword decision: if any token strongly EN => we already returned.
+    # If majority tokens ok -> accept; else suspicious
+    ok_count = sum(1 for _, ok in token_results if ok)
+    if ok_count >= max(1, len(token_results) // 2):
+        return True, None
+
+    return False, "tokens suspicious"

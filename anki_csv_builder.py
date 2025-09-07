@@ -108,7 +108,9 @@ from core.sanitize_validate import (
     force_wrap_first_match,
     try_separable_verb_wrap,
     validate_card,
+    is_probably_dutch_word,
 )
+
 from core.parsing import parse_input
 
 # Streamlit page config
@@ -325,6 +327,14 @@ csv_anki_header = st.sidebar.checkbox(
     value=True,
     help="Header row will be: L2_word|L2_cloze|L1_sentence|L2_collocations|L2_definition|L1_gloss|L1_hint"
 )
+# Sidebar: option to force generation for flagged entries
+force_flagged = st.sidebar.checkbox(
+    "Force generate for flagged entries",
+    value=False,
+    help="If off, rows flagged as suspicious by a quick heuristic will be skipped from generation."
+)
+st.session_state["force_flagged"] = force_flagged
+
 
 _guid_label = st.sidebar.selectbox(
     "Anki GUID policy",
@@ -363,7 +373,11 @@ with col_clear:
         st.session_state.results = []
 
 # ----- Upload -----
-uploaded_file = st.file_uploader("Upload .txt / .md", type=["txt", "md"], accept_multiple_files=False)
+uploaded_file = st.file_uploader(
+    "Upload .txt / .md / .tsv / .csv",
+    type=["txt", "md", "tsv", "csv"],
+    accept_multiple_files=False
+)
 
 # ----- Parsing helpers -----
 
@@ -378,9 +392,27 @@ if uploaded_file is not None:
     st.session_state.input_data = parse_input(file_text)
 
 # Preview input
+# Preview input — annotate parsed rows with quick Dutch-word heuristic and show flags
 if st.session_state.input_data:
+    # Annotate parsed rows with a quick Dutch-word heuristic
+    for row in st.session_state.input_data:
+        ok, reason = is_probably_dutch_word(row.get("woord", ""))
+        row["_flag_ok"] = bool(ok)
+        row["_flag_reason"] = reason or ""
+
+    # Show warning if any rows are flagged
+    flagged = [r for r in st.session_state.input_data if not r.get("_flag_ok", True)]
+    if flagged:
+        st.warning(
+            f"{len(flagged)} rows flagged as suspicious by a quick heuristic. "
+            "Use 'Force generate for flagged entries' in the sidebar to ignore flags."
+        )
+
     st.subheader("🔍 Parsed rows")
-    st.dataframe(pd.DataFrame(st.session_state.input_data), use_container_width=True)
+    # Create a small DataFrame copy to show flags
+    preview_in = pd.DataFrame(st.session_state.input_data)
+    cols = [c for c in ["woord", "def_nl", "ru_short", "_flag_ok", "_flag_reason"] if c in preview_in.columns]
+    st.dataframe(preview_in[cols], use_container_width=True)
 else:
     st.info("Upload a file or click **Try demo**")
 
@@ -851,6 +883,22 @@ if st.session_state.input_data:
             progress = st.progress(0)
             for idx, row in enumerate(st.session_state.input_data):
                 try:
+                    # Skip flagged rows unless user explicitly forces generation
+                    if not st.session_state.get("force_flagged", False) and not row.get("_flag_ok", True):
+                        # Add a small result entry indicating skip so user sees it in preview
+                        st.session_state.results.append({
+                            "L2_word": row.get("woord", ""),
+                            "L2_cloze": "",
+                            "L1_sentence": "",
+                            "L2_collocations": "",
+                            "L2_definition": "",
+                            "L1_gloss": "",
+                            "L1_hint": "",
+                            "error": "flagged_precheck",
+                            "meta": {"flag_reason": row.get("_flag_reason", "")}
+                        })
+                        continue
+
                     card = call_openai_card(
                         client, row, model=model, temperature=temperature,
                         L1_code=L1_code, level=level, profile=profile
