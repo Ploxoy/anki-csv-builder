@@ -24,7 +24,7 @@ from core.signalwords import (
     pick_allowed_for_level,         # convenience: build pool + choose
     note_signalword_in_sentence,    # detect & update usage/last
 )
-
+from core.llm_clients import create_client, send_responses_request, get_response_parsed, get_response_text
 
 
 
@@ -214,7 +214,11 @@ def get_model_options(api_key: str | None) -> List[str]:
     if not api_key:
         return DEFAULT_MODELS
     try:
-        client = OpenAI(api_key=api_key)
+        #client = OpenAI(api_key=api_key)
+        client = create_client(API_KEY)
+        if client is None:
+                st.error("OpenAI SDK not available (core.llm_clients.create_client returned None). Please install the OpenAI SDK.")
+                return
         models = client.models.list()
         ids = []
         for m in getattr(models, "data", []) or []:
@@ -601,70 +605,56 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
         '"L1_gloss": "<1-2 ' + L1_LANGS[L1_code]["name"] + ' words>"'
         '}'
     )
-    json_schema = {
-    "name": "AnkiClozeCard",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["L2_word","L2_cloze","L1_sentence","L2_collocations","L2_definition","L1_gloss"],
-        "properties": {
-            "L2_word":        {"type":"string","minLength":1},
-            "L2_cloze":       {"type":"string","minLength":1},
-            "L1_sentence":    {"type":"string","minLength":1},
-            "L2_collocations":{"type":"string","minLength":1},
-            "L2_definition":  {"type":"string","minLength":1},
-            "L1_gloss":       {"type":"string","minLength":1},
-        },
-    },
-}
 
-    kwargs = dict(
-        model=model,
-        instructions=instructions,
-        input=(
-            "Input JSON:\n" + json.dumps(payload, ensure_ascii=False) +
-            "\nReply with STRICT JSON ONLY. It must match this template exactly (same keys, one-line JSON):\n" +
-            json_template
-        ),
+    # Response-format / schema object (pass to llm client if supported)
+    json_schema = {
+        "name": "AnkiClozeCard",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["L2_word","L2_cloze","L1_sentence","L2_collocations","L2_definition","L1_gloss"],
+            "properties": {
+                "L2_word":        {"type":"string","minLength":1},
+                "L2_cloze":       {"type":"string","minLength":1},
+                "L1_sentence":    {"type":"string","minLength":1},
+                "L2_collocations":{"type":"string","minLength":1},
+                "L2_definition":  {"type":"string","minLength":1},
+                "L1_gloss":       {"type":"string","minLength":1},
+            },
+        },
+    }
+
+    # Build the textual 'input' to send
+    input_text = (
+        "Input JSON:\n" + json.dumps(payload, ensure_ascii=False) +
+        "\nReply with STRICT JSON ONLY. It must match this template exactly (same keys, one-line JSON):\n" +
+        json_template
     )
 
-    if limit_tokens:
-        kwargs["max_output_tokens"] = 3000
-    if _should_pass_temperature(model):
-        kwargs["temperature"] = temperature
+    # Prepare request params for llm client
+    max_tokens = 3000 if limit_tokens else None
+    temp = temperature if _should_pass_temperature(model) else None
 
-    # --- First request ---
+    # --- First request using core.llm_clients wrapper ---
     try:
-        resp = client.responses.create(**kwargs)
-        parsed = getattr(resp, "output_parsed", None)
-        if not parsed:
-            parsed = extract_json_block(_get_response_text(resp))
+        resp = send_responses_request(
+            client=client,
+            model=model,
+            instructions=instructions,
+            input_text=input_text,
+            response_format=json_schema,
+            max_output_tokens=max_tokens,
+            temperature=temp,
+        )
     except Exception as e:
-        msg = str(e)
-        st.error(f"OpenAI API Error: {msg}")  # Enhanced error logging
-        st.error(f"Request kwargs: {kwargs}") # Log the request parameters
-        try:
-            st.error(f"Response text: {_get_response_text(resp)}") # Log the response text if available
-        except:
-            pass
+        # Bubble up with logging in UI
+        st.error(f"OpenAI API Error: {e}")
+        # attempt best-effort to show raw response if available is skipped here
+        raise
 
-        if "Unsupported parameter: 'temperature'" in msg or "param': 'temperature'" in msg:
-            no_temp = st.session_state.get("no_temp_models", set())
-            no_temp.add(model)
-            st.session_state.no_temp_models = no_temp
-            kwargs.pop("temperature", None)
-            resp = client.responses.create(**kwargs)
-        else:
-            raise
-
-    parsed = _get_response_parsed(resp)  # предпочитаем structured outputs
-    if not parsed:
-        raw_response = _get_response_text(resp)
-        if display_raw_response:
-            st.write(f"Raw GPT-5 Response: {raw_response}")  # Log raw response
-        parsed = extract_json_block(raw_response)  # фолбэк на текст
-
+    # Prefer structured parsed output, fallback to text extraction + JSON extraction
+    parsed = get_response_parsed(resp) or extract_json_block(get_response_text(resp))
 
     # Sanitize and collect fields
     card = {
@@ -690,35 +680,21 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
         repair_prompt = instructions + "\n\nREPAIR: The previous JSON has issues: " + "; ".join(problems) + ". " \
             + "Fix ONLY the problematic fields and return STRICT JSON again."
 
-        repair_kwargs = dict(
-            model=model,
-            instructions=repair_prompt,
-            input=("Previous JSON:\n" + json.dumps(card, ensure_ascii=False)),
-        )
-        if limit_tokens:
-            repair_kwargs["max_output_tokens"] = 3000
-        if _should_pass_temperature(model):
-            repair_kwargs["temperature"] = temperature
-
+        repair_input = "Previous JSON:\n" + json.dumps(card, ensure_ascii=False)
         try:
-            resp2 = client.responses.create(**repair_kwargs)
-            parsed2 = _get_response_parsed(resp2) or extract_json_block(_get_response_text(resp2))
-            if not parsed:
-                raw_preview = (getattr(resp2, "output_text", "") or "").strip()
-                if raw_preview:
-                    st.warning("Model returned non-parsable output; showing first 300 chars for debugging.")
-                    st.code(raw_preview[:300] + ("…" if len(raw_preview) > 300 else ""), language="text")
+            resp2 = send_responses_request(
+                client=client,
+                model=model,
+                instructions=repair_prompt,
+                input_text=repair_input,
+                max_output_tokens=max_tokens,
+                temperature=temp,
+            )
+            parsed2 = get_response_parsed(resp2) or extract_json_block(get_response_text(resp2))
         except Exception as e:
-            msg = str(e)
-            st.error(f"Repair request OpenAI API Error: {msg}") # Enhanced error logging for repair
-            st.error(f"Repair request kwargs: {repair_kwargs}") # Log repair request parameters
-            try:
-                raw_response2 = _get_response_text(resp2)
-                if display_raw_response:
-                    st.error(f"Repair response text: {raw_response2}") # Log repair response text
-            except:
-                pass
-        parsed2 = extract_json_block(_get_response_text(resp2))
+            st.error(f"Repair request OpenAI API Error: {e}")
+            parsed2 = {}
+
         if parsed2:
             card.update({
                 "L2_word": sanitize(parsed2.get("L2_word", card["L2_word"])),
@@ -728,11 +704,10 @@ def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
                 "L2_definition": sanitize(parsed2.get("L2_definition", card["L2_definition"])),
                 "L1_gloss": sanitize(parsed2.get("L1_gloss", card["L1_gloss"])),
             })
-    
+
     _note_signalword_used(card.get("L2_cloze",""), sig_list)
 
     return card
-
 
 
 # ----- CSV generation -----
