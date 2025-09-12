@@ -19,6 +19,16 @@ import streamlit as st
 from typing import List, Dict, Tuple
 from openai import OpenAI
 
+# anki_csv_builder.py (near other core imports)
+from core.signalwords import (
+    pick_allowed_for_level,         # convenience: build pool + choose
+    note_signalword_in_sentence,    # detect & update usage/last
+)
+
+
+
+
+
 # Optional: Anki export (genanki)
 try:
     import genanki  # type: ignore
@@ -152,19 +162,20 @@ def _choose_signalwords(level: str, n: int = 3, force_balance: bool = False) -> 
     _init_sig_usage()
     if CFG_SIGNALWORD_GROUPS:
         return pick_allowed_for_level(
-            CFG_SIGNALWORD_GROUPS, level, n=n,
+            CFG_SIGNALWORD_GROUPS,
+            level,
+            n=n,
             usage=st.session_state.get("sig_usage"),
             last=st.session_state.get("sig_last"),
             force_balance=force_balance,
         )
-    # fallback by level using simple lists
+    # fallback simple lists
+    used = st.session_state.get("sig_usage", {})
     if level == "B1":
         base = CFG_SIGNALWORDS_B1
     else:
         base = CFG_SIGNALWORDS_B2_PLUS
-    # Very small deterministic selection: prefer less-used
-    used = st.session_state.get("sig_usage", {})
-    candidates = sorted(base, key=lambda w: (used.get(w,0), w))
+    candidates = sorted(base, key=lambda w: (used.get(w, 0), w))
     res = []
     for w in candidates:
         if w == st.session_state.get("sig_last"):
@@ -173,7 +184,7 @@ def _choose_signalwords(level: str, n: int = 3, force_balance: bool = False) -> 
         if len(res) >= n:
             break
     return res
-
+    
 def _note_signalword_used(sentence: str, allowed: list[str]) -> None:
     """
     Wrapper updating st.session_state.sig_usage and st.session_state.sig_last
@@ -181,13 +192,13 @@ def _note_signalword_used(sentence: str, allowed: list[str]) -> None:
     """
     if not sentence or not allowed:
         return
-    usage, last, found = note_signalword_in_sentence(
+    u, last, found = note_signalword_in_sentence(
         sentence,
         allowed,
         usage=st.session_state.get("sig_usage"),
         last=st.session_state.get("sig_last"),
     )
-    st.session_state.sig_usage = usage
+    st.session_state.sig_usage = u
     st.session_state.sig_last = last
 
 

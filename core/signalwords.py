@@ -69,10 +69,8 @@ def choose_signalwords(
     if not pool:
         return []
 
-    if seed is not None:
-        rnd = random.Random(seed)
-    else:
-        rnd = random
+    # Prepare RNG if seed provided
+    rnd = random.Random(seed) if seed is not None else None
 
     # Flatten with (word, group) pairs
     pairs: List[Tuple[str, str]] = []
@@ -80,14 +78,28 @@ def choose_signalwords(
         for w in arr:
             pairs.append((w, g))
 
-    # Sort by usage (ascending) then by group/name to stabilize
+    # Sort by usage (ascending) then by group/name to stabilize,
+    # but allow deterministic random tie-breaking when seed is provided.
     used = usage or {}
-    pairs.sort(key=lambda wg: (used.get(wg[0], 0), wg[1], wg[0]))
+
+    if rnd is not None:
+        # Attach a reproducible random value to each pair to break ties deterministically
+        pairs_with_rand = []
+        for w, g in pairs:
+            u = used.get(w, 0)
+            r = rnd.random()
+            pairs_with_rand.append((w, g, u, r))
+        # Sort by (usage, rand, group, word) so that lower usage prioritized,
+        # but rand provides deterministic shuffling within same usage.
+        pairs_with_rand.sort(key=lambda wg: (wg[2], wg[3], wg[1], wg[0]))
+        pairs = [(w, g) for (w, g, _, _) in pairs_with_rand]
+    else:
+        pairs.sort(key=lambda wg: (used.get(wg[0], 0), wg[1], wg[0]))
 
     result: List[str] = []
     seen_groups: set[str] = set()
 
-    # If force_balance, attempt to pick words from distinct groups first
+    # First pass: try to pick with group spread if force_balance
     for w, g in pairs:
         if len(result) >= n:
             break
@@ -95,12 +107,10 @@ def choose_signalwords(
             continue
         if force_balance and g in seen_groups:
             continue
-        # Randomize tie-break within same priority to avoid always picking lexical first
-        # But keep deterministic if seed provided by shuffling equal-usage block
         result.append(w)
         seen_groups.add(g)
 
-    # If not enough found, fill from remaining sorted pairs
+    # Second pass: fill remaining slots
     if len(result) < n:
         for w, g in pairs:
             if len(result) >= n:
@@ -109,7 +119,6 @@ def choose_signalwords(
                 continue
             result.append(w)
 
-    # If there are more than needed (edge cases), truncate
     return result[:n]
 
 
