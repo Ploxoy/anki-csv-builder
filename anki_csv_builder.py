@@ -112,6 +112,10 @@ from core.sanitize_validate import (
 )
 
 from core.parsing import parse_input
+from core.signalwords import (
+    pick_allowed_for_level,         # convenience: build pool + choose
+    note_signalword_in_sentence,    # returns updated usage/last and found word
+)
 
 # Streamlit page config
 st.set_page_config(page_title=CFG_PAGE_TITLE, layout=CFG_PAGE_LAYOUT)
@@ -133,21 +137,7 @@ def _levels_up_to(level: str) -> list[str]:
         idx = 2  # default B1
     return _LEVEL_ORDER[:idx+1]
 
-def _build_signal_pool(level: str) -> dict[str, list[str]]:
-    """
-    Build per-group pool using SIGNALWORD_GROUPS up to the current level.
-    Example: for B2 include A1+A2+B1+B2 entries.
-    """
-    pool: dict[str, list[str]] = {}
-    lvls = set(_levels_up_to(level))
-    for grp, by_lvl in (CFG_SIGNALWORD_GROUPS or {}).items():
-        items: list[str] = []
-        for lv, arr in by_lvl.items():
-            if lv in lvls:
-                items.extend(arr)
-        if items:
-            pool[grp] = items
-    return pool
+
 
 def _init_sig_usage():
     """Session-persistent usage counter for signal words (per run)."""
@@ -156,66 +146,49 @@ def _init_sig_usage():
     if "sig_last" not in st.session_state:
         st.session_state.sig_last = None
 
+
+
 def _choose_signalwords(level: str, n: int = 3, force_balance: bool = False) -> list[str]:
-    """
-    Pick a small shuffled set of candidates with light balancing:
-    - pool includes groups up to 'level'
-    - prefer words with smallest usage count
-    - avoid immediate repetition (do not include last used)
-    - ensure group diversity if possible
-    """
     _init_sig_usage()
-    pool = _build_signal_pool(level)
-    if not pool:
-        return []
-
-    # Flatten with (word, group) pairs
-    pairs: list[tuple[str,str]] = []
-    for g, arr in pool.items():
-        for w in arr:
-            pairs.append((w, g))
-
-    # Sort by usage count (ascending), then by group name to stabilize
-    used = st.session_state.sig_usage
-    last = st.session_state.sig_last
-    pairs.sort(key=lambda wg: (used.get(wg[0], 0), wg[1], wg[0]))
-
-    result: list[str] = []
-    seen_groups: set[str] = set()
-
-    for w, g in pairs:
-        if w == last:
-            continue  # avoid immediate repetition
-        # If force_balance, try to spread across groups first
-        if force_balance and g in seen_groups:
+    if CFG_SIGNALWORD_GROUPS:
+        return pick_allowed_for_level(
+            CFG_SIGNALWORD_GROUPS, level, n=n,
+            usage=st.session_state.get("sig_usage"),
+            last=st.session_state.get("sig_last"),
+            force_balance=force_balance,
+        )
+    # fallback by level using simple lists
+    if level == "B1":
+        base = CFG_SIGNALWORDS_B1
+    else:
+        base = CFG_SIGNALWORDS_B2_PLUS
+    # Very small deterministic selection: prefer less-used
+    used = st.session_state.get("sig_usage", {})
+    candidates = sorted(base, key=lambda w: (used.get(w,0), w))
+    res = []
+    for w in candidates:
+        if w == st.session_state.get("sig_last"):
             continue
-        result.append(w)
-        seen_groups.add(g)
-        if len(result) >= n:
+        res.append(w)
+        if len(res) >= n:
             break
-
-    # Fallback if we couldn't reach n because of strict spread
-    if len(result) < n:
-        for w, g in pairs:
-            if w == last or w in result:
-                continue
-            result.append(w)
-            if len(result) >= n:
-                break
-
-    return result
+    return res
 
 def _note_signalword_used(sentence: str, allowed: list[str]) -> None:
-    """If any allowed signal word appears in the final sentence, increment its usage and remember last."""
+    """
+    Wrapper updating st.session_state.sig_usage and st.session_state.sig_last
+    when an allowed signal word appears in sentence.
+    """
     if not sentence or not allowed:
         return
-    low = sentence.lower()
-    for w in allowed:
-        # rough containment; avoids strict tokenization but works well for our use
-        if w.lower() in low:
-            st.session_state.sig_usage[w] = st.session_state.sig_usage.get(w, 0) + 1
-            st.session_state.sig_last = w
-            break
+    usage, last, found = note_signalword_in_sentence(
+        sentence,
+        allowed,
+        usage=st.session_state.get("sig_usage"),
+        last=st.session_state.get("sig_last"),
+    )
+    st.session_state.sig_usage = usage
+    st.session_state.sig_last = last
 
 
 
