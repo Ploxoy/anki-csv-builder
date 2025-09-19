@@ -8,10 +8,7 @@
 # - Enforces cloze double-braces locally (auto-repair) to tolerate smaller models.
 
 import os
-import io
-import csv
 import time
-import hashlib
 import pandas as pd
 import streamlit as st
 from typing import List, Dict, Tuple
@@ -20,16 +17,8 @@ from openai import OpenAI
 # anki_csv_builder.py (near other core imports)
 from core.llm_clients import create_client
 from core.generation import GenerationSettings, generate_card
-
-
-
-
-# Optional: Anki export (genanki)
-try:
-    import genanki  # type: ignore
-    HAS_GENANKI = True
-except Exception:
-    HAS_GENANKI = False
+from core.export_csv import generate_csv
+from core.export_anki import build_anki_package, HAS_GENANKI
 
 # Config (import with safe fallbacks)
 try:
@@ -110,10 +99,6 @@ from prompts import compose_instructions_en, PROMPT_PROFILES as PR_PROMPT_PROFIL
 from core.sanitize_validate import is_probably_dutch_word
 
 from core.parsing import parse_input
-from core.signalwords import (
-    pick_allowed_for_level,         # convenience: build pool + choose
-    note_signalword_in_sentence,    # returns updated usage/last and found word
-)
 
 # Streamlit page config
 st.set_page_config(page_title=CFG_PAGE_TITLE, layout=CFG_PAGE_LAYOUT)
@@ -143,6 +128,11 @@ def _init_sig_usage():
         st.session_state.sig_usage = {}  # word -> count
     if "sig_last" not in st.session_state:
         st.session_state.sig_last = None
+
+
+def _init_response_format_cache():
+    if "no_response_format_models" not in st.session_state:
+        st.session_state.no_response_format_models = set()
 
 
 def _clean_manual_rows(rows: List[Dict]) -> List[Dict[str, str]]:
@@ -429,123 +419,6 @@ def _should_pass_temperature(model_id: str) -> bool:
     if model_id.startswith(("gpt-5", "o3")):
         return False
     return True
-# ----- CSV generation -----
-def generate_csv(
-    results: List[Dict],
-    L1_code: str,
-    include_header: bool = True,
-    include_extras: bool = False,
-    anki_field_header: bool = True,
-) -> str:
-    """Build CSV with configured delimiter; optional localized or Anki-field header."""
-    meta = L1_LANGS[L1_code]
-    csv_buffer = io.StringIO()
-    writer = csv.writer(csv_buffer, delimiter=CFG_CSV_DELIM, lineterminator=CFG_CSV_EOL)
-
-    if include_header:
-        if anki_field_header:
-            header = ["L2_word","L2_cloze","L1_sentence","L2_collocations","L2_definition","L1_gloss","L1_hint"]
-        else:
-            header = [
-                "NL-слово",
-                "Предложение NL (с cloze)",
-                f"{meta['csv_translation']} {meta['label']}",
-                "Коллокации (NL)",
-                "Определение NL",
-                f"{meta['csv_gloss']} {meta['label']}",
-                "Подсказка (L1)",
-            ]
-        if include_extras:
-            header += ["CEFR", "Profile", "Model", "L1"]
-        writer.writerow(header)
-
-    for r in results:
-        row = [
-            r.get('L2_word',''),
-            r.get('L2_cloze',''),
-            r.get('L1_sentence',''),
-            r.get('L2_collocations',''),
-            r.get('L2_definition',''),
-            r.get('L1_gloss',''),
-            r.get('L1_hint',''),
-        ]
-        if include_extras:
-            row += [
-                st.session_state.get('level', ''),
-                st.session_state.get('prompt_profile', ''),
-                st.session_state.get('model_id', ''),
-                st.session_state.get('L1_code', ''),
-            ]
-        writer.writerow(row)
-
-    return csv_buffer.getvalue()
-
-
-# ----- Anki .apkg export -----
-def _compute_guid(c: Dict, policy: str, run_id: str) -> str:
-    """Stable GUID (content-based), or unique-per-export if policy=='unique'."""
-    base = f"{c.get('L2_word','')}|{c.get('L2_cloze','')}"
-    if policy == "unique":
-        base = base + "|" + run_id
-    try:
-        return genanki.guid_for(base)  # type: ignore
-    except Exception:
-        return hashlib.sha1(base.encode("utf-8")).hexdigest()[:10]
-
-def build_anki_package(cards: List[Dict], L1_label: str, guid_policy: str, run_id: str) -> bytes:
-    """Create a .apkg deck 'Dutch • Cloze' with our custom Cloze model."""
-    if not HAS_GENANKI:
-        raise RuntimeError("genanki is not installed. Add 'genanki' to requirements.txt and redeploy.")
-
-    front = CFG_FRONT_HTML_TEMPLATE.replace("{L1_LABEL}", L1_label)
-    back = CFG_BACK_HTML_TEMPLATE
-
-    model = genanki.Model(
-        CFG_ANKI_MODEL_ID,
-        CFG_ANKI_MODEL_NAME,
-        fields=[
-            {"name": "L2_word"},
-            {"name": "L2_cloze"},
-            {"name": "L1_sentence"},
-            {"name": "L2_collocations"},
-            {"name": "L2_definition"},
-            {"name": "L1_gloss"},
-            {"name": "L1_hint"},
-        ],
-        templates=[{"name": "Cloze", "qfmt": front, "afmt": back}],
-        css=CFG_CSS_STYLING,
-        model_type=genanki.Model.CLOZE,
-    )
-
-    deck = genanki.Deck(CFG_ANKI_DECK_ID, CFG_ANKI_DECK_NAME)
-
-    for c in cards:
-        note = genanki.Note(
-            model=model,
-            fields=[
-                c.get("L2_word", ""),
-                c.get("L2_cloze", ""),
-                c.get("L1_sentence", ""),
-                c.get("L2_collocations", ""),
-                c.get("L2_definition", ""),
-                c.get("L1_gloss", ""),
-                c.get("L1_hint", ""),
-            ],
-            guid=_compute_guid(c, guid_policy, run_id),
-            tags=list({
-                f"CEFR::{st.session_state.get('level','')}",
-                f"profile::{st.session_state.get('prompt_profile','')}",
-                f"model::{st.session_state.get('model_id', '')}",
-                f"L1::{st.session_state.get('L1_code','RU')}",
-            })
-        )
-        deck.add_note(note)
-
-    pkg = genanki.Package(deck)
-    bio = io.BytesIO()
-    pkg.write_to_file(bio)
-    return bio.getvalue()
-
 # ----- Generate section -----
 if st.session_state.input_data:
     if st.button("Generate cards", type="primary"):
@@ -562,6 +435,7 @@ if st.session_state.input_data:
             max_tokens = 3000 if limit_tokens else None
             effective_temp = temperature if _should_pass_temperature(model) else None
             _init_sig_usage()
+            _init_response_format_cache()
             for idx, row in enumerate(st.session_state.input_data):
                 try:
                     # Skip flagged rows unless user explicitly forces generation
@@ -588,6 +462,7 @@ if st.session_state.input_data:
                         profile=profile,
                         temperature=effective_temp,
                         max_output_tokens=max_tokens,
+                        allow_response_format=model not in st.session_state.get("no_response_format_models", set()),
                     )
                     gen_result = generate_card(
                         client=client,
@@ -602,6 +477,16 @@ if st.session_state.input_data:
                     st.session_state.sig_usage = gen_result.signal_usage
                     st.session_state.sig_last = gen_result.signal_last
                     st.session_state.results.append(gen_result.card)
+                    meta = gen_result.card.get("meta", {})
+                    if meta.get("response_format_removed"):
+                        cache = set(st.session_state.get("no_response_format_models", set()))
+                        if model not in cache:
+                            cache.add(model)
+                            st.session_state.no_response_format_models = cache
+                            st.info(
+                                f"Модель {model} не поддерживает response_format; переключаюсь на текстовый парсинг.",
+                                icon="ℹ️",
+                            )
                 except Exception as e:
                     st.error(f"Error for word '{row.get('woord','?')}': {e}")
                 finally:
@@ -615,12 +500,21 @@ if st.session_state.results:
     preview_df = pd.DataFrame(st.session_state.results)[:CFG_PREVIEW_LIMIT]
     st.dataframe(preview_df, use_container_width=True)
 
+    csv_extras = {
+        "level": st.session_state.get("level", level),
+        "profile": st.session_state.get("prompt_profile", profile),
+        "model": st.session_state.get("model_id", model),
+        "L1": st.session_state.get("L1_code", L1_code),
+    }
     csv_data = generate_csv(
         st.session_state.results,
-        L1_code,
+        L1_meta,
+        delimiter=CFG_CSV_DELIM,
+        line_terminator=CFG_CSV_EOL,
         include_header=st.session_state.get("csv_with_header", True),
         include_extras=True,
-        anki_field_header=csv_anki_header,  
+        anki_field_header=csv_anki_header,
+        extras_meta=csv_extras,
     )
 
     st.download_button(
@@ -632,11 +526,26 @@ if st.session_state.results:
 
     if HAS_GENANKI:
         try:
+            front_html = CFG_FRONT_HTML_TEMPLATE.replace("{L1_LABEL}", L1_meta["label"])
+            tags_meta = {
+                "level": st.session_state.get("level", level),
+                "profile": st.session_state.get("prompt_profile", profile),
+                "model": st.session_state.get("model_id", model),
+                "L1": st.session_state.get("L1_code", L1_code),
+            }
             anki_bytes = build_anki_package(
                 st.session_state.results,
-                L1_label=L1_meta["label"],
+                l1_label=L1_meta["label"],
                 guid_policy=st.session_state.get("anki_guid_policy", "stable"),
-                run_id=st.session_state.get("anki_run_id", str(int(time.time())))
+                run_id=st.session_state.get("anki_run_id", str(int(time.time()))),
+                model_id=CFG_ANKI_MODEL_ID,
+                model_name=CFG_ANKI_MODEL_NAME,
+                deck_id=CFG_ANKI_DECK_ID,
+                deck_name=CFG_ANKI_DECK_NAME,
+                front_template=front_html,
+                back_template=CFG_BACK_HTML_TEMPLATE,
+                css=CFG_CSS_STYLING,
+                tags_meta=tags_meta,
             )
             st.download_button(
                 label="🧩 Download Anki deck (.apkg)",

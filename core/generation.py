@@ -61,6 +61,7 @@ class GenerationSettings:
     include_signalword: Optional[bool] = None  # None => авто-решение по уровню
     signalword_count: int = 3
     signalword_seed: Optional[int] = None
+    allow_response_format: bool = True
 
 
 @dataclass
@@ -290,12 +291,12 @@ def generate_card(
         + json_template
     )
 
-    response = send_responses_request(
+    response, send_meta = send_responses_request(
         client=client,
         model=settings.model,
         instructions=instructions,
         input_text=input_text,
-        response_format=json_schema,
+        response_format=json_schema if settings.allow_response_format else None,
         max_output_tokens=settings.max_output_tokens,
         temperature=settings.temperature,
     )
@@ -330,6 +331,8 @@ def generate_card(
     repair_attempted = False
     repair_raw = ""
     repair_trimmed = False
+    allow_schema_next = settings.allow_response_format and not send_meta.get("response_format_removed", False)
+
     if problems_initial:
         repair_attempted = True
         repair_prompt = (
@@ -339,12 +342,14 @@ def generate_card(
             + ". Fix ONLY the problematic fields and return STRICT JSON again."
         )
         repair_input = "Previous JSON:\n" + json.dumps(card, ensure_ascii=False)
+        repair_meta: Dict[str, Any] = {}
         try:
-            repair_resp = send_responses_request(
+            repair_resp, repair_meta = send_responses_request(
                 client=client,
                 model=settings.model,
                 instructions=repair_prompt,
                 input_text=repair_input,
+                response_format=json_schema if allow_schema_next else None,
                 max_output_tokens=settings.max_output_tokens,
                 temperature=settings.temperature,
             )
@@ -389,10 +394,14 @@ def generate_card(
         "repair_attempted": repair_attempted,
         "raw_response": raw_text,
         "raw_response_truncated": raw_trimmed,
+        "response_format_removed": send_meta.get("response_format_removed", False),
+        "temperature_removed": send_meta.get("temperature_removed", False),
     }
     if repair_raw:
         meta["repair_response"] = repair_raw
         meta["repair_response_truncated"] = repair_trimmed
+        meta["repair_response_format_removed"] = repair_meta.get("response_format_removed", False)
+        meta["repair_temperature_removed"] = repair_meta.get("temperature_removed", False)
 
     meta_full = {
         **meta,

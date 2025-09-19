@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import time
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 try:
     from openai import OpenAI  # type: ignore
@@ -47,8 +47,12 @@ def send_responses_request(
     temperature: Optional[float] = None,
     retries: int = 2,
     backoff_base: float = 0.5,
-) -> Any:
-    # ... existing docstring ...
+) -> Tuple[Any, Dict[str, Any]]:
+    """Call Responses API with retries.
+
+    Returns tuple (response, metadata). Metadata содержит флаги, был ли
+    удалён response_format/temperature и сколько попыток потребовалось.
+    """
 
     if client is None:
         raise RuntimeError("OpenAI client is not available. Ensure openai SDK is installed.")
@@ -67,10 +71,17 @@ def send_responses_request(
     if temperature is not None:
         kwargs["temperature"] = temperature
 
+    metadata: Dict[str, Any] = {
+        "response_format_removed": False,
+        "temperature_removed": False,
+        "retries": 0,
+    }
+
     while attempt <= retries:
         try:
             resp = client.responses.create(**kwargs)
-            return resp
+            metadata["retries"] = attempt
+            return resp, metadata
         except Exception as exc:
             last_exc = exc
             msg = str(exc).lower()
@@ -84,15 +95,18 @@ def send_responses_request(
             if "temperature" in msg and "unsupported parameter" in msg or "temperature" in msg and "unexpected keyword" in msg:
                 if "temperature" in kwargs:
                     kwargs.pop("temperature", None)
+                    metadata["temperature_removed"] = True
                     handled = True
             if "response_format" in msg or "unexpected keyword argument 'response_format'" in msg:
                 if "response_format" in kwargs:
                     kwargs.pop("response_format", None)
+                    metadata["response_format_removed"] = True
                     handled = True
             if handled:
                 try:
                     resp = client.responses.create(**kwargs)
-                    return resp
+                    metadata["retries"] = attempt
+                    return resp, metadata
                 except Exception as exc2:
                     last_exc = exc2
                     # fall through to retry/backoff if transient

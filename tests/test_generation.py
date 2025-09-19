@@ -67,7 +67,11 @@ def test_generate_card_with_parsed_response(monkeypatch, dummy_row, settings):
     )
 
     def fake_send(*args, **kwargs):
-        return first_resp
+        return first_resp, {
+            "response_format_removed": False,
+            "temperature_removed": False,
+            "retries": 0,
+        }
 
     call_log = []
 
@@ -121,8 +125,14 @@ def test_generate_card_repair_from_text(monkeypatch, dummy_row, settings):
     )
 
     responses = [
-        _DummyResponse(parsed=None, text=f"Ответ:```json\n{bad_json}\n```"),
-        _DummyResponse(parsed=None, text=good_json),
+        (
+            _DummyResponse(parsed=None, text=f"Ответ:```json\n{bad_json}\n```"),
+            {"response_format_removed": True, "temperature_removed": False, "retries": 0},
+        ),
+        (
+            _DummyResponse(parsed=None, text=good_json),
+            {"response_format_removed": False, "temperature_removed": False, "retries": 0},
+        ),
     ]
 
     def fake_send(*_, **__):
@@ -147,6 +157,7 @@ def test_generate_card_repair_from_text(monkeypatch, dummy_row, settings):
     assert not meta["problems_final"], "после repair проблем быть не должно"
     # Резервное fallback, когда нет групп, должен брать список B1.
     assert meta["allowed_signalwords"] == ["omdat"]
+    assert meta["response_format_removed"], "ожидали флаг удаления schema"
 
 
 def test_raw_response_truncation(monkeypatch, dummy_row, settings):
@@ -156,7 +167,11 @@ def test_raw_response_truncation(monkeypatch, dummy_row, settings):
     resp = _DummyResponse(parsed=None, text=long_text)
 
     def fake_send(*args, **kwargs):
-        return resp
+        return resp, {
+            "response_format_removed": False,
+            "temperature_removed": False,
+            "retries": 0,
+        }
 
     monkeypatch.setattr(gen, "send_responses_request", fake_send)
     monkeypatch.setattr(gen, "pick_allowed_for_level", lambda *a, **k: [])
