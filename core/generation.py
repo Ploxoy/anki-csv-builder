@@ -32,7 +32,7 @@ from core.sanitize_validate import (
     try_separable_verb_wrap,
     validate_card,
 )
-from prompts import compose_instructions_en
+from core.prompts import compose_instructions_en
 
 __all__ = [
     "GenerationSettings",
