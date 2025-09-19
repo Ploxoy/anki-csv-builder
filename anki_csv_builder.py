@@ -8,10 +8,8 @@
 # - Enforces cloze double-braces locally (auto-repair) to tolerate smaller models.
 
 import os
-import re
 import io
 import csv
-import json
 import time
 import hashlib
 import pandas as pd
@@ -20,11 +18,8 @@ from typing import List, Dict, Tuple
 from openai import OpenAI
 
 # anki_csv_builder.py (near other core imports)
-from core.signalwords import (
-    pick_allowed_for_level,         # convenience: build pool + choose
-    note_signalword_in_sentence,    # detect & update usage/last
-)
-from core.llm_clients import create_client, send_responses_request, get_response_parsed, get_response_text
+from core.llm_clients import create_client
+from core.generation import GenerationSettings, generate_card
 
 
 
@@ -112,14 +107,7 @@ except Exception:
 
 # Import the prompt builder
 from prompts import compose_instructions_en, PROMPT_PROFILES as PR_PROMPT_PROFILES  
-from core.sanitize_validate import (
-    sanitize,
-    normalize_cloze_braces,
-    force_wrap_first_match,
-    try_separable_verb_wrap,
-    validate_card,
-    is_probably_dutch_word,
-)
+from core.sanitize_validate import is_probably_dutch_word
 
 from core.parsing import parse_input
 from core.signalwords import (
@@ -155,51 +143,6 @@ def _init_sig_usage():
         st.session_state.sig_usage = {}  # word -> count
     if "sig_last" not in st.session_state:
         st.session_state.sig_last = None
-
-
-
-def _choose_signalwords(level: str, n: int = 3, force_balance: bool = False) -> list[str]:
-    _init_sig_usage()
-    if CFG_SIGNALWORD_GROUPS:
-        return pick_allowed_for_level(
-            CFG_SIGNALWORD_GROUPS,
-            level,
-            n=n,
-            usage=st.session_state.get("sig_usage"),
-            last=st.session_state.get("sig_last"),
-            force_balance=force_balance,
-        )
-    # fallback simple lists
-    used = st.session_state.get("sig_usage", {})
-    if level == "B1":
-        base = CFG_SIGNALWORDS_B1
-    else:
-        base = CFG_SIGNALWORDS_B2_PLUS
-    candidates = sorted(base, key=lambda w: (used.get(w, 0), w))
-    res = []
-    for w in candidates:
-        if w == st.session_state.get("sig_last"):
-            continue
-        res.append(w)
-        if len(res) >= n:
-            break
-    return res
-    
-def _note_signalword_used(sentence: str, allowed: list[str]) -> None:
-    """
-    Wrapper updating st.session_state.sig_usage and st.session_state.sig_last
-    when an allowed signal word appears in sentence.
-    """
-    if not sentence or not allowed:
-        return
-    u, last, found = note_signalword_in_sentence(
-        sentence,
-        allowed,
-        usage=st.session_state.get("sig_usage"),
-        last=st.session_state.get("sig_last"),
-    )
-    st.session_state.sig_usage = u
-    st.session_state.sig_last = last
 
 
 def _clean_manual_rows(rows: List[Dict]) -> List[Dict[str, str]]:
@@ -486,303 +429,6 @@ def _should_pass_temperature(model_id: str) -> bool:
     if model_id.startswith(("gpt-5", "o3")):
         return False
     return True
-
-def _det_include_signalword(woord: str, level: str) -> bool:
-    """Deterministic ~50% inclusion for B1+ by hashing word+level."""
-    if level in ("B1", "B2", "C1", "C2"):
-        seed = int(hashlib.sha256(f"{woord}|{level}".encode()).hexdigest(), 16) % 100
-        return seed < 50
-    return False
-
-# ----- JSON extraction and validation -----
-RE_CODE_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
-RE_FIRST_OBJECT = re.compile(r"\{[\s\S]*\}")
-
-REQUIRED_KEYS = {"L2_word","L2_cloze","L1_sentence","L2_collocations","L2_definition","L1_gloss"}
-
-def _try_parse_candidate(s: str) -> Dict:
-    try:
-        obj = json.loads(s)
-        if isinstance(obj, dict) and REQUIRED_KEYS.issubset(obj.keys()):
-            return obj
-    except Exception:
-        pass
-    return {}
-
-def _brace_scan_pick(text: str) -> Dict:
-    """
-    Scan text and try every {...} span with brace-balancing.
-    Return the first dict that parses and has all required keys.
-    """
-    opens = []
-    for i, ch in enumerate(text):
-        if ch == "{":
-            opens.append(i)
-        elif ch == "}" and opens:
-            start = opens.pop()
-            chunk = text[start:i+1]
-            obj = _try_parse_candidate(chunk)
-            if obj:
-                return obj
-    return {}
-
-def extract_json_block(text: str) -> Dict:
-    """
-    Robustly extract the JSON object from model output.
-    Supports fenced code blocks, plain text with multiple objects, and balanced-brace scanning.
-    """
-    if not text:
-        return {}
-
-    # 1) Try fenced code block ```json ... ```
-    m = RE_CODE_FENCE.search(text)
-    if m:
-        cand = m.group(1).strip()
-        obj = _try_parse_candidate(cand)
-        if obj:
-            return obj
-        # Some models still add prose around; try brace-scan inside fence
-        obj = _brace_scan_pick(cand)
-        if obj:
-            return obj
-
-    # 2) Try to find any {...} in the whole text (first pass: greedy regex then validate)
-    m2 = RE_FIRST_OBJECT.search(text)
-    if m2:
-        cand2 = m2.group(0)
-        obj = _try_parse_candidate(cand2)
-        if obj:
-            return obj
-
-    # 3) Final attempt: balanced-brace scan over the full text
-    obj = _brace_scan_pick(text)
-    if obj:
-        return obj
-
-    return {}
-
-
-# --- new helper: безопасно получить текст ответа ---
-def _get_response_text(resp) -> str:
-    if not resp:
-        return ""
-    # Try direct attribute
-    text = getattr(resp, "output_text", None)
-    if text:
-        return text
-    # Newer SDK objects: resp.output[0].content[0].text.value
-    try:
-        parts = []
-        for out in getattr(resp, "output", []) or []:
-            for item in getattr(out, "content", []) or []:
-                # gpt-5/o3 return objects with .text.value
-                txt_obj = getattr(item, "text", None)
-                if txt_obj and hasattr(txt_obj, "value"):
-                    parts.append(txt_obj.value)
-                elif isinstance(item, dict):
-                    if "text" in item and isinstance(item["text"], dict) and "value" in item["text"]:
-                        parts.append(item["text"]["value"])
-                    elif "text" in item:
-                        parts.append(item["text"])
-                elif hasattr(item, "text"):
-                    parts.append(item.text)
-        if parts:
-            return "".join(parts)
-    except Exception:
-        pass
-    return str(resp)
-def _get_response_parsed(resp) -> Dict:
-    """Extract parsed JSON from Responses API (gpt-5/o3 structured outputs)."""
-    if not resp:
-        return {}
-    # Fast path (SDK convenience):
-    try:
-        p = getattr(resp, "output_parsed", None)
-        if isinstance(p, dict) and p:
-            return p
-    except Exception:
-        pass
-    # Walk the new structure: resp.output[*].content[*].parsed
-    try:
-        for out in (getattr(resp, "output", None) or []):
-            content = getattr(out, "content", None) or []
-            for item in content:
-                # object attribute
-                if hasattr(item, "parsed"):
-                    p = getattr(item, "parsed")
-                    if isinstance(p, dict) and p:
-                        return p
-                # dict-ish fallback
-                if isinstance(item, dict) and isinstance(item.get("parsed"), dict) and item["parsed"]:
-                    return item["parsed"]
-    except Exception:
-        pass
-    return {}
-
-
-def validate_card(card: Dict) -> List[str]:
-    """Field presence, cloze presence, collocations len=3, gloss len<=2, no pipes."""
-    problems = []
-    required = ["L2_word", "L2_cloze", "L1_sentence", "L2_collocations", "L2_definition", "L1_gloss"]
-    for k in required:
-        v = card.get(k, "")
-        if not isinstance(v, str) or not v.strip():
-            problems.append(f"Field '{k}' is empty")
-        if "|" in str(v):
-            problems.append(f"Field '{k}' contains '|'")
-    if "{{c1::" not in card.get("L2_cloze", ""):
-        problems.append("Missing {{c1::…}} in L2_cloze")
-    col_raw = card.get("L2_collocations", "")
-    items = [s.strip() for s in re.split(r";\s*|\n+", col_raw) if s.strip()]
-    if len(items) != 3:
-        problems.append("L2_collocations must contain exactly 3 items")
-    if len(card.get("L1_gloss", "").split()) > 2:
-        problems.append("L1_gloss must be 1–2 words")
-    return problems
-
-
-
-# ----- OpenAI call -----
-def call_openai_card(client: OpenAI, row: Dict, model: str, temperature: float,
-                     L1_code: str, level: str, profile: str) -> Dict:
-    """Call OpenAI for one word, with strict instructions and local cloze auto-fix."""
-
-    # Build instructions text from prompts.py
-    instructions = compose_instructions_en(L1_code, level, profile)
-
-    # Decide whether to include a signal word
-    include_sig = _det_include_signalword(row.get("woord", ""), level)
-    # For B2+ we enforce stronger balancing; for B1 we just suggest
-    force_balance = level in ("B2","C1","C2")
-    sig_list = _choose_signalwords(level, n=3, force_balance=force_balance)
-
-    # Payload to send (input data)
-    payload = {
-        "L2_word": row.get("woord", "").strip(),
-        "given_L2_definition": row.get("def_nl", "").strip(),
-        "preferred_L1_gloss": row.get("ru_short", "").strip(),
-        "L1": L1_LANGS[L1_code]["name"],
-        "CEFR": level,
-        "INCLUDE_SIGNALWORD": include_sig,
-        "ALLOWED_SIGNALWORDS": sig_list,
-    }
-
-    # Explicit JSON template to guide model output
-    json_template = (
-        '{'
-        '"L2_word": "<Dutch lemma>", '
-        '"L2_cloze": "ONE Dutch sentence with {{c1::...}} (and {{c2::...}} only if separable)", '
-        '"L1_sentence": "<exact translation into ' + L1_LANGS[L1_code]["name"] + '>", '
-        '"L2_collocations": "colloc1; colloc2; colloc3", '
-        '"L2_definition": "<short Dutch definition>", '
-        '"L1_gloss": "<1-2 ' + L1_LANGS[L1_code]["name"] + ' words>"'
-        '}'
-    )
-
-    # Response-format / schema object (pass to llm client if supported)
-    json_schema = {
-        "name": "AnkiClozeCard",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["L2_word","L2_cloze","L1_sentence","L2_collocations","L2_definition","L1_gloss"],
-            "properties": {
-                "L2_word":        {"type":"string","minLength":1},
-                "L2_cloze":       {"type":"string","minLength":1},
-                "L1_sentence":    {"type":"string","minLength":1},
-                "L2_collocations":{"type":"string","minLength":1},
-                "L2_definition":  {"type":"string","minLength":1},
-                "L1_gloss":       {"type":"string","minLength":1},
-            },
-        },
-    }
-
-    # Build the textual 'input' to send
-    input_text = (
-        "Input JSON:\n" + json.dumps(payload, ensure_ascii=False) +
-        "\nReply with STRICT JSON ONLY. It must match this template exactly (same keys, one-line JSON):\n" +
-        json_template
-    )
-
-    # Prepare request params for llm client
-    max_tokens = 3000 if limit_tokens else None
-    temp = temperature if _should_pass_temperature(model) else None
-
-    # --- First request using core.llm_clients wrapper ---
-    try:
-        resp = send_responses_request(
-            client=client,
-            model=model,
-            instructions=instructions,
-            input_text=input_text,
-            response_format=json_schema,
-            max_output_tokens=max_tokens,
-            temperature=temp,
-        )
-    except Exception as e:
-        # Bubble up with logging in UI
-        st.error(f"OpenAI API Error: {e}")
-        # attempt best-effort to show raw response if available is skipped here
-        raise
-
-    # Prefer structured parsed output, fallback to text extraction + JSON extraction
-    parsed = get_response_parsed(resp) or extract_json_block(get_response_text(resp))
-
-    # Sanitize and collect fields
-    card = {
-        "L2_word": sanitize(parsed.get("L2_word", payload["L2_word"])),
-        "L2_cloze": sanitize(parsed.get("L2_cloze", "")),
-        "L1_sentence": sanitize(parsed.get("L1_sentence", "")),
-        "L2_collocations": sanitize(parsed.get("L2_collocations", "")),
-        "L2_definition": sanitize(parsed.get("L2_definition", payload.get("given_L2_definition", ""))),
-        "L1_gloss": sanitize(parsed.get("L1_gloss", payload.get("preferred_L1_gloss", ""))),
-        "L1_hint": "",  # reserved for future use
-    }
-
-    # --- Local cloze auto-fixes BEFORE validation ---
-    clz = normalize_cloze_braces(card["L2_cloze"])
-    if "{{c1::" not in clz:
-        clz = force_wrap_first_match(card["L2_word"], clz)
-    clz = try_separable_verb_wrap(card["L2_word"], clz)
-    card["L2_cloze"] = clz
-
-    # --- Validation + one repair-pass if needed ---
-    problems = validate_card(card)
-    if problems:
-        repair_prompt = instructions + "\n\nREPAIR: The previous JSON has issues: " + "; ".join(problems) + ". " \
-            + "Fix ONLY the problematic fields and return STRICT JSON again."
-
-        repair_input = "Previous JSON:\n" + json.dumps(card, ensure_ascii=False)
-        try:
-            resp2 = send_responses_request(
-                client=client,
-                model=model,
-                instructions=repair_prompt,
-                input_text=repair_input,
-                max_output_tokens=max_tokens,
-                temperature=temp,
-            )
-            parsed2 = get_response_parsed(resp2) or extract_json_block(get_response_text(resp2))
-        except Exception as e:
-            st.error(f"Repair request OpenAI API Error: {e}")
-            parsed2 = {}
-
-        if parsed2:
-            card.update({
-                "L2_word": sanitize(parsed2.get("L2_word", card["L2_word"])),
-                "L2_cloze": sanitize(parsed2.get("L2_cloze", card["L2_cloze"])),
-                "L1_sentence": sanitize(parsed2.get("L1_sentence", card["L1_sentence"])),
-                "L2_collocations": sanitize(parsed2.get("L2_collocations", card["L2_collocations"])),
-                "L2_definition": sanitize(parsed2.get("L2_definition", card["L2_definition"])),
-                "L1_gloss": sanitize(parsed2.get("L1_gloss", card["L1_gloss"])),
-            })
-
-    _note_signalword_used(card.get("L2_cloze",""), sig_list)
-
-    return card
-
-
 # ----- CSV generation -----
 def generate_csv(
     results: List[Dict],
@@ -913,6 +559,9 @@ if st.session_state.input_data:
             st.session_state.model_id = model
             total = len(st.session_state.input_data)
             progress = st.progress(0)
+            max_tokens = 3000 if limit_tokens else None
+            effective_temp = temperature if _should_pass_temperature(model) else None
+            _init_sig_usage()
             for idx, row in enumerate(st.session_state.input_data):
                 try:
                     # Skip flagged rows unless user explicitly forces generation
@@ -931,11 +580,28 @@ if st.session_state.input_data:
                         })
                         continue
 
-                    card = call_openai_card(
-                        client, row, model=model, temperature=temperature,
-                        L1_code=L1_code, level=level, profile=profile
+                    settings = GenerationSettings(
+                        model=model,
+                        L1_code=L1_code,
+                        L1_name=L1_meta["name"],
+                        level=level,
+                        profile=profile,
+                        temperature=effective_temp,
+                        max_output_tokens=max_tokens,
                     )
-                    st.session_state.results.append(card)
+                    gen_result = generate_card(
+                        client=client,
+                        row=row,
+                        settings=settings,
+                        signalword_groups=CFG_SIGNALWORD_GROUPS,
+                        signalwords_b1=CFG_SIGNALWORDS_B1,
+                        signalwords_b2_plus=CFG_SIGNALWORDS_B2_PLUS,
+                        signal_usage=st.session_state.get("sig_usage"),
+                        signal_last=st.session_state.get("sig_last"),
+                    )
+                    st.session_state.sig_usage = gen_result.signal_usage
+                    st.session_state.sig_last = gen_result.signal_last
+                    st.session_state.results.append(gen_result.card)
                 except Exception as e:
                     st.error(f"Error for word '{row.get('woord','?')}': {e}")
                 finally:
