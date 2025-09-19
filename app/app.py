@@ -27,88 +27,38 @@ from core.llm_clients import create_client
 from core.generation import GenerationSettings, generate_card
 from core.export_csv import generate_csv
 from core.export_anki import build_anki_package, HAS_GENANKI
-
-# Config (import with safe fallbacks)
-try:
-    from config import SIGNALWORD_GROUPS as CFG_SIGNALWORD_GROUPS
-except Exception:
-    CFG_SIGNALWORD_GROUPS = {}
-
-try:
-    from config import (  # type: ignore
-        DEFAULT_MODELS as CFG_DEFAULT_MODELS,
-        _PREFERRED_ORDER as CFG_PREFERRED_ORDER,
-        _BLOCK_SUBSTRINGS as CFG_BLOCK_SUBSTRINGS,
-        _ALLOWED_PREFIXES as CFG_ALLOWED_PREFIXES,
-        SIGNALWORDS_B1 as CFG_SIGNALWORDS_B1,
-        SIGNALWORDS_B2_PLUS as CFG_SIGNALWORDS_B2_PLUS,
-        PROMPT_PROFILES as CFG_PROMPT_PROFILES,
-        L1_LANGS as CFG_L1_LANGS,
-        DEMO_WORDS as CFG_DEMO_WORDS,
-        PAGE_TITLE as CFG_PAGE_TITLE,
-        PAGE_LAYOUT as CFG_PAGE_LAYOUT,
-        TEMPERATURE_MIN as CFG_TMIN,
-        TEMPERATURE_MAX as CFG_TMAX,
-        TEMPERATURE_DEFAULT as CFG_TDEF,
-        TEMPERATURE_STEP as CFG_TSTEP,
-        PREVIEW_LIMIT as CFG_PREVIEW_LIMIT,
-        API_REQUEST_DELAY as CFG_API_DELAY,
-        ANKI_MODEL_ID as CFG_ANKI_MODEL_ID,
-        ANKI_DECK_ID as CFG_ANKI_DECK_ID,
-        ANKI_MODEL_NAME as CFG_ANKI_MODEL_NAME,
-        ANKI_DECK_NAME as CFG_ANKI_DECK_NAME,
-        FRONT_HTML_TEMPLATE as CFG_FRONT_HTML_TEMPLATE,
-        BACK_HTML_TEMPLATE as CFG_BACK_HTML_TEMPLATE,
-        CSS_STYLING as CFG_CSS_STYLING,
-        CSV_DELIMITER as CFG_CSV_DELIM,
-        CSV_LINETERMINATOR as CFG_CSV_EOL,
-    )
-except Exception:
-    # Minimal fallback config
-    CFG_DEFAULT_MODELS = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4o", "gpt-4o-mini", "o3-mini"]
-    CFG_PREFERRED_ORDER = {"gpt-5": 0, "gpt-5-mini": 1, "gpt-5-nano": 2, "gpt-4.1": 3, "gpt-4o": 4, "gpt-4o-mini": 5, "o3": 6, "o3-mini": 7}
-    CFG_BLOCK_SUBSTRINGS = ("audio", "realtime", "embed", "embedding", "whisper", "asr", "transcribe", "speech", "tts", "moderation", "search", "vision", "vision-preview", "distill", "distilled", "batch", "preview")
-    CFG_ALLOWED_PREFIXES = ("gpt-5", "gpt-4.1", "gpt-4o", "o3")
-    CFG_SIGNALWORDS_B1 = ["omdat", "maar", "dus", "want", "terwijl", "daarom", "daardoor", "toch"]
-    CFG_SIGNALWORDS_B2_PLUS = ["hoewel", "zodat", "doordat", "bovendien", "echter", "bijvoorbeeld", "tenzij", "ondanks", "desondanks", "daarentegen", "aangezien", "zodra", "voordat", "nadat", "enerzijds ... anderzijds", "niet alleen ... maar ook", "opdat"]
-    CFG_PROMPT_PROFILES = {"strict": "Be literal and concise; avoid figurative language; keep the simplest structure that satisfies CEFR.",
-                           "balanced": "Natural and clear; minor synonymy allowed if it improves fluency.",
-                           "exam": "Neutral-formal register; precise; avoid colloquialisms.",
-                           "creative": "Allow mild figurativeness if it keeps clarity and CEFR constraints."}
-    CFG_L1_LANGS = {"RU": {"label": "RU", "name": "Russian", "csv_translation": "Перевод", "csv_gloss": "Перевод слова"},
-                    "EN": {"label": "EN", "name": "English", "csv_translation": "Translation", "csv_gloss": "Word gloss"},
-                    "ES": {"label": "ES", "name": "Spanish", "csv_translation": "Traducción", "csv_gloss": "Glosa"},
-                    "DE": {"label": "DE", "name": "German", "csv_translation": "Übersetzung", "csv_gloss": "Kurzgloss"}}
-    CFG_DEMO_WORDS = [
-        {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
-        {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
-        {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
-        {"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
-        {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
-        {"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
-    ]
-    CFG_PAGE_TITLE = "Anki CSV Builder — Cloze (NL)"
-    CFG_PAGE_LAYOUT = "wide"
-    CFG_TMIN, CFG_TMAX, CFG_TDEF, CFG_TSTEP = 0.2, 0.8, 0.4, 0.1
-    CFG_PREVIEW_LIMIT = 20
-    CFG_API_DELAY = 0.0
-    CFG_ANKI_MODEL_ID = 1607392319
-    CFG_ANKI_DECK_ID = 1970010101
-    CFG_ANKI_MODEL_NAME = "Dutch Cloze (L2/L1)"
-    CFG_ANKI_DECK_NAME = "Dutch • Cloze"
-    CFG_FRONT_HTML_TEMPLATE = """<div class="card-inner">{{cloze:L2_cloze}}</div>"""
-    CFG_BACK_HTML_TEMPLATE = """<div class="card-inner">{{cloze:L2_cloze}}<div class="answer">{{L1_sentence}}</div></div>"""
-    CFG_CSS_STYLING = ""
-    CFG_CSV_DELIM = '|'
-    CFG_CSV_EOL = '\n'
-
-# Import the prompt builder
-from prompts import compose_instructions_en, PROMPT_PROFILES as PR_PROMPT_PROFILES  
 from core.sanitize_validate import is_probably_dutch_word
 
-from core.parsing import parse_input
-
-# Streamlit page config
+# Config (import from settings)
+from config.signalword_groups import SIGNALWORD_GROUPS as CFG_SIGNALWORD_GROUPS
+from config.settings import (
+    DEFAULT_MODELS as CFG_DEFAULT_MODELS,
+    _PREFERRED_ORDER as CFG_PREFERRED_ORDER,
+    _BLOCK_SUBSTRINGS as CFG_BLOCK_SUBSTRINGS,
+    _ALLOWED_PREFIXES as CFG_ALLOWED_PREFIXES,
+    SIGNALWORDS_B1 as CFG_SIGNALWORDS_B1,
+    SIGNALWORDS_B2_PLUS as CFG_SIGNALWORDS_B2_PLUS,
+    PROMPT_PROFILES as CFG_PROMPT_PROFILES,
+    L1_LANGS as CFG_L1_LANGS,
+    DEMO_WORDS as CFG_DEMO_WORDS,
+    PAGE_TITLE as CFG_PAGE_TITLE,
+    PAGE_LAYOUT as CFG_PAGE_LAYOUT,
+    TEMPERATURE_MIN as CFG_TMIN,
+    TEMPERATURE_MAX as CFG_TMAX,
+    TEMPERATURE_DEFAULT as CFG_TDEF,
+    TEMPERATURE_STEP as CFG_TSTEP,
+    PREVIEW_LIMIT as CFG_PREVIEW_LIMIT,
+    API_REQUEST_DELAY as CFG_API_DELAY,
+    ANKI_MODEL_ID as CFG_ANKI_MODEL_ID,
+    ANKI_DECK_ID as CFG_ANKI_DECK_ID,
+    ANKI_MODEL_NAME as CFG_ANKI_MODEL_NAME,
+    ANKI_DECK_NAME as CFG_ANKI_DECK_NAME,
+    FRONT_HTML_TEMPLATE as CFG_FRONT_HTML_TEMPLATE,
+    BACK_HTML_TEMPLATE as CFG_BACK_HTML_TEMPLATE,
+    CSS_STYLING as CFG_CSS_STYLING,
+    CSV_DELIMITER as CFG_CSV_DELIM,
+    CSV_LINETERMINATOR as CFG_CSV_EOL,
+)
 st.set_page_config(page_title=CFG_PAGE_TITLE, layout=CFG_PAGE_LAYOUT)
 
 # Model discovery and filtering
@@ -196,7 +146,7 @@ SIGNALWORDS_B1: List[str] = CFG_SIGNALWORDS_B1
 SIGNALWORDS_B2_PLUS: List[str] = CFG_SIGNALWORDS_B2_PLUS
 
 L1_LANGS = CFG_L1_LANGS
-PROMPT_PROFILES = PR_PROMPT_PROFILES
+PROMPT_PROFILES = CFG_PROMPT_PROFILES
 
 # ----- Sidebar: API, model, params -----
 st.sidebar.header("🔐 API Settings")
