@@ -490,11 +490,13 @@ if st.session_state.results:
         extras_meta=csv_extras,
     )
 
+    st.session_state.last_csv_data = csv_data
     st.download_button(
         label="📥 Download anki_cards.csv",
         data=csv_data,
         file_name="anki_cards.csv",
         mime="text/csv",
+        key="download_csv",
     )
 
     if HAS_GENANKI:
@@ -526,6 +528,7 @@ if st.session_state.results:
                 data=anki_bytes,
                 file_name="dutch_cloze.apkg",
                 mime="application/octet-stream",
+                key="download_apkg",
             )
         except Exception as e:
             st.error(f"Failed to build .apkg: {e}")
