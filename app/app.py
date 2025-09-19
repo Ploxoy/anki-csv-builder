@@ -520,6 +520,7 @@ if st.session_state.results:
                 css=CFG_CSS_STYLING,
                 tags_meta=tags_meta,
             )
+            st.session_state.last_anki_package = anki_bytes
             st.download_button(
                 label="🧩 Download Anki deck (.apkg)",
                 data=anki_bytes,
