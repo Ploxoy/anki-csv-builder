@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import random
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
@@ -95,6 +96,7 @@ def _fallback_signalwords(
     last: Optional[str] = None,
     b1_list: Optional[Sequence[str]] = None,
     b2_list: Optional[Sequence[str]] = None,
+    seed: Optional[int] = None,
 ) -> List[str]:
     if level not in {"B1", "B2", "C1", "C2"}:
         return []
@@ -105,15 +107,18 @@ def _fallback_signalwords(
         base = b2_list or []
     if not base:
         return []
+
+    rng = random.Random(seed) if seed is not None else None
     used = usage or {}
-    ordered = sorted(base, key=lambda w: (used.get(w, 0), w))
-    result: List[str] = []
-    for word in ordered:
+    scored = []
+    for word in base:
         if word == last:
             continue
-        result.append(word)
-        if len(result) >= count:
-            break
+        jitter = rng.random() if rng is not None else 0.0
+        scored.append((used.get(word, 0), jitter, word))
+
+    scored.sort(key=lambda item: (item[0], item[1], item[2]))
+    result = [word for _, _, word in scored][:count]
     return result
 
 
@@ -170,11 +175,43 @@ def extract_json_block(text: str) -> Dict:
     return _brace_scan_pick(text)
 
 
+FORBIDDEN_CLOZE_TOKENS = {"de", "het", "een", "daardoor", "daarom", "dus", "maar", "omdat", "want", "terwijl", "hoewel", "zodat", "doordat", "bovendien", "echter", "bijvoorbeeld", "tenzij", "ondanks", "desondanks", "daarentegen", "aangezien", "zodra", "voordat", "nadat"}
+
+
+
+def _strip_cloze(text: str) -> str:
+    if not text:
+        return ""
+    import re
+    return re.sub(r'\{\{.*?\}\}', '', text)
+
+
+def _sanitize_c1_spans(sentence: str, target: str) -> str:
+    if not sentence:
+        return ""
+    import re
+    target_tokens = [t.strip() for t in target.lower().split()] if target else []
+
+    def _fix_match(match):
+        inner = match.group(1).strip()
+        token = inner.lower()
+        if token in FORBIDDEN_CLOZE_TOKENS:
+            return inner
+        if len(token) <= 2 and token not in target_tokens:
+            return inner
+        return match.group(0)
+    sentence = re.sub(r'\{\{c1::(.*?)\}\}', _fix_match, sentence)
+    sentence = re.sub(r'\{\{c2::(.*?)\}\}', r'\1', sentence)
+    sentence = sentence.replace('{{{{', '{{').replace('}}}}', '}}')
+    return sentence
+
+
 def _apply_cloze_fixes(card: Dict[str, str]) -> None:
     clz = normalize_cloze_braces(card.get("L2_cloze", ""))
     if "{{c1::" not in clz:
         clz = force_wrap_first_match(card.get("L2_word", ""), clz)
     clz = try_separable_verb_wrap(card.get("L2_word", ""), clz)
+    clz = _sanitize_c1_spans(clz, card.get("L2_word", ""))
     card["L2_cloze"] = clz
 
 
@@ -229,6 +266,7 @@ def generate_card(
                 last=signal_last,
                 b1_list=signalwords_b1,
                 b2_list=signalwords_b2_plus,
+                seed=settings.signalword_seed,
             )
 
     translation_hint = (
@@ -317,10 +355,10 @@ def generate_card(
     card = {
         "L2_word": sanitize(parsed.get("L2_word", payload["L2_word"])),
         "L2_cloze": sanitize(parsed.get("L2_cloze", "")),
-        "L1_sentence": sanitize(parsed.get("L1_sentence", "")),
-        "L2_collocations": sanitize(parsed.get("L2_collocations", "")),
-        "L2_definition": sanitize(parsed.get("L2_definition", payload.get("given_L2_definition", ""))),
-        "L1_gloss": sanitize(parsed.get("L1_gloss", payload.get("preferred_L1_gloss", ""))),
+        "L1_sentence": _strip_cloze(sanitize(parsed.get("L1_sentence", ""))),
+        "L2_collocations": _strip_cloze(sanitize(parsed.get("L2_collocations", ""))),
+        "L2_definition": _strip_cloze(sanitize(parsed.get("L2_definition", payload.get("given_L2_definition", "")))),
+        "L1_gloss": _strip_cloze(sanitize(parsed.get("L1_gloss", payload.get("preferred_L1_gloss", "")))),
         "L1_hint": "",
         "error": "",
     }
@@ -389,6 +427,7 @@ def generate_card(
         "allowed_signalwords": allowed_signalwords,
         "include_signalword": bool(include_sig and allowed_signalwords),
         "signalword_found": signal_found,
+        "signalword_seed": settings.signalword_seed,
         "problems_initial": problems_initial,
         "problems_final": problems_final,
         "repair_attempted": repair_attempted,

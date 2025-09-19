@@ -10,6 +10,7 @@
 import os
 import sys
 import time
+import random
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -27,6 +28,7 @@ from core.llm_clients import create_client
 from core.generation import GenerationSettings, generate_card
 from core.export_csv import generate_csv
 from core.export_anki import build_anki_package, HAS_GENANKI
+from core.parsing import parse_input
 from core.sanitize_validate import is_probably_dutch_word
 
 # Config (import from settings)
@@ -91,6 +93,8 @@ def _init_sig_usage():
 def _init_response_format_cache():
     if "no_response_format_models" not in st.session_state:
         st.session_state.no_response_format_models = set()
+    if "no_response_format_notified" not in st.session_state:
+        st.session_state.no_response_format_notified = set()
 
 
 def _clean_manual_rows(rows: List[Dict]) -> List[Dict[str, str]]:
@@ -295,6 +299,10 @@ with tab_upload:
             uploaded_file.seek(0)
             file_text = uploaded_file.read().decode("utf-16")
         st.session_state.input_data = parse_input(file_text)
+        st.session_state.manual_rows = [
+            {"woord": row.get("woord", ""), "def_nl": row.get("def_nl", ""), "translation": row.get("translation", "") or ""}
+            for row in st.session_state.input_data
+        ]
         st.session_state.results = []
         st.toast("📥 Input replaced with uploaded file", icon="📄")
 
@@ -394,6 +402,7 @@ if st.session_state.input_data:
             effective_temp = temperature if _should_pass_temperature(model) else None
             _init_sig_usage()
             _init_response_format_cache()
+            rng = random.Random()
             for idx, row in enumerate(st.session_state.input_data):
                 try:
                     # Skip flagged rows unless user explicitly forces generation
@@ -412,6 +421,7 @@ if st.session_state.input_data:
                         })
                         continue
 
+                    card_seed = rng.randint(0, 2**31 - 1)
                     settings = GenerationSettings(
                         model=model,
                         L1_code=L1_code,
@@ -421,6 +431,7 @@ if st.session_state.input_data:
                         temperature=effective_temp,
                         max_output_tokens=max_tokens,
                         allow_response_format=model not in st.session_state.get("no_response_format_models", set()),
+                        signalword_seed=card_seed,
                     )
                     gen_result = generate_card(
                         client=client,
@@ -438,11 +449,15 @@ if st.session_state.input_data:
                     meta = gen_result.card.get("meta", {})
                     if meta.get("response_format_removed"):
                         cache = set(st.session_state.get("no_response_format_models", set()))
+                        notified = set(st.session_state.get("no_response_format_notified", set()))
                         if model not in cache:
                             cache.add(model)
                             st.session_state.no_response_format_models = cache
+                        if model not in notified:
+                            notified.add(model)
+                            st.session_state.no_response_format_notified = notified
                             st.info(
-                                f"Модель {model} не поддерживает response_format; переключаюсь на текстовый парсинг.",
+                                f"Model {model} ignored response_format; falling back to text parsing for this session.",
                                 icon="ℹ️",
                             )
                 except Exception as e:
