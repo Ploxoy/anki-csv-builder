@@ -202,6 +202,25 @@ def _note_signalword_used(sentence: str, allowed: list[str]) -> None:
     st.session_state.sig_last = last
 
 
+def _clean_manual_rows(rows: List[Dict]) -> List[Dict[str, str]]:
+    """Normalize manual editor rows: trim fields, drop incomplete entries."""
+    cleaned: List[Dict[str, str]] = []
+    for raw in rows:
+        woord = str(raw.get("woord", "") or "").strip()
+        def_nl = str(raw.get("def_nl", "") or "").strip()
+        translation = str(raw.get("translation", "") or "").strip()
+        if not (woord or def_nl or translation):
+            continue  # fully empty row
+        if not woord:
+            continue  # skip rows without target word
+        cleaned.append({
+            "woord": woord,
+            "def_nl": def_nl,
+            "translation": translation,
+        })
+    return cleaned
+
+
 
 def _sort_key(model_id: str) -> tuple:
     for k, rank in _PREFERRED_ORDER.items():
@@ -349,35 +368,89 @@ if "input_data" not in st.session_state:
     st.session_state.input_data: List[Dict] = [] # type: ignore
 if "results" not in st.session_state:
     st.session_state.results: List[Dict] = [] # type: ignore
+if "manual_rows" not in st.session_state:
+    st.session_state.manual_rows = [{"woord": "", "def_nl": "", "translation": ""}]
 
 col_demo, col_clear = st.columns([1, 1])
 with col_demo:
     if st.button("Try demo", type="secondary"):
-        st.session_state.input_data = DEMO_WORDS
+        st.session_state.input_data = [dict(row) for row in DEMO_WORDS]
+        st.session_state.manual_rows = [
+            {"woord": row.get("woord", ""), "def_nl": row.get("def_nl", ""), "translation": row.get("translation", "") or ""}
+            for row in DEMO_WORDS
+        ]
         st.toast("✅ Demo set (6 words) loaded", icon="✅")
 with col_clear:
     if st.button("Clear", type="secondary"):
         st.session_state.input_data = []
         st.session_state.results = []
+        st.session_state.manual_rows = [{"woord": "", "def_nl": "", "translation": ""}]
 
-# ----- Upload -----
-uploaded_file = st.file_uploader(
-    "Upload .txt / .md / .tsv / .csv",
-    type=["txt", "md", "tsv", "csv"],
-    accept_multiple_files=False
-)
+# ----- Input tabs: upload vs manual editor -----
+tab_upload, tab_manual = st.tabs(["📄 Upload", "✍️ Manual editor"])
 
-# ----- Parsing helpers -----
+with tab_upload:
+    uploaded_file = st.file_uploader(
+        "Upload .txt / .md / .tsv / .csv",
+        type=["txt", "md", "tsv", "csv"],
+        accept_multiple_files=False,
+        key="file_uploader",
+    )
 
+    if uploaded_file is not None:
+        try:
+            file_text = uploaded_file.read().decode("utf-8")
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            file_text = uploaded_file.read().decode("utf-16")
+        st.session_state.input_data = parse_input(file_text)
+        st.session_state.results = []
+        st.toast("📥 Input replaced with uploaded file", icon="📄")
 
-# Read upload
-if uploaded_file is not None:
-    try:
-        file_text = uploaded_file.read().decode("utf-8")
-    except UnicodeDecodeError:
-        uploaded_file.seek(0)
-        file_text = uploaded_file.read().decode("utf-16")
-    st.session_state.input_data = parse_input(file_text)
+with tab_manual:
+    manual_cols = st.columns([1, 1, 1])
+    with manual_cols[0]:
+        if st.button("Reset list", key="manual_reset"):
+            st.session_state.manual_rows = [{"woord": "", "def_nl": "", "translation": ""}]
+    with manual_cols[1]:
+        if st.button("Load demo", key="manual_seed_demo"):
+            st.session_state.manual_rows = [
+                {"woord": row.get("woord", ""), "def_nl": row.get("def_nl", ""), "translation": row.get("translation", "") or ""}
+                for row in DEMO_WORDS
+            ]
+    with manual_cols[2]:
+        st.caption("Добавьте слова, определения и при необходимости перевод. Строки можно редактировать и удалять.")
+
+    manual_df = pd.DataFrame(st.session_state.manual_rows or [{"woord": "", "def_nl": "", "translation": ""}])
+    manual_df = manual_df.reindex(columns=["woord", "def_nl", "translation"])
+
+    edited_df = st.data_editor(
+        manual_df,
+        key="manual_editor",
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "woord": st.column_config.TextColumn("woord", help="Целевое нидерландское слово"),
+            "def_nl": st.column_config.TextColumn("def_nl", help="Опционально: определение или контекст"),
+            "translation": st.column_config.TextColumn("translation", help="Опционально: перевод на L1"),
+        },
+    )
+
+    st.session_state.manual_rows = edited_df.fillna("").to_dict("records")
+    manual_clean = _clean_manual_rows(st.session_state.manual_rows)
+
+    apply_col, info_col = st.columns([1, 1])
+    with apply_col:
+        if st.button("Use manual list", type="primary", key="manual_apply"):
+            if manual_clean:
+                st.session_state.input_data = manual_clean
+                st.session_state.results = []
+                st.toast(f"✍️ Loaded {len(manual_clean)} manual rows", icon="✍️")
+            else:
+                st.warning("Нужно заполнить хотя бы одну строку с полем 'woord'.")
+    with info_col:
+        st.caption(f"Активные строки: {len(manual_clean)}")
 
 # Preview input
 # Preview input — annotate parsed rows with quick Dutch-word heuristic and show flags
