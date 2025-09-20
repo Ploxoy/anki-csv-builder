@@ -186,3 +186,123 @@ def test_raw_response_truncation(monkeypatch, dummy_row, settings):
     meta = result.card["meta"]
     assert meta["raw_response_truncated"], "должен быть установлен флаг усечения"
     assert len(meta["raw_response"]) <= gen.RAW_RESPONSE_MAX_LEN + 3, "усечённое значение не должно превышать лимит"
+
+
+def test_generate_card_without_signalword_when_disabled(monkeypatch, dummy_row, settings):
+    """При include_signalword=False подбор слов не выполняется, мета пустая."""
+
+    settings = gen.GenerationSettings(
+        model=settings.model,
+        L1_code=settings.L1_code,
+        L1_name=settings.L1_name,
+        level="A2",
+        profile=settings.profile,
+        temperature=settings.temperature,
+        max_output_tokens=settings.max_output_tokens,
+        include_signalword=False,
+        signalword_seed=settings.signalword_seed,
+    )
+
+    resp = _DummyResponse(
+        parsed={
+            "L2_word": "aanraken",
+            "L2_cloze": "Ik wil {{c1::aanraken}} de hond voorzichtig.",
+            "L1_sentence": "I want to touch the dog carefully.",
+            "L2_collocations": "iemand aanraken; voorzichtig aanraken; zacht aanraken",
+            "L2_definition": "iets of iemand met je hand voelen",
+            "L1_gloss": "touch",
+        },
+        text="",
+    )
+
+    def fake_send(*args, **kwargs):
+        assert kwargs.get("response_format") is not None
+        return resp, {
+            "response_format_removed": False,
+            "temperature_removed": False,
+            "retries": 0,
+        }
+
+    def boom(*_args, **_kwargs):  # should never be called when include_signalword=False
+        raise AssertionError("signalword selector should not be invoked")
+
+    monkeypatch.setattr(gen, "send_responses_request", fake_send)
+    monkeypatch.setattr(gen, "pick_allowed_for_level", boom)
+    monkeypatch.setattr(gen, "_fallback_signalwords", boom)
+
+    result = gen.generate_card(
+        client=object(),
+        row=dummy_row,
+        settings=settings,
+        signalword_groups={"contrast": {"B1": ["maar"]}},
+        signal_usage=None,
+        signal_last=None,
+    )
+
+    meta = result.card["meta"]
+    assert meta["allowed_signalwords"] == []
+    assert not meta["include_signalword"], "при выключенном флаге не должны просить сигнал-слово"
+    assert meta["signalword_found"] is None
+    assert result.signal_usage == {}
+    assert result.signal_last is None
+
+
+def test_generate_card_fallback_signalwords_for_b2(monkeypatch, dummy_row, settings):
+    """Фолбэк списков B2 выбирает наименее использованные и учитывает last."""
+
+    settings = gen.GenerationSettings(
+        model=settings.model,
+        L1_code=settings.L1_code,
+        L1_name=settings.L1_name,
+        level="B2",
+        profile=settings.profile,
+        temperature=settings.temperature,
+        max_output_tokens=settings.max_output_tokens,
+        include_signalword=True,
+        signalword_seed=None,
+    )
+
+    parsed = {
+        "L2_word": "aanraken",
+        "L2_cloze": "Hij wil {{c1::aanraken}} de hond, bovendien leert hij geduld.",
+        "L1_sentence": "He wants to touch the dog, moreover he learns patience.",
+        "L2_collocations": "iemand aanraken; zacht aanraken; dier aanraken",
+        "L2_definition": "iets of iemand met je hand voelen",
+        "L1_gloss": "touch",
+    }
+
+    calls = []
+
+    def fake_send(*args, **kwargs):
+        calls.append(kwargs)
+        return _DummyResponse(parsed=parsed), {
+            "response_format_removed": False,
+            "temperature_removed": False,
+            "retries": 0,
+        }
+
+    def forbid_group_path(*_args, **_kwargs):
+        raise AssertionError("group path should not be used")
+
+    monkeypatch.setattr(gen, "send_responses_request", fake_send)
+    # ensure groups path not used so fallback executes
+    monkeypatch.setattr(gen, "pick_allowed_for_level", forbid_group_path)
+
+    usage = {"echter": 5, "daarentegen": 1}
+    result = gen.generate_card(
+        client=object(),
+        row=dummy_row,
+        settings=settings,
+        signalword_groups=None,
+        signalwords_b1=["maar"],
+        signalwords_b2_plus=["echter", "bovendien", "daarentegen"],
+        signal_usage=usage,
+        signal_last="echter",
+    )
+
+    meta = result.card["meta"]
+    assert meta["allowed_signalwords"] == ["bovendien", "daarentegen"], "ожидали выбор без последнего и с учётом usage"
+    assert meta["signalword_found"] == "bovendien"
+    assert result.signal_usage["bovendien"] == 1
+    assert result.signal_last == "bovendien"
+    assert calls[0]["response_format"] is not None

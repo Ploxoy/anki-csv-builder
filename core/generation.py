@@ -434,12 +434,14 @@ def generate_card(
         "raw_response": raw_text,
         "raw_response_truncated": raw_trimmed,
         "response_format_removed": send_meta.get("response_format_removed", False),
+        "response_format_error": send_meta.get("response_format_error"),
         "temperature_removed": send_meta.get("temperature_removed", False),
     }
     if repair_raw:
         meta["repair_response"] = repair_raw
         meta["repair_response_truncated"] = repair_trimmed
         meta["repair_response_format_removed"] = repair_meta.get("response_format_removed", False)
+        meta["repair_response_format_error"] = repair_meta.get("response_format_error")
         meta["repair_temperature_removed"] = repair_meta.get("temperature_removed", False)
 
     meta_full = {

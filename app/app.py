@@ -465,10 +465,13 @@ if st.session_state.input_data:
                         if model not in notified:
                             notified.add(model)
                             st.session_state.no_response_format_notified = notified
-                            st.info(
-                                f"Model {model} ignored response_format; falling back to text parsing for this session.",
-                                icon="ℹ️",
+                            detail = meta.get("response_format_error")
+                            message = (
+                                f"Model {model} ignored response_format; falling back to text parsing for this session."
                             )
+                            if detail:
+                                message += f"\nReason: {detail}"
+                            st.info(message, icon="ℹ️")
                 except Exception as e:
                     st.error(f"Error for word '{row.get('woord','?')}': {e}")
                 finally:

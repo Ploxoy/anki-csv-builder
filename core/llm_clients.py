@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 import json
+import logging
 from typing import Any, Dict, Optional, Tuple
 
 try:
@@ -21,6 +22,8 @@ try:
 except Exception:  # pragma: no cover - openai may not be installed in test env
     OpenAI = None  # type: ignore
 
+
+logger = logging.getLogger(__name__)
 
 def create_client(api_key: Optional[str]) -> Any:
     """Create and return an OpenAI client instance or None if SDK unavailable.
@@ -94,13 +97,24 @@ def send_responses_request(
             handled = False
             if "temperature" in msg and "unsupported parameter" in msg or "temperature" in msg and "unexpected keyword" in msg:
                 if "temperature" in kwargs:
+                    logger.warning(
+                        "Model %s rejected temperature parameter: %s",
+                        model,
+                        exc,
+                    )
                     kwargs.pop("temperature", None)
                     metadata["temperature_removed"] = True
                     handled = True
             if "response_format" in msg or "unexpected keyword argument 'response_format'" in msg:
                 if "response_format" in kwargs:
+                    logger.warning(
+                        "Model %s rejected response_format parameter: %s",
+                        model,
+                        exc,
+                    )
                     kwargs.pop("response_format", None)
                     metadata["response_format_removed"] = True
+                    metadata["response_format_error"] = str(exc)
                     handled = True
             if handled:
                 try:
