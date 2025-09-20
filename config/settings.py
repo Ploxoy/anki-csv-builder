@@ -136,6 +136,19 @@ PREVIEW_LIMIT: int = 20
 API_REQUEST_DELAY: float = 0.1
 
 # ==========================
+# Audio / TTS settings
+# ==========================
+
+AUDIO_TTS_MODEL: str = "gpt-4o-mini-tts"
+AUDIO_TTS_FALLBACK: str | None = "gpt-4o-tts"
+AUDIO_VOICES: List[Dict[str, str]] = [
+    {"id": "alloy", "label": "Alloy — NL female"},
+    {"id": "verse", "label": "Verse — NL male"},
+]
+AUDIO_INCLUDE_WORD_DEFAULT: bool = True
+AUDIO_INCLUDE_SENTENCE_DEFAULT: bool = True
+
+# ==========================
 # CSV headers
 # ==========================
 
@@ -219,6 +232,11 @@ ANKI_DECK_NAME: str = "Dutch • Cloze"
 FRONT_HTML_TEMPLATE: str = """
 <div class="card-inner">
   {{cloze:L2_cloze}}
+  <div class="audio-inline">
+    {{#AudioSentence}}
+    <span class="audio-icon">{{AudioSentence}}</span>
+    {{/AudioSentence}}
+  </div>
   <div class="hints">
     {{#L1_gloss}}
     <details class="hint">
@@ -242,7 +260,12 @@ BACK_HTML_TEMPLATE: str = """
   {{cloze:L2_cloze}}
   <div class="answer">
     {{#L1_sentence}}
-    <div class="section l1">{{L1_sentence}}</div>
+    <div class="section l1">
+      {{L1_sentence}}
+      {{#AudioSentence}}
+      <span class="audio-icon">{{AudioSentence}}</span>
+      {{/AudioSentence}}
+    </div>
     {{/L1_sentence}}
 
     {{#L2_collocations}}
@@ -278,7 +301,13 @@ BACK_HTML_TEMPLATE: str = """
 
     {{#L2_word}}
     <div class="section lemma">
-      <span class="lemma-nl">{{L2_word}}</span> — <span class="lemma-l1">{{L1_gloss}}</span>
+      <span class="lemma-nl">{{L2_word}}</span>
+      {{#AudioWord}}
+      <span class="audio-icon">{{AudioWord}}</span>
+      {{/AudioWord}}
+      {{#L1_gloss}}
+      <span class="lemma-l1">— {{L1_gloss}}</span>
+      {{/L1_gloss}}
     </div>
     {{/L2_word}}
   </div>
@@ -298,6 +327,10 @@ html, body { height:100%; }
 .card{ font-size: var(--fs-base); line-height: 1.55; margin:0; min-height:100vh; display:flex; justify-content:center; align-items:flex-start; background: transparent; }
 .card-inner{ width: min(92vw, 80ch); padding: 2.5vh 3vw; }
 .answer { margin-top:.75em; }
+.audio-inline{ margin-top:.4em; }
+.audio-icon{ display:inline-flex; align-items:center; justify-content:center; margin-left:.35em; }
+.audio-icon audio{ display:inline-block; height:26px; width:140px; vertical-align:middle; }
+.lemma .audio-icon audio{ height:24px; width:120px; }
 .section + .section { margin-top:.55em; padding-top:.45em; border-top:1px solid rgba(0,0,0,.14); }
 @media (prefers-color-scheme: dark){ .section + .section { border-top-color: rgba(255,255,255,.22); } }
 .ru { font-weight:600; font-size: var(--fs-lg); }
@@ -339,4 +372,3 @@ def get_block_substrings() -> Tuple[str, ...]:
 def get_allowed_prefixes() -> Tuple[str, ...]:
     """Returns tuple of allowed prefixes"""
     return _ALLOWED_PREFIXES
-

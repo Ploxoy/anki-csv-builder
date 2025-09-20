@@ -362,6 +362,9 @@ def generate_card(
         "L1_hint": "",
         "error": "",
     }
+    # Audio placeholders filled later by TTS pipeline
+    card.setdefault("AudioWord", "")
+    card.setdefault("AudioSentence", "")
 
     _apply_cloze_fixes(card)
     problems_initial = validate_card(card)

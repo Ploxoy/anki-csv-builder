@@ -1,4 +1,5 @@
 import io
+import json
 import zipfile
 
 import pytest
@@ -25,6 +26,8 @@ def sample_cards():
             "L2_definition": "iets volledig snappen",
             "L1_gloss": "understand",
             "L1_hint": "",
+            "AudioSentence": "",
+            "AudioWord": "",
         },
         {
             "L2_word": "ruimen",
@@ -34,6 +37,8 @@ def sample_cards():
             "L2_definition": "iets netjes maken",
             "L1_gloss": "tidy",
             "L1_hint": "",
+            "AudioSentence": "",
+            "AudioWord": "",
         },
     ]
 
@@ -53,7 +58,8 @@ def test_generate_csv_basic(sample_cards):
     lines = csv_text.strip().split("\n")
     assert lines[0].startswith("L2_word|L2_cloze")
     assert len(lines) == 3
-    assert lines[0].count("|") == 10  # 11 columns -> 10 delimiters
+    assert "AudioSentence" in lines[0]
+    assert lines[0].count("|") == 12  # 13 columns -> 12 delimiters
     assert "begrijpen" in lines[1]
     assert lines[-1].endswith("EN")
 
@@ -73,6 +79,7 @@ def test_build_anki_package(sample_cards):
         back_template="<div>{{cloze:L2_cloze}}</div>",
         css="",
         tags_meta={"level": "B1", "profile": "balanced", "model": "gpt", "L1": "EN"},
+        media_files={"sentence_sample.mp3": b"fake-bytes"},
     )
 
     assert isinstance(package_bytes, bytes)
@@ -82,3 +89,5 @@ def test_build_anki_package(sample_cards):
         names = zf.namelist()
         assert "collection.anki2" in names
         assert "media" in names
+        media_mapping = json.loads(zf.read("media").decode("utf-8"))
+        assert "sentence_sample.mp3" in media_mapping.values()

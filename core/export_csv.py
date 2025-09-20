@@ -37,6 +37,8 @@ def generate_csv(
                 "L2_definition",
                 "L1_gloss",
                 "L1_hint",
+                "AudioSentence",
+                "AudioWord",
             ]
         else:
             header = [
@@ -47,6 +49,8 @@ def generate_csv(
                 "Определение NL",
                 f"{l1_meta['csv_gloss']} {l1_meta['label']}",
                 "Подсказка (L1)",
+                "Аудио предложение",
+                "Аудио слово",
             ]
         if include_extras:
             header += ["CEFR", "Profile", "Model", "L1"]
@@ -63,6 +67,8 @@ def generate_csv(
             card.get("L2_definition", ""),
             card.get("L1_gloss", ""),
             card.get("L1_hint", ""),
+            card.get("AudioSentence", ""),
+            card.get("AudioWord", ""),
         ]
         if include_extras:
             row += [

@@ -11,6 +11,7 @@ import os
 import sys
 import time
 import random
+from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -30,6 +31,7 @@ from core.export_csv import generate_csv
 from core.export_anki import build_anki_package, HAS_GENANKI
 from core.parsing import parse_input
 from core.sanitize_validate import is_probably_dutch_word
+from core.audio import ensure_audio_for_cards, sentence_for_tts
 
 # Config (import from settings)
 from config.signalword_groups import SIGNALWORD_GROUPS as CFG_SIGNALWORD_GROUPS
@@ -60,6 +62,11 @@ from config.settings import (
     CSS_STYLING as CFG_CSS_STYLING,
     CSV_DELIMITER as CFG_CSV_DELIM,
     CSV_LINETERMINATOR as CFG_CSV_EOL,
+    AUDIO_TTS_MODEL as CFG_AUDIO_TTS_MODEL,
+    AUDIO_TTS_FALLBACK as CFG_AUDIO_TTS_FALLBACK,
+    AUDIO_VOICES as CFG_AUDIO_VOICES,
+    AUDIO_INCLUDE_WORD_DEFAULT as CFG_AUDIO_INCLUDE_WORD_DEFAULT,
+    AUDIO_INCLUDE_SENTENCE_DEFAULT as CFG_AUDIO_INCLUDE_SENTENCE_DEFAULT,
 )
 st.set_page_config(page_title=CFG_PAGE_TITLE, layout=CFG_PAGE_LAYOUT)
 
@@ -265,6 +272,19 @@ if "results" not in st.session_state:
     st.session_state.results: List[Dict] = [] # type: ignore
 if "manual_rows" not in st.session_state:
     st.session_state.manual_rows = [{"woord": "", "def_nl": "", "translation": ""}]
+if "audio_cache" not in st.session_state:
+    st.session_state.audio_cache = {}
+if "audio_media" not in st.session_state:
+    st.session_state.audio_media = {}
+if "audio_summary" not in st.session_state:
+    st.session_state.audio_summary = None
+if "audio_voice" not in st.session_state:
+    default_voice = CFG_AUDIO_VOICES[0]["id"] if CFG_AUDIO_VOICES else ""
+    st.session_state.audio_voice = default_voice
+if "audio_include_word" not in st.session_state:
+    st.session_state.audio_include_word = CFG_AUDIO_INCLUDE_WORD_DEFAULT
+if "audio_include_sentence" not in st.session_state:
+    st.session_state.audio_include_sentence = CFG_AUDIO_INCLUDE_SENTENCE_DEFAULT
 
 col_demo, col_clear = st.columns([1, 1])
 with col_demo:
@@ -280,6 +300,8 @@ with col_clear:
         st.session_state.input_data = []
         st.session_state.results = []
         st.session_state.manual_rows = [{"woord": "", "def_nl": "", "translation": ""}]
+        st.session_state.audio_media = {}
+        st.session_state.audio_summary = None
 
 # ----- Input tabs: upload vs manual editor -----
 tab_upload, tab_manual = st.tabs(["📄 Upload", "✍️ Manual editor"])
@@ -405,6 +427,8 @@ if st.session_state.input_data:
             st.session_state.anki_run_id = st.session_state.get("anki_run_id") or str(int(time.time()))
             st.session_state.results = []
             st.session_state.model_id = model
+            st.session_state.audio_media = {}
+            st.session_state.audio_summary = None
             total = len(st.session_state.input_data)
             progress = st.progress(0)
             max_tokens = 3000 if limit_tokens else None
@@ -425,6 +449,8 @@ if st.session_state.input_data:
                             "L2_definition": "",
                             "L1_gloss": "",
                             "L1_hint": "",
+                            "AudioSentence": "",
+                            "AudioWord": "",
                             "error": "flagged_precheck",
                             "meta": {"flag_reason": row.get("_flag_reason", "")}
                         })
@@ -485,6 +511,139 @@ if st.session_state.results:
     preview_df = pd.DataFrame(st.session_state.results)[:CFG_PREVIEW_LIMIT]
     st.dataframe(preview_df, use_container_width=True)
 
+    st.divider()
+    audio_summary = st.session_state.get("audio_summary")
+    audio_panel_expanded = bool(audio_summary) or False
+    with st.expander("🔊 Озвучивание (опционально)", expanded=audio_panel_expanded):
+        if not CFG_AUDIO_VOICES:
+            st.info("Голоса TTS пока не настроены.")
+        else:
+            voice_index = 0
+            current_voice = st.session_state.get("audio_voice", CFG_AUDIO_VOICES[0]["id"])
+            for idx, option in enumerate(CFG_AUDIO_VOICES):
+                if option["id"] == current_voice:
+                    voice_index = idx
+                    break
+            voice_choice = st.selectbox(
+                "Голос",
+                options=CFG_AUDIO_VOICES,
+                index=voice_index,
+                format_func=lambda opt: opt["label"],
+                key="audio_voice_select",
+            )
+            selected_voice = voice_choice["id"]
+            st.session_state.audio_voice = selected_voice
+
+            include_word = st.checkbox(
+                "Include word audio",
+                value=st.session_state.get("audio_include_word", CFG_AUDIO_INCLUDE_WORD_DEFAULT),
+                key="audio_include_word",
+            )
+            include_sentence = st.checkbox(
+                "Include sentence audio",
+                value=st.session_state.get("audio_include_sentence", CFG_AUDIO_INCLUDE_SENTENCE_DEFAULT),
+                key="audio_include_sentence",
+            )
+
+            cards = st.session_state.results
+            unique_words = set()
+            unique_sentences = set()
+            for card in cards:
+                woord_text = (card.get("L2_word") or "").strip()
+                if woord_text:
+                    unique_words.add(woord_text)
+                sentence_text = sentence_for_tts(card.get("L2_cloze", ""))
+                if sentence_text:
+                    unique_sentences.add(sentence_text)
+
+            requests_estimate = 0
+            if include_word:
+                requests_estimate += len(unique_words)
+            if include_sentence:
+                requests_estimate += len(unique_sentences)
+
+            st.caption(
+                "Estimated requests: "
+                f"{requests_estimate} (unique words — {len(unique_words)}, sentences — {len(unique_sentences)})."
+            )
+
+            if audio_summary:
+                cache_hits = audio_summary.get("cache_hits", 0)
+                fallback_hits = audio_summary.get("fallback_switches", 0)
+                msg = (
+                    f"Done: words — {audio_summary.get('word_success', 0)}, "
+                    f"sentences — {audio_summary.get('sentence_success', 0)}."
+                )
+                if cache_hits:
+                    msg += f" Cache hits: {cache_hits}."
+                if fallback_hits:
+                    msg += f" Fallback used: {fallback_hits}×."
+                st.success(msg)
+                errors = audio_summary.get("errors") or []
+                if errors:
+                    preview_err = "; ".join(errors[:3])
+                    if len(errors) > 3:
+                        preview_err += " …"
+                    st.warning(f"Audio issues: {preview_err}")
+
+            button_disabled = requests_estimate == 0
+            generate_audio = st.button(
+                "🔊 Generate audio",
+                type="primary",
+                disabled=button_disabled,
+                key="generate_audio_button",
+            )
+
+            if generate_audio:
+                if button_disabled:
+                    st.info("No text to synthesize — enable word or sentence above.")
+                elif not API_KEY:
+                    st.error("OPENAI_API_KEY is required for audio synthesis.")
+                else:
+                    client = OpenAI(api_key=API_KEY)
+                    progress = st.progress(0)
+
+                    def _progress(done: int, total: int) -> None:
+                        if total <= 0:
+                            progress.progress(1.0)
+                        else:
+                            progress.progress(min(1.0, done / total))
+
+                    try:
+                        media_map, summary_obj = ensure_audio_for_cards(
+                            st.session_state.results,
+                            client=client,
+                            model=CFG_AUDIO_TTS_MODEL,
+                            fallback_model=CFG_AUDIO_TTS_FALLBACK,
+                            voice=selected_voice,
+                            include_word=include_word,
+                            include_sentence=include_sentence,
+                            cache=st.session_state.audio_cache,
+                            progress_cb=_progress,
+                        )
+                        progress.progress(1.0)
+                        st.session_state.audio_media = media_map
+                        st.session_state.audio_summary = asdict(summary_obj)
+                        st.session_state.audio_voice = selected_voice
+
+                        success_msg = (
+                            f"Done: words — {summary_obj.word_success}, "
+                            f"sentences — {summary_obj.sentence_success}."
+                        )
+                        if summary_obj.cache_hits:
+                            success_msg += f" Cache hits: {summary_obj.cache_hits}."
+                        if summary_obj.fallback_switches:
+                            success_msg += f" Fallback used: {summary_obj.fallback_switches}×."
+                        st.success(success_msg)
+                        if summary_obj.errors:
+                            err_preview = "; ".join(summary_obj.errors[:3])
+                            if len(summary_obj.errors) > 3:
+                                err_preview += " …"
+                            st.warning(f"Audio issues: {err_preview}")
+                    except Exception as exc:  # pragma: no cover - network interaction
+                        st.error(f"Audio synthesis failed: {exc}")
+
+
     csv_extras = {
         "level": st.session_state.get("level", level),
         "profile": st.session_state.get("prompt_profile", profile),
@@ -533,6 +692,7 @@ if st.session_state.results:
                 back_template=CFG_BACK_HTML_TEMPLATE,
                 css=CFG_CSS_STYLING,
                 tags_meta=tags_meta,
+                media_files=st.session_state.get("audio_media"),
             )
             st.session_state.last_anki_package = anki_bytes
             st.download_button(

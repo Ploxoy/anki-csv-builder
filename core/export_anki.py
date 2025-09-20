@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import tempfile
+from pathlib import Path
 from typing import Dict, Iterable, List
 
 try:
@@ -37,6 +39,7 @@ def build_anki_package(
     back_template: str,
     css: str,
     tags_meta: Dict[str, str] | None = None,
+    media_files: Dict[str, bytes] | None = None,
 ) -> bytes:
     """Сформировать .apkg пакет.
 
@@ -61,6 +64,8 @@ def build_anki_package(
             {"name": "L2_definition"},
             {"name": "L1_gloss"},
             {"name": "L1_hint"},
+            {"name": "AudioSentence"},
+            {"name": "AudioWord"},
         ],
         templates=[{"name": "Cloze", "qfmt": front_template, "afmt": back_template}],
         css=css,
@@ -87,6 +92,8 @@ def build_anki_package(
                 card.get("L2_definition", ""),
                 card.get("L1_gloss", ""),
                 card.get("L1_hint", ""),
+                card.get("AudioSentence", ""),
+                card.get("AudioWord", ""),
             ],
             guid=_compute_guid(card, guid_policy, run_id),
             tags=[t for t in set(base_tags) if t and not t.endswith('::')],
@@ -94,6 +101,19 @@ def build_anki_package(
         deck.add_note(note)
 
     pkg = genanki.Package(deck)
-    bio = io.BytesIO()
-    pkg.write_to_file(bio)
-    return bio.getvalue()
+    media_files = media_files or {}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        media_paths: List[str] = []
+        for filename, data in media_files.items():
+            path = Path(tmpdir) / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            media_paths.append(str(path))
+
+        if media_paths:
+            pkg.media_files = media_paths
+
+        bio = io.BytesIO()
+        pkg.write_to_file(bio)
+        return bio.getvalue()
