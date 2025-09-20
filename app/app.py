@@ -320,8 +320,17 @@ with tab_manual:
     with manual_cols[2]:
         st.caption("Добавьте слова, определения и при необходимости перевод. Строки можно редактировать и удалять.")
 
-    manual_df = pd.DataFrame(st.session_state.manual_rows or [{"woord": "", "def_nl": "", "translation": ""}])
-    manual_df = manual_df.reindex(columns=["woord", "def_nl", "translation"])
+    manual_rows = list(st.session_state.manual_rows or [])
+    def _is_empty(row):
+        return not (
+            (row.get("woord") or "").strip()
+            or (row.get("def_nl") or "").strip()
+            or (row.get("translation") or "").strip()
+        )
+    if not manual_rows or not _is_empty(manual_rows[-1]):
+        manual_rows.append({"woord": "", "def_nl": "", "translation": ""})
+
+    manual_df = pd.DataFrame(manual_rows).reindex(columns=["woord", "def_nl", "translation"])
 
     edited_df = st.data_editor(
         manual_df,
