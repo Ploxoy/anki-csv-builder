@@ -14,5 +14,8 @@
   "remoteUser": "vscode",
   "mounts": [
     "type=volume,source=pipcache,target=/home/vscode/.cache/pip"
-  ]
+  ],
+  "onCreateCommand": "git config --global user.name \"ploxoy\" && git config --global user.email \"pisem@kotenky.net\""
 }
+
+
