@@ -266,6 +266,18 @@ st.session_state["L1_code"] = L1_code
 # ----- App title -----
 st.title("📘 Anki CSV/Anki Builder — Dutch Cloze Cards")
 
+with st.expander("ℹ️ Quick help", expanded=False):
+    st.markdown(
+        """
+1. Load data via **Upload** or build it in **Manual editor**.
+2. Pick model / CEFR / profile / L1, set optional temperature/token limits.
+3. Press **Generate cards** — preview shows the first rows and flags.
+4. (Optional) Open **Audio (optional)** to synthesize word/sentence MP3 with a chosen voice & style.
+5. Download the ready CSV or Anki deck once everything looks good.
+6. In Anki Desktop: File → Import → select `anki_cards.csv` (Notes (Cloze), delimiter `|`) or `dutch_cloze.apkg`, then confirm field mapping and import.
+        """
+    )
+
 # ----- Demo & clear -----
 DEMO_WORDS = CFG_DEMO_WORDS
 

@@ -155,3 +155,14 @@ MIT License
 ## Support
 
 Open an issue if you run into problems or have ideas to discuss.
+
+
+
+## 📥 Uploading to Anki
+
+1. Launch Anki Desktop and open the deck where you want to import.
+2. File → Import …
+   - For CSV: choose `anki_cards.csv`, set Type = Notes (Cloze) and delimiter `|`.
+   - For APKG: just select `dutch_cloze.apkg` (creates deck immediately).
+3. Confirm the field mapping (L2_word → Cloze).
+4. Click `Import` and review the cards in the deck.

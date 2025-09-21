@@ -46,6 +46,7 @@ desktop.ini
 .vscode/
 .idea/
 *.code-workspace
+.devcontainer/
 
 # --- Логи/временные файлы ---
 *.log
