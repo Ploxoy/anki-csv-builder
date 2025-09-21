@@ -572,13 +572,21 @@ def render_generation_page(
                 st.error("OPENAI_API_KEY is required for audio synthesis.")
             else:
                 client = OpenAI(api_key=settings.api_key)
-                progress = st.progress(0)
+                progress_placeholder = st.empty()
+                status_placeholder = st.empty()
+                progress_bar = progress_placeholder.progress(0.0)
 
                 def _progress(done: int, total_requested: int) -> None:
                     if total_requested <= 0:
-                        progress.progress(1.0)
+                        pct = 0.0
                     else:
-                        progress.progress(min(1.0, done / total_requested))
+                        pct = min(1.0, done / total_requested)
+                    progress_bar.progress(pct)
+                    status_placeholder.text(
+                        f"Audio progress: {done}/{total_requested} ({pct * 100:.0f}%)"
+                        if total_requested > 0
+                        else "Audio progress: 0/0 (0%)"
+                    )
 
                 try:
                     instruction_keys = {"sentence": sentence_choice, "word": word_choice}
@@ -599,7 +607,6 @@ def render_generation_page(
                         instructions=instruction_texts,
                         instruction_keys=instruction_keys,
                     )
-                    progress.progress(1.0)
                     state.audio_media = media_map
                     state.audio_summary = asdict(summary_obj)
 
@@ -625,8 +632,16 @@ def render_generation_page(
                             err_preview += " …"
                         st.warning(f"Audio issues: {err_preview}")
                     state.results = [dict(card) for card in state.results]
+                    status_placeholder.text(
+                        f"Audio progress: {summary_obj.total_requests}/{summary_obj.total_requests} (100%)"
+                        if summary_obj.total_requests
+                        else "Audio progress: 0/0 (0%)"
+                    )
                 except Exception as exc:  # pragma: no cover
                     st.error(f"Audio synthesis failed: {exc}")
+                    status_placeholder.text("Audio generation failed.")
+                finally:
+                    progress_placeholder.empty()
 
         if st.button("Hide audio options", key="hide_audio_panel"):
             state.audio_panel_expanded = False
