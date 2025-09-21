@@ -58,58 +58,8 @@ SIGNALWORDS_B2_PLUS: List[str] = [
     "niet alleen ... maar ook", "opdat"
 ]
 
-SIGNALWORD_GROUPS = {
-    "cause_effect": {
-        "A1": ["omdat", "want", "dus"],
-        "A2": ["daardoor", "daarom", "zodat"],
-        "B1": ["doordat", "waardoor"],
-        "B2": ["ten gevolge van", "als gevolg van", "te danken aan", "te wijten aan", "wegens", "vanwege", "aangezien"],
-        "C1": ["derhalve", "vandaar dat", "dien ten gevolge", "op grond daarvan"],
-        "C2": ["immers", "in zoverre", "zulks omdat", "dit impliceert dat", "uit dien hoofde"]
-    },
-    "contrast": {
-        "A1": ["maar"],
-        "A2": ["toch", "of", "ofwel"],
-        "B1": ["echter"],
-        "B2": ["niettemin", "enerzijds ... anderzijds", "daarentegen", "integendeel", "in tegenstelling tot"],
-        "C1": ["desondanks", "nochtans", "hoezeer ook", "ondanks dat"],
-        "C2": ["hoe paradoxaal ook", "zij het dat", "al ware het maar", "weliswaar ... maar"]
-    },
-    "condition_goal": {
-        "A1": ["als", "om ... te"],
-        "A2": ["wanneer", "tenzij"],
-        "B1": ["indien", "mits"],
-        "B2": ["opdat", "daartoe", "met als doel", "met behulp van", "door middel van"],
-        "C1": ["gesteld dat", "ingeval", "voor zover", "op voorwaarde dat"],
-        "C2": ["indien en voorzover", "in de veronderstelling dat", "teneinde", "met het oog op"]
-    },
-    "example_addition": {
-        "A1": ["en", "ook"],
-        "A2": ["bijvoorbeeld", "zoals"],
-        "B1": ["verder", "bovendien"],
-        "B2": ["eveneens", "zowel ... als", "daarnaast", "ten slotte", "onder andere", "ter illustratie", "ter verduidelijking"],
-        "C1": ["neem nu", "stel dat", "dat wil zeggen", "met name"],
-        "C2": ["te weten", "als zodanig", "zulks ter illustratie", "onder meer ... doch niet uitsluitend"]
-    },
-    "comparison": {
-        "A1": ["zoals", "net als"],
-        "A2": ["hetzelfde als"],
-        "B1": ["evenals"],
-        "B2": ["in vergelijking met", "vergeleken met"],
-        "C1": ["analoge wijze", "op gelijke wijze", "evenzeer"],
-        "C2": ["mutatis mutandis", "naar analogie van"]
-    },
-    "summary_conclusion": {
-        "A1": ["dus"],
-        "A2": ["daarom"],
-        "B1": ["kortom"],
-        "B2": ["uiteindelijk", "samenvattend", "concluderend", "hieruit volgt", "met andere woorden", "al met al"],
-        "C1": ["alles overziend", "alles bijeen genomen", "resumerend"],
-        "C2": ["derhalve concluderen wij dat", "dit leidt onvermijdelijk tot de slotsom dat"]
-    }
-}
 
-
+from config.signalword_groups import SIGNALWORD_GROUPS
 PROMPT_PROFILES: Dict[str, str] = {
     "strict": "Be literal and concise; avoid figurative language; keep the simplest structure that satisfies CEFR.",
     "balanced": "Natural and clear; minor synonymy allowed if it improves fluency.",
@@ -184,6 +134,52 @@ PREVIEW_LIMIT: int = 20
 
 # Delay between API requests (in seconds)
 API_REQUEST_DELAY: float = 0.1
+
+# ==========================
+# Audio / TTS settings
+# ==========================
+
+AUDIO_TTS_MODEL: str = "gpt-4o-mini-tts"
+AUDIO_TTS_FALLBACK: str | None = "gpt-4o-tts"
+AUDIO_VOICES: List[Dict[str, str]] = [
+    {"id": "ash", "label": "Ash — NL male (neutral)"},
+    {"id": "verse", "label": "Verse — NL male"},
+    {"id": "alloy", "label": "Alloy — NL female"},
+    {"id": "shimmer", "label": "Shimmer — energetic NL female"},
+    {"id": "ballad", "label": "Ballad — soft NL female"},
+]
+AUDIO_TTS_INSTRUCTIONS: Dict[str, str] = {
+    "Dutch_sentence_news": (
+        "Speak in Dutch (nl-NL). Use a clear Randstad Dutch accent, "
+        "as in NOS news broadcasts. Keep intonation natural and flowing, "
+        "moderate speed, no raspiness."
+    ),
+    "Dutch_sentence_learning": (
+        "Speak Dutch (nl-NL) with a neutral, standard accent, "
+        "suitable for language learners. Keep tempo slightly slower than normal, "
+        "articulate clearly, no Flemish influence."
+    ),
+    "Dutch_sentence_radio": (
+        "Read in Dutch (nl-NL) with a standard accent as used in national radio. "
+        "Use warm, clear tone, no rasp, steady rhythm."
+    ),
+    "Dutch_word_dictionary": (
+        "Pronounce in Dutch (nl-NL) with standard dictionary pronunciation. "
+        "Say the single word only, clear and clean, no added intonation."
+    ),
+    "Dutch_word_learning": (
+        "Speak this word in Dutch (nl-NL), with careful articulation, neutral accent. "
+        "Produce only the word, no surrounding sounds or rasp."
+    ),
+    "Dutch_word_academic": (
+        "Give the single word in Dutch (nl-NL), with exact phonetic accuracy. "
+        "Neutral Dutch pronunciation, no Flemish accent, no raspiness."
+    ),
+}
+AUDIO_SENTENCE_INSTRUCTION_DEFAULT: str = "Dutch_sentence_learning"
+AUDIO_WORD_INSTRUCTION_DEFAULT: str = "Dutch_word_dictionary"
+AUDIO_INCLUDE_WORD_DEFAULT: bool = True
+AUDIO_INCLUDE_SENTENCE_DEFAULT: bool = True
 
 # ==========================
 # CSV headers
@@ -269,6 +265,11 @@ ANKI_DECK_NAME: str = "Dutch • Cloze"
 FRONT_HTML_TEMPLATE: str = """
 <div class="card-inner">
   {{cloze:L2_cloze}}
+  <div class="audio-inline">
+    {{#AudioSentence}}
+    <span class="audio-icon">{{AudioSentence}}</span>
+    {{/AudioSentence}}
+  </div>
   <div class="hints">
     {{#L1_gloss}}
     <details class="hint">
@@ -292,7 +293,12 @@ BACK_HTML_TEMPLATE: str = """
   {{cloze:L2_cloze}}
   <div class="answer">
     {{#L1_sentence}}
-    <div class="section l1">{{L1_sentence}}</div>
+    <div class="section l1">
+      {{L1_sentence}}
+      {{#AudioSentence}}
+      <span class="audio-icon">{{AudioSentence}}</span>
+      {{/AudioSentence}}
+    </div>
     {{/L1_sentence}}
 
     {{#L2_collocations}}
@@ -328,7 +334,13 @@ BACK_HTML_TEMPLATE: str = """
 
     {{#L2_word}}
     <div class="section lemma">
-      <span class="lemma-nl">{{L2_word}}</span> — <span class="lemma-l1">{{L1_gloss}}</span>
+      <span class="lemma-nl">{{L2_word}}</span>
+      {{#AudioWord}}
+      <span class="audio-icon">{{AudioWord}}</span>
+      {{/AudioWord}}
+      {{#L1_gloss}}
+      <span class="lemma-l1">— {{L1_gloss}}</span>
+      {{/L1_gloss}}
     </div>
     {{/L2_word}}
   </div>
@@ -348,6 +360,10 @@ html, body { height:100%; }
 .card{ font-size: var(--fs-base); line-height: 1.55; margin:0; min-height:100vh; display:flex; justify-content:center; align-items:flex-start; background: transparent; }
 .card-inner{ width: min(92vw, 80ch); padding: 2.5vh 3vw; }
 .answer { margin-top:.75em; }
+.audio-inline{ margin-top:.4em; }
+.audio-icon{ display:inline-flex; align-items:center; justify-content:center; margin-left:.35em; }
+.audio-icon audio{ display:inline-block; height:26px; width:140px; vertical-align:middle; }
+.lemma .audio-icon audio{ height:24px; width:120px; }
 .section + .section { margin-top:.55em; padding-top:.45em; border-top:1px solid rgba(0,0,0,.14); }
 @media (prefers-color-scheme: dark){ .section + .section { border-top-color: rgba(255,255,255,.22); } }
 .ru { font-weight:600; font-size: var(--fs-lg); }
@@ -389,4 +405,3 @@ def get_block_substrings() -> Tuple[str, ...]:
 def get_allowed_prefixes() -> Tuple[str, ...]:
     """Returns tuple of allowed prefixes"""
     return _ALLOWED_PREFIXES
-
