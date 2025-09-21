@@ -64,6 +64,9 @@ from config.settings import (
     CSV_LINETERMINATOR as CFG_CSV_EOL,
     AUDIO_TTS_MODEL as CFG_AUDIO_TTS_MODEL,
     AUDIO_TTS_FALLBACK as CFG_AUDIO_TTS_FALLBACK,
+    AUDIO_TTS_INSTRUCTIONS as CFG_AUDIO_TTS_INSTRUCTIONS,
+    AUDIO_SENTENCE_INSTRUCTION_DEFAULT as CFG_SENTENCE_INSTR_DEFAULT,
+    AUDIO_WORD_INSTRUCTION_DEFAULT as CFG_WORD_INSTR_DEFAULT,
     AUDIO_VOICES as CFG_AUDIO_VOICES,
     AUDIO_INCLUDE_WORD_DEFAULT as CFG_AUDIO_INCLUDE_WORD_DEFAULT,
     AUDIO_INCLUDE_SENTENCE_DEFAULT as CFG_AUDIO_INCLUDE_SENTENCE_DEFAULT,
@@ -285,6 +288,12 @@ if "audio_include_word" not in st.session_state:
     st.session_state.audio_include_word = CFG_AUDIO_INCLUDE_WORD_DEFAULT
 if "audio_include_sentence" not in st.session_state:
     st.session_state.audio_include_sentence = CFG_AUDIO_INCLUDE_SENTENCE_DEFAULT
+if "audio_sentence_instruction" not in st.session_state:
+    st.session_state.audio_sentence_instruction = CFG_SENTENCE_INSTR_DEFAULT
+if "audio_word_instruction" not in st.session_state:
+    st.session_state.audio_word_instruction = CFG_WORD_INSTR_DEFAULT
+if "audio_panel_expanded" not in st.session_state:
+    st.session_state.audio_panel_expanded = bool(st.session_state.get("results"))
 
 col_demo, col_clear = st.columns([1, 1])
 with col_demo:
@@ -507,14 +516,17 @@ if st.session_state.input_data:
 
 # ----- Preview & downloads -----
 if st.session_state.results:
-    st.subheader("📋 Preview (first 20)")
-    preview_df = pd.DataFrame(st.session_state.results)[:CFG_PREVIEW_LIMIT]
-    st.dataframe(preview_df, use_container_width=True)
+    preview_container = st.container()
 
     st.divider()
     audio_summary = st.session_state.get("audio_summary")
-    audio_panel_expanded = bool(audio_summary) or False
-    with st.expander("🔊 Озвучивание (опционально)", expanded=audio_panel_expanded):
+    audio_panel_expanded = st.session_state.get("audio_panel_expanded", False)
+    if audio_summary:
+        audio_panel_expanded = True
+        st.session_state.audio_panel_expanded = True
+
+    with st.expander("🔊 Audio (optional)", expanded=audio_panel_expanded):
+        st.session_state.audio_panel_expanded = True
         if not CFG_AUDIO_VOICES:
             st.info("Голоса TTS пока не настроены.")
         else:
@@ -543,6 +555,44 @@ if st.session_state.results:
                 "Include sentence audio",
                 value=st.session_state.get("audio_include_sentence", CFG_AUDIO_INCLUDE_SENTENCE_DEFAULT),
                 key="audio_include_sentence",
+            )
+
+            def _instruction_label(key: str) -> str:
+                if key.startswith("Dutch_sentence_"):
+                    suffix = key.split("Dutch_sentence_", 1)[1].replace("_", " ")
+                    return f"Sentence · {suffix.capitalize()}"
+                if key.startswith("Dutch_word_"):
+                    suffix = key.split("Dutch_word_", 1)[1].replace("_", " ")
+                    return f"Word · {suffix.capitalize()}"
+                return key
+
+            sentence_options = sorted(
+                [k for k in CFG_AUDIO_TTS_INSTRUCTIONS if k.startswith("Dutch_sentence_")]
+            )
+            word_options = sorted(
+                [k for k in CFG_AUDIO_TTS_INSTRUCTIONS if k.startswith("Dutch_word_")]
+            )
+
+            sentence_choice = st.selectbox(
+                "Sentence style",
+                options=sentence_options,
+                format_func=_instruction_label,
+                key="audio_sentence_instruction",
+            )
+            sentence_caption = st.empty()
+            sentence_caption.caption(
+                CFG_AUDIO_TTS_INSTRUCTIONS.get(sentence_choice, "") or " "
+            )
+
+            word_choice = st.selectbox(
+                "Word style",
+                options=word_options,
+                format_func=_instruction_label,
+                key="audio_word_instruction",
+            )
+            word_caption = st.empty()
+            word_caption.caption(
+                CFG_AUDIO_TTS_INSTRUCTIONS.get(word_choice, "") or " "
             )
 
             cards = st.session_state.results
@@ -585,6 +635,15 @@ if st.session_state.results:
                     if len(errors) > 3:
                         preview_err += " …"
                     st.warning(f"Audio issues: {preview_err}")
+                styles = []
+                sent_key = audio_summary.get("sentence_instruction_key") or ""
+                word_key = audio_summary.get("word_instruction_key") or ""
+                if sent_key:
+                    styles.append(f"sentence: {_instruction_label(sent_key)}")
+                if word_key:
+                    styles.append(f"word: {_instruction_label(word_key)}")
+                if styles:
+                    st.caption("Styles → " + "; ".join(styles))
 
             button_disabled = requests_estimate == 0
             generate_audio = st.button(
@@ -610,6 +669,21 @@ if st.session_state.results:
                             progress.progress(min(1.0, done / total))
 
                     try:
+                        instruction_keys = {
+                            "sentence": sentence_choice,
+                            "word": word_choice,
+                        }
+                        instruction_texts = {
+                            "sentence": CFG_AUDIO_TTS_INSTRUCTIONS.get(
+                                sentence_choice,
+                                "",
+                            ),
+                            "word": CFG_AUDIO_TTS_INSTRUCTIONS.get(
+                                word_choice,
+                                "",
+                            ),
+                        }
+
                         media_map, summary_obj = ensure_audio_for_cards(
                             st.session_state.results,
                             client=client,
@@ -620,6 +694,8 @@ if st.session_state.results:
                             include_sentence=include_sentence,
                             cache=st.session_state.audio_cache,
                             progress_cb=_progress,
+                            instructions=instruction_texts,
+                            instruction_keys=instruction_keys,
                         )
                         progress.progress(1.0)
                         st.session_state.audio_media = media_map
@@ -634,15 +710,35 @@ if st.session_state.results:
                             success_msg += f" Cache hits: {summary_obj.cache_hits}."
                         if summary_obj.fallback_switches:
                             success_msg += f" Fallback used: {summary_obj.fallback_switches}×."
+                        styles_now = []
+                        if summary_obj.sentence_instruction_key:
+                            styles_now.append(
+                                f"sentence: {_instruction_label(summary_obj.sentence_instruction_key)}"
+                            )
+                        if summary_obj.word_instruction_key:
+                            styles_now.append(
+                                f"word: {_instruction_label(summary_obj.word_instruction_key)}"
+                            )
+                        if styles_now:
+                            success_msg += " | Styles → " + "; ".join(styles_now)
                         st.success(success_msg)
                         if summary_obj.errors:
                             err_preview = "; ".join(summary_obj.errors[:3])
                             if len(summary_obj.errors) > 3:
                                 err_preview += " …"
                             st.warning(f"Audio issues: {err_preview}")
+                        # Reassign results to force dataframe refresh with audio fields
+                        st.session_state.results = [dict(card) for card in st.session_state.results]
                     except Exception as exc:  # pragma: no cover - network interaction
                         st.error(f"Audio synthesis failed: {exc}")
 
+        if st.button("Hide audio options", key="hide_audio_panel"):
+            st.session_state.audio_panel_expanded = False
+
+    with preview_container:
+        st.subheader(f"📋 Preview (first {CFG_PREVIEW_LIMIT})")
+        preview_df = pd.DataFrame(st.session_state.results)[:CFG_PREVIEW_LIMIT]
+        st.dataframe(preview_df, use_container_width=True)
 
     csv_extras = {
         "level": st.session_state.get("level", level),

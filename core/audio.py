@@ -35,6 +35,8 @@ class AudioSynthesisSummary:
     sentence_skipped: int = 0
     errors: List[str] = None  # type: ignore[assignment]
     fallback_switches: int = 0
+    sentence_instruction_key: str = ""
+    word_instruction_key: str = ""
 
     def __post_init__(self) -> None:
         if self.errors is None:
@@ -64,8 +66,10 @@ def _slugify(text: str) -> str:
     return slug or "audio"
 
 
-def _cache_key(model: str, voice: str, text: str) -> str:
-    digest = hashlib.sha256(f"{model}|{voice}|{text}".encode("utf-8")).hexdigest()
+def _cache_key(model: str, voice: str, text: str, instructions: Optional[str] = None) -> str:
+    digest = hashlib.sha256(
+        f"{model}|{voice}|{instructions or ''}|{text}".encode("utf-8")
+    ).hexdigest()
     return digest
 
 
@@ -115,6 +119,7 @@ def _synthesize(
     voice: str,
     text: str,
     format_: str = "mp3",
+    instructions: Optional[str] = None,
 ) -> bytes:
     if not text:
         raise ValueError("Text for TTS is empty")
@@ -127,12 +132,24 @@ def _synthesize(
             context = getattr(client.audio.speech, "with_streaming_response", None)
             if context is None:
                 raise AttributeError
-            with context.create(model=model, voice=voice, input=text) as response:
+            with context.create(
+                model=model,
+                voice=voice,
+                input=text,
+                response_format=format_,
+                instructions=instructions,
+            ) as response:
                 response.stream_to_file(str(temp_path))
                 data = temp_path.read_bytes()
                 return data
         except AttributeError:
-            response = client.audio.speech.create(model=model, voice=voice, input=text)
+            response = client.audio.speech.create(
+                model=model,
+                voice=voice,
+                input=text,
+                response_format=format_,
+                instructions=instructions,
+            )
             data = _extract_bytes(response)
             return data
         finally:
@@ -155,6 +172,8 @@ def ensure_audio_for_cards(
     include_sentence: bool = True,
     cache: Optional[MutableMapping[str, Tuple[str, bytes]]] = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
+    instructions: Optional[Dict[str, str]] = None,
+    instruction_keys: Optional[Dict[str, str]] = None,
 ) -> Tuple[Dict[str, bytes], AudioSynthesisSummary]:
     """Generate audio for cards, returning media map and summary.
 
@@ -164,6 +183,9 @@ def ensure_audio_for_cards(
     cache = cache if cache is not None else {}
     media: Dict[str, bytes] = {}
     summary = AudioSynthesisSummary()
+    if instruction_keys:
+        summary.sentence_instruction_key = instruction_keys.get("sentence", "")
+        summary.word_instruction_key = instruction_keys.get("word", "")
 
     models_order: List[str] = [model]
     if fallback_model and fallback_model not in models_order:
@@ -194,12 +216,12 @@ def ensure_audio_for_cards(
         card["AudioWord"] = ""
         card["AudioSentence"] = ""
 
-    def _generate_audio(kind: str, text: str, card_label: str) -> Tuple[Optional[str], bool]:
+    def _generate_audio(kind: str, text: str, instructions_text: Optional[str]) -> Tuple[Optional[str], bool]:
         nonlocal summary
         last_error: Optional[Exception] = None
         fallback_flag = False
         for idx, model_id in enumerate(models_order):
-            key = _cache_key(model_id, voice, text)
+            key = _cache_key(model_id, voice, text, instructions_text)
             filename: Optional[str] = None
             data: Optional[bytes] = None
             fallback_context = fallback_flag or idx > 0
@@ -211,7 +233,13 @@ def ensure_audio_for_cards(
                 filename, data = per_run_cache[key]
             else:
                 try:
-                    data = _synthesize(client, model=model_id, voice=voice, text=text)
+                    data = _synthesize(
+                        client,
+                        model=model_id,
+                        voice=voice,
+                        text=text,
+                        instructions=instructions_text,
+                    )
                 except Exception as err:  # pragma: no cover - network dependent
                     last_error = err
                     if idx < len(models_order) - 1 and _is_model_not_found(err):
@@ -237,8 +265,11 @@ def ensure_audio_for_cards(
                 summary.word_skipped += 1
             else:
                 text_word = woord
+                word_instr = (instructions or {}).get("word")
+                if word_instr is not None:
+                    word_instr = word_instr.strip() or None
                 try:
-                    filename, used_fallback = _generate_audio("word", text_word, woord)
+                    filename, used_fallback = _generate_audio("word", text_word, word_instr)
                     if filename:
                         card["AudioWord"] = f"[sound:{filename}]"
                         summary.word_success += 1
@@ -258,8 +289,15 @@ def ensure_audio_for_cards(
             if not sentence_clean:
                 summary.sentence_skipped += 1
             else:
+                sentence_instr = (instructions or {}).get("sentence")
+                if sentence_instr is not None:
+                    sentence_instr = sentence_instr.strip() or None
                 try:
-                    filename, used_fallback = _generate_audio("sentence", sentence_clean, card.get("L2_word", ""))
+                    filename, used_fallback = _generate_audio(
+                        "sentence",
+                        sentence_clean,
+                        sentence_instr,
+                    )
                     if filename:
                         card["AudioSentence"] = f"[sound:{filename}]"
                         summary.sentence_success += 1

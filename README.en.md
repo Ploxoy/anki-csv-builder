@@ -10,7 +10,7 @@ Streamlit app that turns Dutch vocabulary into ready-to-import Anki decks with h
 - **Balanced signal words and separable-verb support**, including deterministic selection driven by a seed
 - **Smart model selection** with automatic fallback when `response_format` is not supported
 - **CSV and .apkg export** so you can either import or immediately load the deck into Anki
-- **Optional TTS** – after generation you can synthesize MP3 for both the word and the sentence (OpenAI TTS)
+- **Optional TTS** – after generation you can synthesize MP3 for both the word and the sentence (OpenAI TTS) with caching, fallback, and preserved summary logs with selectable voice and style presets (news, learning, radio, etc.)
 
 ## Card structure
 
@@ -128,6 +128,7 @@ OPENAI_API_KEY = "your-api-key-here"
 - **Quality flags** – warnings explain why a word was flagged; enable “Force generate for flagged entries” to process them anyway.
 - **Signal-word seed** – keep the same seed to reproduce the connector set across runs.
 - **Audio synthesis** – open the “🔊 Audio” panel, pick a voice, choose word/sentence toggles, then generate audio before exporting.
+- **Pronunciation styles** – select separate instruction presets for sentences vs. words (newsreader, learning, dictionary, academic).
 
 ## Troubleshooting
 

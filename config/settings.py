@@ -142,9 +142,42 @@ API_REQUEST_DELAY: float = 0.1
 AUDIO_TTS_MODEL: str = "gpt-4o-mini-tts"
 AUDIO_TTS_FALLBACK: str | None = "gpt-4o-tts"
 AUDIO_VOICES: List[Dict[str, str]] = [
-    {"id": "alloy", "label": "Alloy — NL female"},
+    {"id": "ash", "label": "Ash — NL male (neutral)"},
     {"id": "verse", "label": "Verse — NL male"},
+    {"id": "alloy", "label": "Alloy — NL female"},
+    {"id": "shimmer", "label": "Shimmer — energetic NL female"},
+    {"id": "ballad", "label": "Ballad — soft NL female"},
 ]
+AUDIO_TTS_INSTRUCTIONS: Dict[str, str] = {
+    "Dutch_sentence_news": (
+        "Speak in Dutch (nl-NL). Use a clear Randstad Dutch accent, "
+        "as in NOS news broadcasts. Keep intonation natural and flowing, "
+        "moderate speed, no raspiness."
+    ),
+    "Dutch_sentence_learning": (
+        "Speak Dutch (nl-NL) with a neutral, standard accent, "
+        "suitable for language learners. Keep tempo slightly slower than normal, "
+        "articulate clearly, no Flemish influence."
+    ),
+    "Dutch_sentence_radio": (
+        "Read in Dutch (nl-NL) with a standard accent as used in national radio. "
+        "Use warm, clear tone, no rasp, steady rhythm."
+    ),
+    "Dutch_word_dictionary": (
+        "Pronounce in Dutch (nl-NL) with standard dictionary pronunciation. "
+        "Say the single word only, clear and clean, no added intonation."
+    ),
+    "Dutch_word_learning": (
+        "Speak this word in Dutch (nl-NL), with careful articulation, neutral accent. "
+        "Produce only the word, no surrounding sounds or rasp."
+    ),
+    "Dutch_word_academic": (
+        "Give the single word in Dutch (nl-NL), with exact phonetic accuracy. "
+        "Neutral Dutch pronunciation, no Flemish accent, no raspiness."
+    ),
+}
+AUDIO_SENTENCE_INSTRUCTION_DEFAULT: str = "Dutch_sentence_learning"
+AUDIO_WORD_INSTRUCTION_DEFAULT: str = "Dutch_word_dictionary"
 AUDIO_INCLUDE_WORD_DEFAULT: bool = True
 AUDIO_INCLUDE_SENTENCE_DEFAULT: bool = True
 
