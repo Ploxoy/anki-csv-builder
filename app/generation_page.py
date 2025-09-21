@@ -466,6 +466,16 @@ def render_generation_page(
                 key="audio_voice",
             )
 
+        max_audio_workers = st.slider(
+            "Parallel audio workers",
+            min_value=1,
+            max_value=6,
+            value=int(state.get("audio_workers", 3)),
+            step=1,
+            help="How many TTS requests to run in parallel.",
+            key="audio_workers",
+        )
+
         include_word = st.checkbox(
             "Include word audio",
             value=state.get("audio_include_word"),
@@ -541,6 +551,13 @@ def render_generation_page(
             if fallback_hits:
                 msg += f" Fallback used: {fallback_hits}×."
             st.success(msg)
+            st.caption(
+                "Requests: {req} • Word skips: {w_skip} • Sentence skips: {s_skip}".format(
+                    req=audio_summary.get("total_requests", 0),
+                    w_skip=audio_summary.get("word_skipped", 0),
+                    s_skip=audio_summary.get("sentence_skipped", 0),
+                )
+            )
             errors = audio_summary.get("errors") or []
             if errors:
                 preview_err = "; ".join(errors[:3])
@@ -606,6 +623,7 @@ def render_generation_page(
                         progress_cb=_progress,
                         instructions=instruction_texts,
                         instruction_keys=instruction_keys,
+                        max_workers=int(state.get("audio_workers", 3)),
                     )
                     state.audio_media = media_map
                     state.audio_summary = asdict(summary_obj)
@@ -631,6 +649,13 @@ def render_generation_page(
                         if len(summary_obj.errors) > 3:
                             err_preview += " …"
                         st.warning(f"Audio issues: {err_preview}")
+                    st.caption(
+                        "Requests: {req} • Word skips: {w_skip} • Sentence skips: {s_skip}".format(
+                            req=summary_obj.total_requests,
+                            w_skip=summary_obj.word_skipped,
+                            s_skip=summary_obj.sentence_skipped,
+                        )
+                    )
                     state.results = [dict(card) for card in state.results]
                     status_placeholder.text(
                         f"Audio progress: {summary_obj.total_requests}/{summary_obj.total_requests} (100%)"
