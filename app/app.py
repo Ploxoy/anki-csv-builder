@@ -478,13 +478,27 @@ def _recommend_batch_params(total: int) -> tuple[int, int]:
     return (bs, workers)
 
 
-def _apply_recommended_batch_params(total: int) -> None:
+def _compute_list_token(rows: list[dict]) -> str:
+    try:
+        first = (rows[0].get("woord", "") if rows else "").strip()
+        last = (rows[-1].get("woord", "") if rows else "").strip()
+        return f"len={len(rows)}|first={first}|last={last}"
+    except Exception:
+        return f"len={len(rows)}"
+
+
+def _apply_recommended_batch_params(total: int, *, token: str | None = None) -> None:
+    # Do not re-apply if already applied for this exact dataset token
+    if token and st.session_state.get("recommend_applied_token") == token:
+        return
     bs, workers = _recommend_batch_params(total)
     # Defer actual widget state update to the next rerun (before widget creation)
     st.session_state["batch_size_pending"] = int(bs)
     st.session_state["max_workers_pending"] = int(workers)
     if total > 1:
         st.session_state["auto_advance_pending"] = True
+    if token:
+        st.session_state["recommend_applied_token"] = token
     _toast(f"Recommended batch: size {bs}, workers {workers}", icon="⚙️")
     try:
         st.rerun()
@@ -502,7 +516,11 @@ with col_demo:
             {"woord": row.get("woord", ""), "def_nl": row.get("def_nl", ""), "translation": row.get("translation", "") or ""}
             for row in DEMO_WORDS
         ]
-        _apply_recommended_batch_params(len(st.session_state.input_data))
+        st.session_state.upload_token = None
+        _apply_recommended_batch_params(
+            len(st.session_state.input_data),
+            token=_compute_list_token(st.session_state.input_data),
+        )
         _toast("Demo set (6 words) loaded", icon="✅", variant="success")
 with col_clear:
     if st.button("Clear", type="secondary"):
@@ -524,19 +542,25 @@ with tab_upload:
     )
 
     if uploaded_file is not None:
-        try:
-            file_text = uploaded_file.read().decode("utf-8")
-        except UnicodeDecodeError:
-            uploaded_file.seek(0)
-            file_text = uploaded_file.read().decode("utf-16")
-        st.session_state.input_data = parse_input(file_text)
-        st.session_state.manual_rows = [
-            {"woord": row.get("woord", ""), "def_nl": row.get("def_nl", ""), "translation": row.get("translation", "") or ""}
-            for row in st.session_state.input_data
-        ]
-        st.session_state.results = []
-        _apply_recommended_batch_params(len(st.session_state.input_data))
-        _toast("Input replaced with uploaded file", icon="📄")
+        upload_token = f"{getattr(uploaded_file,'name','')}|{getattr(uploaded_file,'size','')}"
+        if st.session_state.get("upload_token") != upload_token:
+            try:
+                file_text = uploaded_file.read().decode("utf-8")
+            except UnicodeDecodeError:
+                uploaded_file.seek(0)
+                file_text = uploaded_file.read().decode("utf-16")
+            st.session_state.input_data = parse_input(file_text)
+            st.session_state.manual_rows = [
+                {"woord": row.get("woord", ""), "def_nl": row.get("def_nl", ""), "translation": row.get("translation", "") or ""}
+                for row in st.session_state.input_data
+            ]
+            st.session_state.results = []
+            st.session_state.upload_token = upload_token
+            _apply_recommended_batch_params(
+                len(st.session_state.input_data),
+                token=_compute_list_token(st.session_state.input_data),
+            )
+            _toast("Input replaced with uploaded file", icon="📄")
 
 with tab_manual:
     manual_cols = st.columns([1, 1, 1])
@@ -586,7 +610,11 @@ with tab_manual:
             if manual_clean:
                 st.session_state.input_data = manual_clean
                 st.session_state.results = []
-                _apply_recommended_batch_params(len(manual_clean))
+                st.session_state.upload_token = None
+                _apply_recommended_batch_params(
+                    len(manual_clean),
+                    token=_compute_list_token(manual_clean),
+                )
                 _toast(f"Loaded {len(manual_clean)} manual rows", icon="✍️", variant="success")
             else:
                 st.warning("Нужно заполнить хотя бы одну строку с полем 'woord'.")
@@ -653,22 +681,25 @@ if st.session_state.input_data:
     if run_stats["start_ts"]:
         total_elapsed = max(0.001, time.time() - run_stats["start_ts"])
         rate = (run_stats["items"]) / total_elapsed
+        valid_now = sum(1 for c in st.session_state.get("results", []) if not c.get("error"))
         summary.caption(
-            f"Run: batches {run_stats['batches']} • processed {processed}/{total} • "
+            f"Run: batches {run_stats['batches']} • processed {processed}/{total} • valid {valid_now} • "
             f"elapsed {total_elapsed:.1f}s • {rate:.2f}/s • errors {run_stats['errors']} (transient {run_stats['transient']})"
         )
     else:
-        summary.caption(f"Run: processed {processed}/{total}")
+        valid_now = sum(1 for c in st.session_state.get("results", []) if not c.get("error"))
+        summary.caption(f"Run: processed {processed}/{total} • valid {valid_now}")
 
     overall_caption = st.empty()
     overall = st.progress(0)
     overall.progress(min(1.0, processed / max(total, 1)))
     overall_caption.caption(f"Overall: {processed}/{total} processed")
 
-    c1, c2, c3 = st.columns([1, 1, 1])
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     start_run = c1.button("Start run", type="primary")
     next_batch = c2.button("Next batch")
     stop_run = c3.button("Stop run")
+    rerun_errored = c4.button("Re‑run errored only")
 
     def _process_batch() -> None:
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -720,7 +751,7 @@ if st.session_state.input_data:
                     "AudioSentence": "",
                     "AudioWord": "",
                     "error": "flagged_precheck",
-                    "meta": {"flag_reason": row.get("_flag_reason", "")},
+                    "meta": {"flag_reason": row.get("_flag_reason", ""), "input_index": idx},
                 }
             try:
                 seed = random.randint(0, 2**31 - 1)
@@ -735,7 +766,11 @@ if st.session_state.input_data:
                     signal_usage=None,
                     signal_last=None,
                 )
-                return idx, gen_result.card
+                card = gen_result.card
+                meta = card.get("meta", {}) or {}
+                meta["input_index"] = idx
+                card["meta"] = meta
+                return idx, card
             except Exception as e:  # pragma: no cover
                 return idx, {
                     "L2_word": row.get("woord", ""),
@@ -748,7 +783,7 @@ if st.session_state.input_data:
                     "AudioSentence": "",
                     "AudioWord": "",
                     "error": f"exception: {e}",
-                    "meta": {},
+                    "meta": {"input_index": idx},
                 }
 
         workers = int(st.session_state.get("max_workers", 3))
@@ -776,6 +811,10 @@ if st.session_state.input_data:
                 batch_status.caption(
                     f"Done {completed}/{len(indices)} • Active ~{active} • Queued ~{queued} • {elapsed:.1f}s • {rate:.2f}/s"
                 )
+                # Update overall progress early (tasks processed, not only saved cards)
+                done_tasks = (start + completed)
+                overall.progress(min(1.0, done_tasks / max(total, 1)))
+                overall_caption.caption(f"Overall: {done_tasks}/{total} processed")
                 if CFG_API_DELAY > 0:
                     time.sleep(CFG_API_DELAY)
 
@@ -851,6 +890,111 @@ if st.session_state.input_data:
                 icon="⚠️",
             )
 
+    def _rerun_errored_only() -> None:
+        # Collect indices of errored cards
+        err_indices = []
+        for card in st.session_state.get("results", []):
+            if card.get("error"):
+                meta = card.get("meta", {}) or {}
+                idx = meta.get("input_index")
+                if isinstance(idx, int):
+                    err_indices.append(idx)
+        err_indices = sorted(set(err_indices))
+        if not err_indices:
+            st.info("No errored cards to re-run.")
+            return
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        client = OpenAI(api_key=API_KEY)
+        max_tokens = 3000 if limit_tokens else None
+        effective_temp = temperature if _should_pass_temperature(model) else None
+        _init_response_format_cache()
+        no_rf_models = set(st.session_state.get("no_response_format_models", set()))
+        force_schema = st.session_state.get("force_schema_checkbox", False)
+        force_flagged = st.session_state.get("force_flagged", False)
+        input_snapshot = list(st.session_state.input_data)
+
+        def _make_settings(seed: int) -> GenerationSettings:
+            return GenerationSettings(
+                model=model,
+                L1_code=L1_code,
+                L1_name=L1_meta["name"],
+                level=level,
+                profile=profile,
+                temperature=effective_temp,
+                max_output_tokens=max_tokens,
+                allow_response_format=(model not in no_rf_models or force_schema),
+                signalword_seed=seed,
+            )
+
+        def _worker(idx: int, row: dict) -> tuple[int, dict]:
+            try:
+                if not force_flagged and not row.get("_flag_ok", True):
+                    return idx, {"error": "flagged_precheck", "meta": {"input_index": idx},
+                                 "L2_word": row.get("woord", ""), "L2_cloze": "", "L1_sentence": "",
+                                 "L2_collocations": "", "L2_definition": row.get("def_nl", ""),
+                                 "L1_gloss": row.get("translation", ""), "L1_hint": "",
+                                 "AudioSentence": "", "AudioWord": ""}
+                seed = random.randint(0, 2**31 - 1)
+                settings = _make_settings(seed)
+                gen_result = generate_card(
+                    client=client,
+                    row=row,
+                    settings=settings,
+                    signalword_groups=CFG_SIGNALWORD_GROUPS,
+                    signalwords_b1=CFG_SIGNALWORDS_B1,
+                    signalwords_b2_plus=CFG_SIGNALWORDS_B2_PLUS,
+                    signal_usage=None,
+                    signal_last=None,
+                )
+                card = gen_result.card
+                meta = card.get("meta", {}) or {}
+                meta["input_index"] = idx
+                card["meta"] = meta
+                return idx, card
+            except Exception as e:
+                return idx, {"error": f"exception: {e}", "meta": {"input_index": idx},
+                             "L2_word": row.get("woord", ""), "L2_cloze": "", "L1_sentence": "",
+                             "L2_collocations": "", "L2_definition": row.get("def_nl", ""),
+                             "L1_gloss": row.get("translation", ""), "L1_hint": "",
+                             "AudioSentence": "", "AudioWord": ""}
+
+        st.info(f"Re‑running {len(err_indices)} errored items…")
+        bar = st.progress(0)
+        results_map: dict[int, dict] = {}
+        with ThreadPoolExecutor(max_workers=int(st.session_state.get("max_workers", 3))) as ex:
+            futs = {ex.submit(_worker, idx, input_snapshot[idx]): idx for idx in err_indices}
+            done = 0
+            for fut in as_completed(futs):
+                idx, card = fut.result()
+                results_map[idx] = card
+                done += 1
+                bar.progress(min(1.0, done / max(len(err_indices), 1)))
+
+        # Replace in existing results by input_index
+        new_results: list[dict] = []
+        for card in st.session_state.get("results", []):
+            meta = card.get("meta", {}) or {}
+            idx = meta.get("input_index")
+            if isinstance(idx, int) and idx in results_map:
+                new_results.append(results_map[idx])
+            else:
+                new_results.append(card)
+        st.session_state.results = new_results
+
+        # Recompute usage/last (sequential scan)
+        usage: dict[str, int] = {}
+        last = None
+        for card in st.session_state.results:
+            meta = card.get("meta", {}) or {}
+            found = meta.get("signalword_found")
+            if found:
+                usage[found] = usage.get(found, 0) + 1
+                last = found
+        st.session_state.sig_usage = usage
+        st.session_state.sig_last = last
+        st.success("Errored items re‑run completed.")
+
     # Controls logic
     if start_run:
         if not API_KEY:
@@ -898,6 +1042,9 @@ if st.session_state.input_data:
         else:
             st.session_state.run_active = False
             st.session_state.auto_continue = False
+
+    if rerun_errored:
+        _rerun_errored_only()
 
 # ----- Preview & downloads -----
 if st.session_state.results:
@@ -1121,18 +1268,63 @@ if st.session_state.results:
             st.session_state.audio_panel_expanded = False
 
     with preview_container:
-        st.subheader(f"📋 Preview (first {CFG_PREVIEW_LIMIT})")
-        preview_df = pd.DataFrame(st.session_state.results)
+        st.subheader("📋 Preview (all)")
+        # Counters and filters
+        total_rows = len(st.session_state.results)
+        total_errors = sum(1 for c in st.session_state.results if c.get("error"))
+        total_valid = total_rows - total_errors
+        st.caption(f"Preview: valid {total_valid} • errors {total_errors} • rows {total_rows}")
+        filt_col1, filt_col2 = st.columns([1, 1])
+        with filt_col1:
+            st.checkbox(
+                "Show only errors",
+                value=st.session_state.get("preview_only_errors", False),
+                key="preview_only_errors",
+            )
+        with filt_col2:
+            next_err_click = st.button("Next error")
+
+        # Navigate to next error (show focused card below controls)
+        if next_err_click and total_errors:
+            err_indices = [i for i, c in enumerate(st.session_state.results) if c.get("error")]
+            ptr = int(st.session_state.get("err_ptr", -1))
+            candidates = [i for i in err_indices if i > ptr]
+            target = candidates[0] if candidates else err_indices[0]
+            st.session_state.err_ptr = target
+            target_card = st.session_state.results[target]
+            st.warning(
+                f"Next error at row {target+1}/{total_rows}: "
+                f"{target_card.get('L2_word','')} — {target_card.get('error','')}"
+            )
+            def _style_errors_df(df):
+                def _row_style(row):
+                    has_err = bool(str(row.get("error", "")).strip())
+                    color = "background-color: #ffe6e6" if has_err else ""
+                    return [color for _ in row.index]
+                return df.style.apply(_row_style, axis=1)
+            st.dataframe(_style_errors_df(pd.DataFrame([target_card])), width="stretch")
+
+        # Build dataframe for main preview (optionally filtered)
+        source_rows = (
+            [c for c in st.session_state.results if c.get("error")] if st.session_state.get("preview_only_errors") else st.session_state.results
+        )
+        preview_df = pd.DataFrame(source_rows)
         if not preview_df.empty:
             if "error" not in preview_df.columns:
                 preview_df["error"] = ""
             # Extract error_stage from nested meta
             stages: list[str | None] = []
-            for row in st.session_state.results:
+            for row in source_rows:
                 m = row.get("meta") if isinstance(row, dict) else None
                 stages.append((m or {}).get("error_stage") if isinstance(m, dict) else None)
             preview_df["error_stage"] = stages
-        st.dataframe(preview_df[:CFG_PREVIEW_LIMIT], width="stretch")
+        def _style_errors_df(df):
+            def _row_style(row):
+                has_err = bool(str(row.get("error", "")).strip())
+                color = "background-color: #ffe6e6" if has_err else ""
+                return [color for _ in row.index]
+            return df.style.apply(_row_style, axis=1)
+        st.dataframe(_style_errors_df(preview_df) if not preview_df.empty else preview_df, width="stretch")
 
     csv_extras = {
         "level": st.session_state.get("level", level),
@@ -1142,6 +1334,12 @@ if st.session_state.results:
     }
     include_errored = st.sidebar.checkbox("Include errored cards in exports", value=False)
     export_cards = st.session_state.results if include_errored else [c for c in st.session_state.results if not c.get("error")]
+    exportable_count = len(export_cards)
+    saved_count = len(st.session_state.results)
+    st.caption(
+        f"Exportable cards: {exportable_count} / saved results: {saved_count} / total input: {len(st.session_state.input_data)}"
+    )
+
     csv_data = generate_csv(
         export_cards,
         L1_meta,

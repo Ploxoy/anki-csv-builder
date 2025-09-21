@@ -14,7 +14,7 @@ Produce a STRICT JSON object with fields ONLY:
 - L1_sentence       : exact translation of that sentence into $L1_NAME
 - L2_collocations   : EXACTLY 3 natural Dutch collocations with the target, joined by '; '
 - L2_definition     : ONE short Dutch definition
-- L1_gloss          : 1–2 $L1_NAME words (short gloss, correct POS/meaning)
+- L1_gloss          : 1–6 $L1_NAME words (short gloss, correct POS/meaning)
 
 GLOBAL HARD RULES
 - Output JSON ONLY. No comments, no extra keys, no trailing text.

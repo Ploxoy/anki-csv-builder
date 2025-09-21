@@ -321,7 +321,7 @@ def generate_card(
         f'"L1_sentence": "<exact translation into {settings.L1_name}>", '
         '"L2_collocations": "colloc1; colloc2; colloc3", '
         '"L2_definition": "<short Dutch definition>", '
-        f'"L1_gloss": "<1-2 {settings.L1_name} words>"'
+        f'"L1_gloss": "<1-6 {settings.L1_name} words>"'
         '}'
     )
 
