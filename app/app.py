@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 # anki_csv_builder.py (near other core imports)
-from core.llm_clients import create_client
+from core.llm_clients import create_client, send_responses_request, responses_accepts_param
 from core.generation import GenerationSettings, generate_card
 from core.export_csv import generate_csv
 from core.export_anki import build_anki_package, HAS_GENANKI
@@ -105,6 +105,67 @@ def _init_response_format_cache():
         st.session_state.no_response_format_models = set()
     if "no_response_format_notified" not in st.session_state:
         st.session_state.no_response_format_notified = set()
+
+
+def _probe_response_format_support(client: OpenAI, model: str) -> None:
+    """Quickly probe whether the selected model supports response_format.
+
+    On failure, store the model in session cache so subsequent requests skip schema
+    and avoid noisy warnings. Does nothing if already cached.
+    """
+    if not model or model in st.session_state.get("no_response_format_models", set()):
+        return
+    # If SDK does not expose the parameter at all, short-circuit
+    if not responses_accepts_param(client, "text"):
+        cache = set(st.session_state.get("no_response_format_models", set()))
+        cache.add(model)
+        st.session_state.no_response_format_models = cache
+        return
+    try:
+        probe_schema = {
+            "name": "Probe",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["ok"],
+                "properties": {"ok": {"type": "boolean"}},
+            },
+        }
+        # Minimal instructions and input
+        instructions = "Return strictly: {\"ok\": true}"
+        input_text = "probe"
+        # Use small token limit to reduce cost
+        resp_format = probe_schema
+        _, meta = send_responses_request(
+            client=client,
+            model=model,
+            instructions=instructions,
+            input_text=input_text,
+            response_format=resp_format,
+            max_output_tokens=64,
+            temperature=None,
+            retries=0,
+            warn=False,
+        )
+        if meta.get("response_format_removed"):
+            cache = set(st.session_state.get("no_response_format_models", set()))
+            cache.add(model)
+            st.session_state.no_response_format_models = cache
+            notified = set(st.session_state.get("no_response_format_notified", set()))
+            if model not in notified:
+                notified.add(model)
+                st.session_state.no_response_format_notified = notified
+                detail = meta.get("response_format_error")
+                message = (
+                    f"Model {model} ignored response_format; falling back to text parsing for this session."
+                )
+                if detail:
+                    message += f"\nReason: {detail}"
+                st.info(message, icon="ℹ️")
+    except Exception:
+        # Silently ignore probe errors to avoid blocking generation
+        pass
 
 
 def _clean_manual_rows(rows: List[Dict]) -> List[Dict[str, str]]:
@@ -263,6 +324,77 @@ st.session_state["prompt_profile"] = profile
 st.session_state["level"] = level
 st.session_state["L1_code"] = L1_code
 
+# Apply pending batch params (set before widget instantiation)
+pending_bs = st.session_state.pop("batch_size_pending", None)
+if pending_bs is not None:
+    st.session_state["batch_size"] = int(pending_bs)
+pending_workers = st.session_state.pop("max_workers_pending", None)
+if pending_workers is not None:
+    st.session_state["max_workers"] = int(pending_workers)
+pending_auto = st.session_state.pop("auto_advance_pending", None)
+if pending_auto is not None:
+    st.session_state["auto_advance"] = bool(pending_auto)
+
+# Batch processing controls (to avoid long single runs on Streamlit Cloud)
+st.sidebar.subheader("Batch processing")
+st.sidebar.number_input(
+    "Batch size",
+    min_value=1,
+    max_value=50,
+    value=st.session_state.get("batch_size", 5),
+    step=1,
+    help="How many rows to process per batch.",
+    key="batch_size",
+)
+st.sidebar.checkbox(
+    "Auto-advance batches",
+    value=st.session_state.get("auto_advance", True),
+    help="Continue to the next batch automatically until finished.",
+    key="auto_advance",
+)
+
+# Optional parallelism within a batch
+st.sidebar.slider(
+    "Max workers per batch",
+    min_value=1,
+    max_value=8,
+    value=st.session_state.get("max_workers", 3),
+    step=1,
+    help="Parallel requests inside a batch. Keep modest (3–4) to avoid rate limits.",
+    key="max_workers",
+)
+
+# Advanced: schema handling controls
+with st.sidebar.expander("Advanced (Responses schema)"):
+    force_schema = st.checkbox(
+        "Force JSON schema (ignore cache)",
+        value=False,
+        help=(
+            "Attempt to send response_format=json_schema even if the model was previously marked as unsupported. "
+            "If the SDK/model rejects it, we will fall back automatically."
+        ),
+        key="force_schema_checkbox",
+    )
+    # SDK capability hint
+    try:
+        _client_for_probe = create_client(API_KEY)
+        if _client_for_probe is not None and not responses_accepts_param(_client_for_probe, "text"):
+            st.caption("SDK check: Responses.create has no 'text' parameter — schema (text.format) will be disabled.")
+    except Exception:
+        pass
+    if st.button("Reset schema support cache"):
+        st.session_state.no_response_format_models = set()
+        st.session_state.no_response_format_notified = set()
+        st.success("Schema support cache has been reset for this session.")
+    if st.button("Re-probe schema support for selected model"):
+        _init_response_format_cache()
+        client = create_client(API_KEY)
+        if client is None:
+            st.warning("OpenAI SDK not available; cannot probe.")
+        else:
+            _probe_response_format_support(client, model)
+            st.info("Probe completed. Check debug panel or try generation.")
+
 # ----- App title -----
 st.title("📘 Anki CSV/Anki Builder — Dutch Cloze Cards")
 
@@ -280,6 +412,26 @@ with st.expander("ℹ️ Quick help", expanded=False):
 
 # ----- Demo & clear -----
 DEMO_WORDS = CFG_DEMO_WORDS
+
+
+def _toast(message: str, *, icon: str | None = None, variant: str = "info") -> None:
+    """Use st.toast when available; otherwise fall back to standard status blocks."""
+    toast_fn = getattr(st, "toast", None)
+    if callable(toast_fn):  # Streamlit ≥1.25
+        kwargs: Dict[str, str] = {}
+        if icon:
+            kwargs["icon"] = icon
+        toast_fn(message, **kwargs)
+        return
+
+    # Fallback for older Streamlit versions without st.toast
+    fallback_msg = f"{icon} {message}" if icon else message
+    if variant == "success":
+        st.success(fallback_msg)
+    elif variant == "warning":
+        st.warning(fallback_msg)
+    else:
+        st.info(fallback_msg)
 
 if "input_data" not in st.session_state:
     st.session_state.input_data: List[Dict] = [] # type: ignore
@@ -307,6 +459,41 @@ if "audio_word_instruction" not in st.session_state:
 if "audio_panel_expanded" not in st.session_state:
     st.session_state.audio_panel_expanded = bool(st.session_state.get("results"))
 
+def _recommend_batch_params(total: int) -> tuple[int, int]:
+    """Return (batch_size, max_workers) based on dataset size.
+
+    Heuristic:
+    - Target ~20 items per batch, up to 8 batches total for big lists.
+    - Allow up to 10 parallel workers (as per empirical limit), but not more than batch size.
+    """
+    import math
+    if total <= 0:
+        return (5, 3)
+    if total <= 10:
+        return (total, min(10, total))
+    # Aim for ~20 per batch, clamp number of batches to <=8
+    target_batches = max(2, min(8, math.ceil(total / 20)))
+    bs = max(1, min(total, math.ceil(total / target_batches)))
+    workers = min(10, max(2, min(bs, 10)))
+    return (bs, workers)
+
+
+def _apply_recommended_batch_params(total: int) -> None:
+    bs, workers = _recommend_batch_params(total)
+    # Defer actual widget state update to the next rerun (before widget creation)
+    st.session_state["batch_size_pending"] = int(bs)
+    st.session_state["max_workers_pending"] = int(workers)
+    if total > 1:
+        st.session_state["auto_advance_pending"] = True
+    _toast(f"Recommended batch: size {bs}, workers {workers}", icon="⚙️")
+    try:
+        st.rerun()
+    except Exception:
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
 col_demo, col_clear = st.columns([1, 1])
 with col_demo:
     if st.button("Try demo", type="secondary"):
@@ -315,7 +502,8 @@ with col_demo:
             {"woord": row.get("woord", ""), "def_nl": row.get("def_nl", ""), "translation": row.get("translation", "") or ""}
             for row in DEMO_WORDS
         ]
-        st.toast("✅ Demo set (6 words) loaded", icon="✅")
+        _apply_recommended_batch_params(len(st.session_state.input_data))
+        _toast("Demo set (6 words) loaded", icon="✅", variant="success")
 with col_clear:
     if st.button("Clear", type="secondary"):
         st.session_state.input_data = []
@@ -347,7 +535,8 @@ with tab_upload:
             for row in st.session_state.input_data
         ]
         st.session_state.results = []
-        st.toast("📥 Input replaced with uploaded file", icon="📄")
+        _apply_recommended_batch_params(len(st.session_state.input_data))
+        _toast("Input replaced with uploaded file", icon="📄")
 
 with tab_manual:
     manual_cols = st.columns([1, 1, 1])
@@ -379,7 +568,7 @@ with tab_manual:
         manual_df,
         key="manual_editor",
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "woord": st.column_config.TextColumn("woord", help="Целевое нидерландское слово"),
@@ -397,7 +586,8 @@ with tab_manual:
             if manual_clean:
                 st.session_state.input_data = manual_clean
                 st.session_state.results = []
-                st.toast(f"✍️ Loaded {len(manual_clean)} manual rows", icon="✍️")
+                _apply_recommended_batch_params(len(manual_clean))
+                _toast(f"Loaded {len(manual_clean)} manual rows", icon="✍️", variant="success")
             else:
                 st.warning("Нужно заполнить хотя бы одну строку с полем 'woord'.")
     with info_col:
@@ -424,7 +614,7 @@ if st.session_state.input_data:
     # Create a small DataFrame copy to show flags
     preview_in = pd.DataFrame(st.session_state.input_data)
     cols = [c for c in ["woord", "def_nl", "ru_short", "_flag_ok", "_flag_reason"] if c in preview_in.columns]
-    st.dataframe(preview_in[cols], use_container_width=True)
+    st.dataframe(preview_in[cols], width="stretch")
 else:
     st.info("Upload a file or click **Try demo**")
 
@@ -437,94 +627,277 @@ def _should_pass_temperature(model_id: str) -> bool:
     if model_id.startswith(("gpt-5", "o3")):
         return False
     return True
-# ----- Generate section -----
+# ----- Generate section (batch mode) -----
 if st.session_state.input_data:
-    if st.button("Generate cards", type="primary"):
+    # Persistent run state
+    if "current_index" not in st.session_state:
+        st.session_state.current_index = 0
+    if "run_active" not in st.session_state:
+        st.session_state.run_active = False
+    if "auto_continue" not in st.session_state:
+        st.session_state.auto_continue = False
+
+    total = len(st.session_state.input_data)
+    processed = len(st.session_state.get("results", []))
+    # Run summary (across batches)
+    run_stats = st.session_state.get("run_stats") or {
+        "batches": 0,
+        "items": 0,
+        "elapsed": 0.0,
+        "errors": 0,
+        "transient": 0,
+        "start_ts": None,
+    }
+    st.session_state.run_stats = run_stats
+    summary = st.empty()
+    if run_stats["start_ts"]:
+        total_elapsed = max(0.001, time.time() - run_stats["start_ts"])
+        rate = (run_stats["items"]) / total_elapsed
+        summary.caption(
+            f"Run: batches {run_stats['batches']} • processed {processed}/{total} • "
+            f"elapsed {total_elapsed:.1f}s • {rate:.2f}/s • errors {run_stats['errors']} (transient {run_stats['transient']})"
+        )
+    else:
+        summary.caption(f"Run: processed {processed}/{total}")
+
+    overall_caption = st.empty()
+    overall = st.progress(0)
+    overall.progress(min(1.0, processed / max(total, 1)))
+    overall_caption.caption(f"Overall: {processed}/{total} processed")
+
+    c1, c2, c3 = st.columns([1, 1, 1])
+    start_run = c1.button("Start run", type="primary")
+    next_batch = c2.button("Next batch")
+    stop_run = c3.button("Stop run")
+
+    def _process_batch() -> None:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        client = OpenAI(api_key=API_KEY)
+        max_tokens = 3000 if limit_tokens else None
+        effective_temp = temperature if _should_pass_temperature(model) else None
+        _init_sig_usage()
+        _init_response_format_cache()
+        if not st.session_state.get("anki_run_id"):
+            st.session_state.anki_run_id = str(int(time.time()))
+        st.session_state.model_id = model
+
+        start = int(st.session_state.current_index or 0)
+        end = min(start + int(st.session_state.get("batch_size", 5)), total)
+        if start >= total:
+            return
+        indices = list(range(start, end))
+        input_snapshot = list(st.session_state.input_data)
+
+        # Snapshot of params and state to pass into workers
+        no_rf_models = set(st.session_state.get("no_response_format_models", set()))
+        force_schema = st.session_state.get("force_schema_checkbox", False)
+        force_flagged = st.session_state.get("force_flagged", False)
+
+        def _make_settings(seed: int) -> GenerationSettings:
+            return GenerationSettings(
+                model=model,
+                L1_code=L1_code,
+                L1_name=L1_meta["name"],
+                level=level,
+                profile=profile,
+                temperature=effective_temp,
+                max_output_tokens=max_tokens,
+                allow_response_format=(model not in no_rf_models or force_schema),
+                signalword_seed=seed,
+            )
+
+        def _worker(idx: int, row: dict) -> tuple[int, dict]:
+            if not force_flagged and not row.get("_flag_ok", True):
+                return idx, {
+                    "L2_word": row.get("woord", ""),
+                    "L2_cloze": "",
+                    "L1_sentence": "",
+                    "L2_collocations": "",
+                    "L2_definition": "",
+                    "L1_gloss": "",
+                    "L1_hint": "",
+                    "AudioSentence": "",
+                    "AudioWord": "",
+                    "error": "flagged_precheck",
+                    "meta": {"flag_reason": row.get("_flag_reason", "")},
+                }
+            try:
+                seed = random.randint(0, 2**31 - 1)
+                settings = _make_settings(seed)
+                gen_result = generate_card(
+                    client=client,
+                    row=row,
+                    settings=settings,
+                    signalword_groups=CFG_SIGNALWORD_GROUPS,
+                    signalwords_b1=CFG_SIGNALWORDS_B1,
+                    signalwords_b2_plus=CFG_SIGNALWORDS_B2_PLUS,
+                    signal_usage=None,
+                    signal_last=None,
+                )
+                return idx, gen_result.card
+            except Exception as e:  # pragma: no cover
+                return idx, {
+                    "L2_word": row.get("woord", ""),
+                    "L2_cloze": "",
+                    "L1_sentence": "",
+                    "L2_collocations": "",
+                    "L2_definition": row.get("def_nl", ""),
+                    "L1_gloss": row.get("translation", ""),
+                    "L1_hint": "",
+                    "AudioSentence": "",
+                    "AudioWord": "",
+                    "error": f"exception: {e}",
+                    "meta": {},
+                }
+
+        workers = int(st.session_state.get("max_workers", 3))
+        batch_header = st.empty()
+        batch_header.caption(
+            f"Batch {start+1}–{end} of {total} • size {len(indices)} • workers {workers}"
+        )
+        batch_prog = st.progress(0)
+        batch_status = st.empty()
+        batch_start_ts = time.time()
+        results_map: dict[int, dict] = {}
+        completed = 0
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_worker, idx, input_snapshot[idx]): idx for idx in indices}
+            for fut in as_completed(futs):
+                idx, card = fut.result()
+                results_map[idx] = card
+                completed += 1
+                batch_prog.progress(min(1.0, completed / max(len(indices), 1)))
+                # Status line with approximate active/queued and speed
+                elapsed = max(0.001, time.time() - batch_start_ts)
+                active = max(0, min(workers, len(indices) - completed))
+                queued = max(0, len(indices) - completed - active)
+                rate = completed / elapsed
+                batch_status.caption(
+                    f"Done {completed}/{len(indices)} • Active ~{active} • Queued ~{queued} • {elapsed:.1f}s • {rate:.2f}/s"
+                )
+                if CFG_API_DELAY > 0:
+                    time.sleep(CFG_API_DELAY)
+
+        # Merge in input order and update signalword usage sequentially
+        usage = dict(st.session_state.get("sig_usage", {}))
+        last = st.session_state.get("sig_last")
+        batch_errors = 0
+        batch_transient = 0
+        for idx in indices:
+            card = results_map.get(idx)
+            if card is None:
+                continue
+            st.session_state.results.append(card)
+            meta = card.get("meta", {}) or {}
+            # Handle schema unsupported notification (once per model)
+            if meta.get("response_format_removed"):
+                cache = set(st.session_state.get("no_response_format_models", set()))
+                notified = set(st.session_state.get("no_response_format_notified", set()))
+                if model not in cache:
+                    cache.add(model)
+                    st.session_state.no_response_format_models = cache
+                if model not in notified:
+                    notified.add(model)
+                    st.session_state.no_response_format_notified = notified
+                    detail = meta.get("response_format_error")
+                    message = (
+                        f"Model {model} ignored schema (text.format); falling back to text parsing for this session."
+                    )
+                    if detail:
+                        message += f"\nReason: {detail}"
+                    st.info(message, icon="ℹ️")
+            found = meta.get("signalword_found")
+            if found:
+                usage[found] = usage.get(found, 0) + 1
+                last = found
+            err_text = (card.get("error") or "").lower()
+            if err_text:
+                batch_errors += 1
+                if any(code in err_text for code in ("429", "rate", "timeout", "502", "503")):
+                    batch_transient += 1
+
+        st.session_state.sig_usage = usage
+        st.session_state.sig_last = last
+        st.session_state.current_index = end
+        overall_count = len(st.session_state.results)
+        overall.progress(min(1.0, overall_count / max(total, 1)))
+        overall_caption.caption(f"Overall: {overall_count}/{total} processed")
+        batch_elapsed = max(0.001, time.time() - batch_start_ts)
+        batch_status.caption(f"Batch finished in {batch_elapsed:.1f}s • {len(indices)/batch_elapsed:.2f}/s")
+
+        # Update run summary
+        if not st.session_state.run_stats.get("start_ts"):
+            st.session_state.run_stats["start_ts"] = batch_start_ts
+        st.session_state.run_stats["batches"] += 1
+        st.session_state.run_stats["items"] += len(indices)
+        st.session_state.run_stats["elapsed"] += batch_elapsed
+        st.session_state.run_stats["errors"] += batch_errors
+        st.session_state.run_stats["transient"] += batch_transient
+        # Refresh top summary line
+        total_elapsed = max(0.001, time.time() - st.session_state.run_stats["start_ts"])
+        rate = (st.session_state.run_stats["items"]) / total_elapsed
+        summary.caption(
+            f"Run: batches {st.session_state.run_stats['batches']} • processed {overall_count}/{total} • "
+            f"elapsed {total_elapsed:.1f}s • {rate:.2f}/s • errors {st.session_state.run_stats['errors']} "
+            f"(transient {st.session_state.run_stats['transient']})"
+        )
+
+        # Auto-adapt workers for next batch on transient spikes
+        if batch_transient >= 2 and st.session_state.get("max_workers", 3) > 1:
+            st.session_state.max_workers = int(st.session_state.get("max_workers", 3)) - 1
+            st.info(
+                f"Transient errors detected ({batch_transient}); reducing max workers to {st.session_state.max_workers} for next batch.",
+                icon="⚠️",
+            )
+
+    # Controls logic
+    if start_run:
         if not API_KEY:
             st.error("Provide OPENAI_API_KEY via Secrets, environment variable, or the input field.")
         else:
-            client = OpenAI(api_key=API_KEY)
-            # Stable run id for this batch (used in 'unique' GUID policy)
-            st.session_state.anki_run_id = st.session_state.get("anki_run_id") or str(int(time.time()))
             st.session_state.results = []
-            st.session_state.model_id = model
             st.session_state.audio_media = {}
             st.session_state.audio_summary = None
-            total = len(st.session_state.input_data)
-            progress = st.progress(0)
-            max_tokens = 3000 if limit_tokens else None
-            effective_temp = temperature if _should_pass_temperature(model) else None
-            _init_sig_usage()
-            _init_response_format_cache()
-            rng = random.Random()
-            for idx, row in enumerate(st.session_state.input_data):
+            st.session_state.current_index = 0
+            st.session_state.run_stats = {"batches": 0, "items": 0, "elapsed": 0.0, "errors": 0, "transient": 0, "start_ts": None}
+            st.session_state.run_active = True
+            _probe_response_format_support(create_client(API_KEY), model)
+            _process_batch()
+            if st.session_state.get("auto_advance") and st.session_state.current_index < total:
+                st.session_state.auto_continue = True
                 try:
-                    # Skip flagged rows unless user explicitly forces generation
-                    if not st.session_state.get("force_flagged", False) and not row.get("_flag_ok", True):
-                        # Add a small result entry indicating skip so user sees it in preview
-                        st.session_state.results.append({
-                            "L2_word": row.get("woord", ""),
-                            "L2_cloze": "",
-                            "L1_sentence": "",
-                            "L2_collocations": "",
-                            "L2_definition": "",
-                            "L1_gloss": "",
-                            "L1_hint": "",
-                            "AudioSentence": "",
-                            "AudioWord": "",
-                            "error": "flagged_precheck",
-                            "meta": {"flag_reason": row.get("_flag_reason", "")}
-                        })
-                        continue
+                    st.rerun()
+                except Exception:
+                    st.experimental_rerun()
 
-                    card_seed = rng.randint(0, 2**31 - 1)
-                    settings = GenerationSettings(
-                        model=model,
-                        L1_code=L1_code,
-                        L1_name=L1_meta["name"],
-                        level=level,
-                        profile=profile,
-                        temperature=effective_temp,
-                        max_output_tokens=max_tokens,
-                        allow_response_format=model not in st.session_state.get("no_response_format_models", set()),
-                        signalword_seed=card_seed,
-                    )
-                    gen_result = generate_card(
-                        client=client,
-                        row=row,
-                        settings=settings,
-                        signalword_groups=CFG_SIGNALWORD_GROUPS,
-                        signalwords_b1=CFG_SIGNALWORDS_B1,
-                        signalwords_b2_plus=CFG_SIGNALWORDS_B2_PLUS,
-                        signal_usage=st.session_state.get("sig_usage"),
-                        signal_last=st.session_state.get("sig_last"),
-                    )
-                    st.session_state.sig_usage = gen_result.signal_usage
-                    st.session_state.sig_last = gen_result.signal_last
-                    st.session_state.results.append(gen_result.card)
-                    meta = gen_result.card.get("meta", {})
-                    if meta.get("response_format_removed"):
-                        cache = set(st.session_state.get("no_response_format_models", set()))
-                        notified = set(st.session_state.get("no_response_format_notified", set()))
-                        if model not in cache:
-                            cache.add(model)
-                            st.session_state.no_response_format_models = cache
-                        if model not in notified:
-                            notified.add(model)
-                            st.session_state.no_response_format_notified = notified
-                            detail = meta.get("response_format_error")
-                            message = (
-                                f"Model {model} ignored response_format; falling back to text parsing for this session."
-                            )
-                            if detail:
-                                message += f"\nReason: {detail}"
-                            st.info(message, icon="ℹ️")
-                except Exception as e:
-                    st.error(f"Error for word '{row.get('woord','?')}': {e}")
-                finally:
-                    progress.progress(int((idx + 1) / max(total, 1) * 100))
-                    if CFG_API_DELAY > 0:
-                        time.sleep(CFG_API_DELAY)
+    elif next_batch:
+        if not st.session_state.get("run_active"):
+            st.session_state.run_active = True
+        _process_batch()
+        if st.session_state.get("auto_advance") and st.session_state.current_index < total:
+            st.session_state.auto_continue = True
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
+
+    elif stop_run:
+        st.session_state.run_active = False
+        st.session_state.auto_continue = False
+
+    elif st.session_state.get("run_active") and st.session_state.get("auto_advance") and st.session_state.get("auto_continue"):
+        # Auto-advance path: process next batch automatically
+        _process_batch()
+        if st.session_state.current_index < total:
+            st.session_state.auto_continue = True
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
+        else:
+            st.session_state.run_active = False
+            st.session_state.auto_continue = False
 
 # ----- Preview & downloads -----
 if st.session_state.results:
@@ -749,8 +1122,17 @@ if st.session_state.results:
 
     with preview_container:
         st.subheader(f"📋 Preview (first {CFG_PREVIEW_LIMIT})")
-        preview_df = pd.DataFrame(st.session_state.results)[:CFG_PREVIEW_LIMIT]
-        st.dataframe(preview_df, use_container_width=True)
+        preview_df = pd.DataFrame(st.session_state.results)
+        if not preview_df.empty:
+            if "error" not in preview_df.columns:
+                preview_df["error"] = ""
+            # Extract error_stage from nested meta
+            stages: list[str | None] = []
+            for row in st.session_state.results:
+                m = row.get("meta") if isinstance(row, dict) else None
+                stages.append((m or {}).get("error_stage") if isinstance(m, dict) else None)
+            preview_df["error_stage"] = stages
+        st.dataframe(preview_df[:CFG_PREVIEW_LIMIT], width="stretch")
 
     csv_extras = {
         "level": st.session_state.get("level", level),
@@ -758,8 +1140,10 @@ if st.session_state.results:
         "model": st.session_state.get("model_id", model),
         "L1": st.session_state.get("L1_code", L1_code),
     }
+    include_errored = st.sidebar.checkbox("Include errored cards in exports", value=False)
+    export_cards = st.session_state.results if include_errored else [c for c in st.session_state.results if not c.get("error")]
     csv_data = generate_csv(
-        st.session_state.results,
+        export_cards,
         L1_meta,
         delimiter=CFG_CSV_DELIM,
         line_terminator=CFG_CSV_EOL,
@@ -788,7 +1172,7 @@ if st.session_state.results:
                 "L1": st.session_state.get("L1_code", L1_code),
             }
             anki_bytes = build_anki_package(
-                st.session_state.results,
+                export_cards,
                 l1_label=L1_meta["label"],
                 guid_policy=st.session_state.get("anki_guid_policy", "stable"),
                 run_id=st.session_state.get("anki_run_id", str(int(time.time()))),
@@ -814,6 +1198,27 @@ if st.session_state.results:
             st.error(f"Failed to build .apkg: {e}")
     else:
         st.info("To enable .apkg export, add 'genanki' to requirements.txt and restart the app.")
+
+    # Debug: show last request parameters captured by generation
+    last_meta = (st.session_state.results or [{}])[-1].get("meta", {}) if st.session_state.results else {}
+    req_dbg = last_meta.get("request") if isinstance(last_meta, dict) else None
+    with st.expander("🐞 Debug: last model request", expanded=False):
+        if req_dbg:
+            st.json(req_dbg)
+            # Extra flags
+            st.caption(
+                f"response_format_removed={last_meta.get('response_format_removed')} | "
+                f"temperature_removed={last_meta.get('temperature_removed')}"
+            )
+            # SDK version
+            try:
+                import openai as _openai  # type: ignore
+
+                st.caption(f"openai SDK version: {_openai.__version__}")
+            except Exception:
+                pass
+        else:
+            st.caption("No recent request captured yet.")
 
 # ----- Footer -----
 st.caption(

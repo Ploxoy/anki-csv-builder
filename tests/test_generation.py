@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict
 
 import pytest
@@ -95,6 +96,7 @@ def test_generate_card_with_parsed_response(monkeypatch, dummy_row, settings):
     assert result.signal_usage.get("maar") == 1, "обнаруженное сигнал-слово должно учитываться"
     assert result.signal_last == "maar"
     assert result.card["meta"]["model"] == settings.model
+    assert result.card["error"] == ""
     assert not result.card["meta"]["raw_response_truncated"], "усечение не требуется"
     assert call_log == [("B1", settings.signalword_count, settings.signalword_seed)]
 
@@ -158,12 +160,23 @@ def test_generate_card_repair_from_text(monkeypatch, dummy_row, settings):
     # Резервное fallback, когда нет групп, должен брать список B1.
     assert meta["allowed_signalwords"] == ["omdat"]
     assert meta["response_format_removed"], "ожидали флаг удаления schema"
+    assert meta["error"] == ""
 
 
 def test_raw_response_truncation(monkeypatch, dummy_row, settings):
     """Длинный raw-response должен обрезаться и получать флаг truncated."""
 
-    long_text = "{" + "a" * 4000 + "}"
+    valid_json = json.dumps(
+        {
+            "L2_word": "aanraken",
+            "L2_cloze": "Hij wil {{c1::aanraken}} de hond.",
+            "L1_sentence": "He wants to touch the dog.",
+            "L2_collocations": "iemand aanraken; zacht aanraken; hond aanraken",
+            "L2_definition": "iets met je hand voelen",
+            "L1_gloss": "touch",
+        }
+    )
+    long_text = valid_json + "\n" + ("a" * 4000)
     resp = _DummyResponse(parsed=None, text=long_text)
 
     def fake_send(*args, **kwargs):
@@ -186,6 +199,7 @@ def test_raw_response_truncation(monkeypatch, dummy_row, settings):
     meta = result.card["meta"]
     assert meta["raw_response_truncated"], "должен быть установлен флаг усечения"
     assert len(meta["raw_response"]) <= gen.RAW_RESPONSE_MAX_LEN + 3, "усечённое значение не должно превышать лимит"
+    assert meta["error"] == ""
 
 
 def test_generate_card_without_signalword_when_disabled(monkeypatch, dummy_row, settings):
@@ -245,6 +259,7 @@ def test_generate_card_without_signalword_when_disabled(monkeypatch, dummy_row, 
     assert meta["signalword_found"] is None
     assert result.signal_usage == {}
     assert result.signal_last is None
+    assert result.card["error"] == ""
 
 
 def test_generate_card_fallback_signalwords_for_b2(monkeypatch, dummy_row, settings):
@@ -306,3 +321,79 @@ def test_generate_card_fallback_signalwords_for_b2(monkeypatch, dummy_row, setti
     assert result.signal_usage["bovendien"] == 1
     assert result.signal_last == "bovendien"
     assert calls[0]["response_format"] is not None
+    assert result.card["error"] == ""
+
+
+def test_generate_card_handles_llm_failure(monkeypatch, dummy_row, settings, caplog):
+    """Ошибки клиента должны возвращать пустую карточку с понятным error."""
+
+    settings.include_signalword = False
+
+    def fake_send(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    signal_usage = {"omdat": 2}
+
+    monkeypatch.setattr(gen, "send_responses_request", fake_send)
+    monkeypatch.setattr(gen, "pick_allowed_for_level", lambda *a, **k: [])
+
+    with caplog.at_level(logging.ERROR):
+        result = gen.generate_card(
+            client=object(),
+            row=dummy_row,
+            settings=settings,
+            signalword_groups=None,
+            signal_usage=signal_usage,
+            signal_last="omdat",
+        )
+
+    assert result.card["L2_word"] == "aanraken"
+    assert result.card["error"].startswith("llm_request_failed"), "ожидали пометку об ошибке"
+    assert result.card["meta"]["error_stage"] == "llm_request"
+    assert result.signal_usage == signal_usage, "usage возвращается без изменений"
+    assert result.signal_usage is not signal_usage, "должна возвращаться копия"
+    assert any("Generation request failed" in rec.message for rec in caplog.records)
+
+
+def test_generate_card_marks_validation_error(monkeypatch, dummy_row, settings, caplog):
+    """Если после repair карточка всё ещё невалидна, error должен выставляться."""
+
+    bad_card = {
+        "L2_word": "aanraken",
+        "L2_cloze": "Hij {{c1::raakt}} de hond.",
+        "L1_sentence": "He touches the dog.",
+        "L2_collocations": "aanraken",
+        "L2_definition": "iets met je hand voelen",
+        "L1_gloss": "touch",
+    }
+
+    responses = [
+        (
+            _DummyResponse(parsed=bad_card, text=json.dumps(bad_card)),
+            {"response_format_removed": False, "temperature_removed": False, "retries": 0},
+        ),
+        (
+            _DummyResponse(parsed=bad_card, text=json.dumps(bad_card)),
+            {"response_format_removed": False, "temperature_removed": False, "retries": 0},
+        ),
+    ]
+
+    def fake_send(*args, **kwargs):
+        return responses.pop(0)
+
+    monkeypatch.setattr(gen, "send_responses_request", fake_send)
+    monkeypatch.setattr(gen, "pick_allowed_for_level", lambda *a, **k: [])
+
+    with caplog.at_level(logging.WARNING):
+        result = gen.generate_card(
+            client=object(),
+            row=dummy_row,
+            settings=settings,
+            signalword_groups=None,
+        )
+
+    assert "validation_failed" in result.card["error"]
+    assert result.card["meta"]["error_stage"] == "validation"
+    assert result.card["meta"]["problems_final"], "должны сохранить список проблем"
+    assert result.card["meta"]["repair_attempted"], "ожидали попытку repair"
+    assert any("Validation failed after generation" in rec.message for rec in caplog.records)

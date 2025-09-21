@@ -16,6 +16,7 @@ import time
 import json
 import logging
 from typing import Any, Dict, Optional, Tuple
+import inspect
 
 try:
     from openai import OpenAI  # type: ignore
@@ -24,6 +25,8 @@ except Exception:  # pragma: no cover - openai may not be installed in test env
 
 
 logger = logging.getLogger(__name__)
+_RF_WARNED_MODELS: set[str] = set()
+_TEMP_WARNED_MODELS: set[str] = set()
 
 def create_client(api_key: Optional[str]) -> Any:
     """Create and return an OpenAI client instance or None if SDK unavailable.
@@ -33,6 +36,19 @@ def create_client(api_key: Optional[str]) -> Any:
     if OpenAI is None:
         return None
     return OpenAI(api_key=api_key)
+
+
+def responses_accepts_param(client: Any, param_name: str) -> bool:
+    """Best-effort: check whether client.responses.create has a parameter.
+
+    If introspection fails (e.g., C-extensions or dynamic proxies), return True to allow runtime probe.
+    """
+    try:
+        create_fn = getattr(getattr(client, "responses"), "create")
+        sig = inspect.signature(create_fn)
+        return param_name in sig.parameters
+    except Exception:
+        return True
 
 
 def _sleep_backoff(attempt: int, base: float = 0.5) -> None:
@@ -50,6 +66,7 @@ def send_responses_request(
     temperature: Optional[float] = None,
     retries: int = 2,
     backoff_base: float = 0.5,
+    warn: bool = True,
 ) -> Tuple[Any, Dict[str, Any]]:
     """Call Responses API with retries.
 
@@ -67,8 +84,22 @@ def send_responses_request(
         "instructions": instructions,
         "input": input_text,
     }
+    # Responses API uses text={"format": {...}} for structured outputs
     if response_format is not None:
-        kwargs["response_format"] = response_format
+        final_fmt: Dict[str, Any] | None = None
+        if isinstance(response_format, dict):
+            if "json_schema" in response_format and isinstance(response_format.get("json_schema"), dict):
+                inner = response_format["json_schema"]
+                # Normalize to Responses shape: {type:"json_schema", ...inner}
+                final_fmt = {"type": "json_schema", **inner}
+            elif "type" in response_format:
+                # Assume already in Responses shape
+                final_fmt = response_format  # type: ignore[assignment]
+            elif "name" in response_format and "schema" in response_format:
+                # Raw schema object (Chat-style inner); wrap it
+                final_fmt = {"type": "json_schema", **response_format}
+        if final_fmt is not None:
+            kwargs["text"] = {"format": final_fmt}
     if max_output_tokens is not None:
         kwargs["max_output_tokens"] = max_output_tokens
     if temperature is not None:
@@ -95,24 +126,31 @@ def send_responses_request(
             # - "Unsupported parameter: 'temperature'"
             # - "Responses.create() got an unexpected keyword argument 'response_format'"
             handled = False
-            if "temperature" in msg and "unsupported parameter" in msg or "temperature" in msg and "unexpected keyword" in msg:
+            if ("temperature" in msg and "unsupported parameter" in msg) or ("temperature" in msg and "unexpected keyword" in msg):
                 if "temperature" in kwargs:
-                    logger.warning(
-                        "Model %s rejected temperature parameter: %s",
-                        model,
-                        exc,
-                    )
+                    if warn and model not in _TEMP_WARNED_MODELS:
+                        logger.warning(
+                            "Model %s rejected temperature parameter: %s",
+                            model,
+                            exc,
+                        )
+                        _TEMP_WARNED_MODELS.add(model)
                     kwargs.pop("temperature", None)
                     metadata["temperature_removed"] = True
                     handled = True
-            if "response_format" in msg or "unexpected keyword argument 'response_format'" in msg:
-                if "response_format" in kwargs:
-                    logger.warning(
-                        "Model %s rejected response_format parameter: %s",
-                        model,
-                        exc,
-                    )
-                    kwargs.pop("response_format", None)
+            # Some SDKs may not accept the 'text' argument (older snapshots) or reject format
+            if "unexpected keyword argument 'text'" in msg or (
+                "text" in msg and "unexpected keyword" in msg
+            ):
+                if "text" in kwargs:
+                    if warn and model not in _RF_WARNED_MODELS:
+                        logger.warning(
+                            "Model %s rejected text/format parameter: %s",
+                            model,
+                            exc,
+                        )
+                        _RF_WARNED_MODELS.add(model)
+                    kwargs.pop("text", None)
                     metadata["response_format_removed"] = True
                     metadata["response_format_error"] = str(exc)
                     handled = True

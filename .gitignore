@@ -45,8 +45,11 @@ desktop.ini
 # --- IDE/редакторы ---
 .vscode/
 .idea/
-*.code-workspace
 .devcontainer/
+.github/
+*.code-workspace
+
+
 
 # --- Логи/временные файлы ---
 *.log
