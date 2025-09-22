@@ -5,10 +5,13 @@ import base64
 import hashlib
 import re
 import tempfile
+import threading
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, MutableMapping, Optional, Tuple
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from openai import OpenAI
 
@@ -174,6 +177,7 @@ def ensure_audio_for_cards(
     progress_cb: Optional[Callable[[int, int], None]] = None,
     instructions: Optional[Dict[str, str]] = None,
     instruction_keys: Optional[Dict[str, str]] = None,
+    max_workers: int = 4,
 ) -> Tuple[Dict[str, bytes], AudioSynthesisSummary]:
     """Generate audio for cards, returning media map and summary.
 
@@ -191,130 +195,142 @@ def ensure_audio_for_cards(
     if fallback_model and fallback_model not in models_order:
         models_order.append(fallback_model)
 
-    # Pre-compute total number of requests (word + sentence per card if applicable)
-    tasks: List[Tuple[str, str, str]] = []  # (kind, key, text)
-    for card in cards:
-        woord = (card.get("L2_word") or "").strip()
-        if include_word and woord:
-            tasks.append(("word", "L2_word", woord))
-        sentence = sentence_for_tts(card.get("L2_cloze", ""))
-        if include_sentence and sentence:
-            tasks.append(("sentence", "L2_cloze", sentence))
-    total_tasks = len(tasks)
-    if total_tasks == 0:
-        return media, summary
-
-    if progress_cb:
-        progress_cb(0, total_tasks)
-
-    processed = 0
-    per_run_cache: Dict[str, Tuple[str, bytes]] = {}
-
-    cards_list = list(cards)
+    cards_list: List[MutableMapping[str, str]] = list(cards)
     for card in cards_list:
-        # Reset fields before generation to avoid stale placeholders
         card["AudioWord"] = ""
         card["AudioSentence"] = ""
 
-    def _generate_audio(kind: str, text: str, instructions_text: Optional[str]) -> Tuple[Optional[str], bool]:
-        nonlocal summary
-        last_error: Optional[Exception] = None
-        fallback_flag = False
-        for idx, model_id in enumerate(models_order):
-            key = _cache_key(model_id, voice, text, instructions_text)
-            filename: Optional[str] = None
-            data: Optional[bytes] = None
-            fallback_context = fallback_flag or idx > 0
+    sanitized_instructions: Dict[str, Optional[str]] = {}
+    if instructions:
+        for key, value in instructions.items():
+            sanitized_instructions[key] = (value.strip() or None) if isinstance(value, str) else None
 
-            if key in cache:
-                summary.cache_hits += 1
-                filename, data = cache[key]
-            elif key in per_run_cache:
-                filename, data = per_run_cache[key]
-            else:
-                try:
-                    data = _synthesize(
-                        client,
-                        model=model_id,
-                        voice=voice,
-                        text=text,
-                        instructions=instructions_text,
-                    )
-                except Exception as err:  # pragma: no cover - network dependent
-                    last_error = err
-                    if idx < len(models_order) - 1 and _is_model_not_found(err):
-                        fallback_flag = True
-                        continue
-                    raise
-                filename = _filename(kind, voice, text)
-                per_run_cache[key] = (filename, data)
-                cache[key] = (filename, data)
-
-            if data and filename:
-                media[filename] = data
-                return filename, fallback_context
-
-        if last_error:
-            raise last_error
-        return None, fallback_flag
-
-    for card in cards_list:
+    tasks: List[Tuple[int, str, str, Optional[str]]] = []  # (card_index, kind, text, instruction)
+    for idx, card in enumerate(cards_list):
         woord = (card.get("L2_word") or "").strip()
         if include_word:
             if not woord:
                 summary.word_skipped += 1
             else:
-                text_word = woord
-                word_instr = (instructions or {}).get("word")
-                if word_instr is not None:
-                    word_instr = word_instr.strip() or None
-                try:
-                    filename, used_fallback = _generate_audio("word", text_word, word_instr)
-                    if filename:
-                        card["AudioWord"] = f"[sound:{filename}]"
-                        summary.word_success += 1
-                        if used_fallback:
-                            summary.fallback_switches += 1
-                    else:
-                        summary.word_skipped += 1
-                except Exception as err:  # pragma: no cover - network dependent
-                    summary.errors.append(f"{woord}: {err}")
-                    summary.word_skipped += 1
-                processed += 1
-                if progress_cb:
-                    progress_cb(processed, total_tasks)
-
-        sentence_clean = sentence_for_tts(card.get("L2_cloze", "")) if include_sentence else ""
+                tasks.append((idx, "word", woord, sanitized_instructions.get("word") if instructions else None))
+        sentence = sentence_for_tts(card.get("L2_cloze", "")) if include_sentence else ""
         if include_sentence:
-            if not sentence_clean:
+            if not sentence:
                 summary.sentence_skipped += 1
             else:
-                sentence_instr = (instructions or {}).get("sentence")
-                if sentence_instr is not None:
-                    sentence_instr = sentence_instr.strip() or None
-                try:
-                    filename, used_fallback = _generate_audio(
-                        "sentence",
-                        sentence_clean,
-                        sentence_instr,
-                    )
-                    if filename:
-                        card["AudioSentence"] = f"[sound:{filename}]"
-                        summary.sentence_success += 1
-                        if used_fallback:
-                            summary.fallback_switches += 1
-                    else:
-                        summary.sentence_skipped += 1
-                except Exception as err:  # pragma: no cover - network dependent
-                    summary.errors.append(
-                        f"Sentence for '{card.get('L2_word','')}': {err}"
-                    )
-                    summary.sentence_skipped += 1
-                processed += 1
-                if progress_cb:
-                    progress_cb(processed, total_tasks)
+                tasks.append((idx, "sentence", sentence, sanitized_instructions.get("sentence") if instructions else None))
 
+    total_tasks = len(tasks)
     summary.total_requests = total_tasks
+    if total_tasks == 0:
+        if progress_cb:
+            progress_cb(0, 0)
+        return media, summary
+
+    max_workers = max(1, min(int(max_workers or 1), total_tasks))
+
+    per_run_cache: Dict[str, Tuple[str, bytes]] = {}
+    cache_lock = threading.Lock()
+    media_lock = threading.Lock()
+
+    def _load_from_cache(key: str) -> Optional[Tuple[str, bytes]]:
+        with cache_lock:
+            if key in per_run_cache:
+                return per_run_cache[key]
+            if key in cache:
+                return cache[key]
+        return None
+
+    def _store_in_cache(key: str, value: Tuple[str, bytes]) -> None:
+        with cache_lock:
+            per_run_cache[key] = value
+            cache[key] = value
+
+    def _store_media(filename: str, data: bytes) -> None:
+        with media_lock:
+            media[filename] = data
+
+    def _generate_single(kind: str, text: str, instruction_text: Optional[str]) -> Tuple[str, bool, bool]:
+        last_error: Optional[Exception] = None
+        fallback_flag = False
+        for idx, model_id in enumerate(models_order):
+            cache_key = _cache_key(model_id, voice, text, instruction_text)
+            cached = _load_from_cache(cache_key)
+            cache_hit = False
+            if cached is not None:
+                filename, data = cached
+                _store_media(filename, data)
+                cache_hit = True
+                return filename, (fallback_flag or idx > 0), cache_hit
+            try:
+                data = _synthesize(
+                    client,
+                    model=model_id,
+                    voice=voice,
+                    text=text,
+                    instructions=instruction_text,
+                )
+            except Exception as err:  # pragma: no cover - network dependent
+                last_error = err
+                if idx < len(models_order) - 1 and _is_model_not_found(err):
+                    fallback_flag = True
+                    continue
+                raise
+            filename = _filename(kind, voice, text)
+            _store_in_cache(cache_key, (filename, data))
+            _store_media(filename, data)
+            return filename, (fallback_flag or idx > 0), False
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Unable to synthesize audio")
+
+    processed = 0
+
+    def _worker(task: Tuple[int, str, str, Optional[str]]) -> Tuple[int, str, Optional[str], bool, bool, Optional[Exception]]:
+        card_idx, kind, text, instruction_text = task
+        try:
+            filename, used_fallback, cache_hit = _generate_single(kind, text, instruction_text)
+            return card_idx, kind, filename, used_fallback, cache_hit, None
+        except Exception as err:  # pragma: no cover - network dependent
+            return card_idx, kind, None, False, False, err
+
     if progress_cb:
+        progress_cb(0, total_tasks)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_worker, task): task for task in tasks}
+        for future in as_completed(futures):
+            card_idx, kind, filename, used_fallback, cache_hit, error = future.result()
+            card = cards_list[card_idx]
+            if error or not filename:
+                if kind == "word":
+                    summary.word_skipped += 1
+                    label = (card.get("L2_word") or "").strip()
+                    summary.errors.append(f"{label or 'word'}: {error}") if error else None
+                else:
+                    summary.sentence_skipped += 1
+                    label = (card.get("L2_word") or "").strip()
+                    summary.errors.append(
+                        f"Sentence for '{label}': {error}"
+                    ) if error else None
+            else:
+                if kind == "word":
+                    card["AudioWord"] = f"[sound:{filename}]"
+                    summary.word_success += 1
+                else:
+                    card["AudioSentence"] = f"[sound:{filename}]"
+                    summary.sentence_success += 1
+                if cache_hit:
+                    summary.cache_hits += 1
+                if used_fallback:
+                    summary.fallback_switches += 1
+
+            processed += 1
+            if progress_cb:
+                progress_cb(processed, total_tasks)
+
+    if progress_cb and processed < total_tasks:
         progress_cb(total_tasks, total_tasks)
+
     return media, summary

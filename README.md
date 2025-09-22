@@ -166,3 +166,16 @@ MIT License
    - Для APKG: выберите `dutch_cloze.apkg` — колода создаётся автоматически.
 3. Проверьте сопоставление полей (L2_word → Cloze).
 4. Нажмите `Import` и просмотрите добавленные карточки.
+
+## 🧾 Changelog (highlights)
+
+- Batch processing & parallel requests
+  - Added batch mode with Start/Next/Stop controls, auto‑advance, and per‑batch + overall progress.
+  - Parallel execution inside a batch via ThreadPoolExecutor; results are merged in input order.
+  - Auto‑tuning: recommended batch size/workers computed from the input size (~20 per batch, ≤10 workers) and applied safely; workers adapt down on transient errors (429/timeout/5xx).
+- Structured outputs with Responses API
+  - Migrated to Responses `text.format` with `json_schema`; robust normalisation of schema shapes; silent caching of unsupported schema and automatic fallback to text parsing.
+- Better debugging and UX
+  - Debug expander with last request parameters, schema flags, SDK version.
+  - Improved progress lines (“Overall X/Y”, “Done/Active/Queued • time • rate”) and run summary (batches, processed, elapsed, rate, errors).
+  - Preview shows `error`/`error_stage`; errored cards are excluded from exports by default (toggle in sidebar).

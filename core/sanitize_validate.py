@@ -125,8 +125,9 @@ def validate_card(card: Dict[str, str]) -> List[str]:
     items = [s.strip() for s in re.split(r";\s*|\n+", col_raw) if s.strip()]
     if len(items) != 3:
         problems.append("L2_collocations must contain exactly 3 items")
-    if len(card.get("L1_gloss", "").split()) > 2:
-        problems.append("L1_gloss must be 1–2 words")
+    # Allow up to 6 words in L1_gloss to better fit languages like Russian
+    if len(card.get("L1_gloss", "").split()) > 6:
+        problems.append("L1_gloss must be ≤ 6 words")
     return problems
 
 

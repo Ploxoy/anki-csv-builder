@@ -166,3 +166,16 @@ Open an issue if you run into problems or have ideas to discuss.
    - For APKG: just select `dutch_cloze.apkg` (creates deck immediately).
 3. Confirm the field mapping (L2_word → Cloze).
 4. Click `Import` and review the cards in the deck.
+
+## 🧾 Changelog (highlights)
+
+- Batch processing & parallel requests
+  - Added batch mode with Start/Next/Stop controls, auto‑advance, and both per‑batch and overall progress.
+  - Parallel requests inside a batch via ThreadPoolExecutor; results merged in input order for a stable preview.
+  - Auto‑tuning: recommended batch size/workers computed from dataset size (~20 per batch, ≤10 workers) and applied safely; workers adapt down on transient errors (429/timeout/5xx).
+- Structured outputs with Responses
+  - Switched to Responses `text.format` (`json_schema`) with schema normalisation; cache unsupported schema and automatically fall back to text parsing.
+- Debugging & UX
+  - Debug expander shows last request params, schema flags, and SDK version.
+  - Improved progress UI (“Overall X/Y”, “Done/Active/Queued • time • rate”) and a run summary (batches, processed, elapsed, rate, errors).
+  - Preview includes `error`/`error_stage`; errored cards are excluded from exports by default (toggle available).

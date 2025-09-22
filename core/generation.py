@@ -46,6 +46,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 RAW_RESPONSE_MAX_LEN = 1500
+ERROR_MESSAGE_MAX_LEN = 200
 
 
 @dataclass
@@ -215,6 +216,33 @@ def _apply_cloze_fixes(card: Dict[str, str]) -> None:
     card["L2_cloze"] = clz
 
 
+def _base_card_from_row(row: Dict[str, Any]) -> Dict[str, str]:
+    """Возвращает заготовку карточки, если генерация не удалась."""
+
+    lemma = sanitize(row.get("woord", ""))
+    definition = _strip_cloze(sanitize(row.get("def_nl", "")))
+    gloss = _strip_cloze(
+        sanitize(
+            row.get("translation")
+            or row.get("ru_short")
+            or row.get("L1_gloss")
+            or ""
+        )
+    )
+    return {
+        "L2_word": lemma,
+        "L2_cloze": "",
+        "L1_sentence": "",
+        "L2_collocations": "",
+        "L2_definition": definition,
+        "L1_gloss": gloss,
+        "L1_hint": "",
+        "AudioSentence": "",
+        "AudioWord": "",
+        "error": "",
+    }
+
+
 def _trim_text(text: str, limit: int = RAW_RESPONSE_MAX_LEN) -> tuple[str, bool]:
     if not text:
         return "", False
@@ -293,7 +321,7 @@ def generate_card(
         f'"L1_sentence": "<exact translation into {settings.L1_name}>", '
         '"L2_collocations": "colloc1; colloc2; colloc3", '
         '"L2_definition": "<short Dutch definition>", '
-        f'"L1_gloss": "<1-2 {settings.L1_name} words>"'
+        f'"L1_gloss": "<1-6 {settings.L1_name} words>"'
         '}'
     )
 
@@ -329,15 +357,97 @@ def generate_card(
         + json_template
     )
 
-    response, send_meta = send_responses_request(
-        client=client,
-        model=settings.model,
-        instructions=instructions,
-        input_text=input_text,
-        response_format=json_schema if settings.allow_response_format else None,
-        max_output_tokens=settings.max_output_tokens,
-        temperature=settings.temperature,
-    )
+    def _finalize_with_error(
+        *,
+        stage: str,
+        error_message: str,
+        send_meta: Optional[Dict[str, Any]] = None,
+        raw_response: str = "",
+        raw_trimmed: bool = False,
+    ) -> GenerationResult:
+        send_meta = send_meta or {}
+        card = _base_card_from_row(row)
+        clean_error = error_message.strip()
+        if len(clean_error) > ERROR_MESSAGE_MAX_LEN:
+            clean_error = clean_error[: ERROR_MESSAGE_MAX_LEN - 3] + "..."
+        card["error"] = clean_error
+
+        meta: Dict[str, Any] = {
+            "allowed_signalwords": allowed_signalwords,
+            "include_signalword": bool(include_sig and allowed_signalwords),
+            "signalword_found": None,
+            "signalword_seed": settings.signalword_seed,
+            "problems_initial": [],
+            "problems_final": [],
+            "repair_attempted": False,
+            "raw_response": raw_response,
+            "raw_response_truncated": raw_trimmed,
+            "response_format_removed": send_meta.get("response_format_removed", False),
+            "response_format_error": send_meta.get("response_format_error"),
+            "temperature_removed": send_meta.get("temperature_removed", False),
+            "error": clean_error,
+            "error_stage": stage,
+        }
+        meta_full = {
+            **meta,
+            "model": settings.model,
+            "level": settings.level,
+            "profile": settings.profile,
+        }
+        card["meta"] = meta_full
+        return GenerationResult(
+            card=card,
+            meta=meta_full,
+            signal_usage=dict(signal_usage or {}),
+            signal_last=signal_last,
+        )
+
+    # Collect request info for debugging (trim long fields for meta)
+    _instr_short, _instr_trim = _trim_text(instructions)
+    _input_short, _input_trim = _trim_text(input_text)
+    request_info: Dict[str, Any] = {
+        "model": settings.model,
+        "allow_response_format": settings.allow_response_format,
+        "response_format": None,  # will be set below if used
+        "response_format_used": False,
+        "max_output_tokens": settings.max_output_tokens,
+        "temperature": settings.temperature,
+        "instructions": _instr_short,
+        "instructions_truncated": _instr_trim,
+        "input_text": _input_short,
+        "input_text_truncated": _input_trim,
+    }
+
+    try:
+        rf_param = json_schema if settings.allow_response_format else None
+        # reflect actual use in request_info (before call)
+        if rf_param is not None:
+            request_info["response_format"] = "json_schema"
+            request_info["response_format_used"] = True
+        response, send_meta = send_responses_request(
+            client=client,
+            model=settings.model,
+            instructions=instructions,
+            input_text=input_text,
+            response_format=rf_param,
+            max_output_tokens=settings.max_output_tokens,
+            temperature=settings.temperature,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "Generation request failed",
+            extra={
+                "model": settings.model,
+                "level": settings.level,
+                "profile": settings.profile,
+                "woord": row.get("woord", ""),
+                "stage": "llm_request",
+            },
+        )
+        return _finalize_with_error(
+            stage="llm_request",
+            error_message=f"llm_request_failed: {exc}",
+        )
     logger.debug(
         "Generation request completed",
         extra={
@@ -348,9 +458,26 @@ def generate_card(
         },
     )
 
-    raw_text_full = get_response_text(response)
-    raw_text, raw_trimmed = _trim_text(raw_text_full)
-    parsed = get_response_parsed(response) or extract_json_block(raw_text_full)
+    try:
+        raw_text_full = get_response_text(response)
+        raw_text, raw_trimmed = _trim_text(raw_text_full)
+        parsed = get_response_parsed(response) or extract_json_block(raw_text_full)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "Response parsing failed",
+            extra={
+                "model": settings.model,
+                "level": settings.level,
+                "profile": settings.profile,
+                "woord": row.get("woord", ""),
+                "stage": "parse_response",
+            },
+        )
+        return _finalize_with_error(
+            stage="parse_response",
+            error_message=f"response_parse_failed: {exc}",
+            send_meta=send_meta,
+        )
 
     card = {
         "L2_word": sanitize(parsed.get("L2_word", payload["L2_word"])),
@@ -385,12 +512,13 @@ def generate_card(
         repair_input = "Previous JSON:\n" + json.dumps(card, ensure_ascii=False)
         repair_meta: Dict[str, Any] = {}
         try:
+            rf_repair = json_schema if allow_schema_next else None
             repair_resp, repair_meta = send_responses_request(
                 client=client,
                 model=settings.model,
                 instructions=repair_prompt,
                 input_text=repair_input,
-                response_format=json_schema if allow_schema_next else None,
+                response_format=rf_repair,
                 max_output_tokens=settings.max_output_tokens,
                 temperature=settings.temperature,
             )
@@ -416,8 +544,31 @@ def generate_card(
                 if key in parsed_repair:
                     card[key] = sanitize(parsed_repair.get(key, card.get(key, "")))
             _apply_cloze_fixes(card)
+        else:
+            # capture repair request info for debugging
+            _rinstr, _rinstr_trim = _trim_text(repair_prompt)
+            _rinput, _rinput_trim = _trim_text(repair_input)
+            request_info["repair_request"] = {
+                "response_format": "json_schema" if allow_schema_next else None,
+                "instructions": _rinstr,
+                "instructions_truncated": _rinstr_trim,
+                "input_text": _rinput,
+                "input_text_truncated": _rinput_trim,
+            }
 
     problems_final = validate_card(card)
+
+    if problems_final:
+        card["error"] = "validation_failed: " + "; ".join(problems_final)
+        logger.warning(
+            "Validation failed after generation",
+            extra={
+                "woord": row.get("woord", ""),
+                "model": settings.model,
+                "stage": "validation",
+                "problems": problems_final,
+            },
+        )
 
     usage_updated, last_updated, signal_found = note_signalword_in_sentence(
         card.get("L2_cloze", ""),
@@ -425,6 +576,9 @@ def generate_card(
         usage=signal_usage,
         last=signal_last,
     )
+
+    # post-call: note if schema was removed by SDK
+    request_info["response_format_removed"] = send_meta.get("response_format_removed", False)
 
     meta: Dict[str, Any] = {
         "allowed_signalwords": allowed_signalwords,
@@ -439,6 +593,9 @@ def generate_card(
         "response_format_removed": send_meta.get("response_format_removed", False),
         "response_format_error": send_meta.get("response_format_error"),
         "temperature_removed": send_meta.get("temperature_removed", False),
+        "error": card.get("error", ""),
+        "error_stage": "validation" if card.get("error") else None,
+        "request": request_info,
     }
     if repair_raw:
         meta["repair_response"] = repair_raw
@@ -452,6 +609,7 @@ def generate_card(
         "model": settings.model,
         "level": settings.level,
         "profile": settings.profile,
+        "error": card.get("error", ""),
     }
     card["meta"] = meta_full
 
