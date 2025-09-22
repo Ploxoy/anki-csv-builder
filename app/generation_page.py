@@ -437,11 +437,21 @@ def render_generation_page(
             _rerun_errored_only()
 
     if state.get("auto_continue") and state.get("run_active") and state.current_index < total:
-        state.auto_continue = False
-        try:
-            st.rerun()
-        except Exception:
-            st.experimental_rerun()
+        if not state.get("auto_advance"):
+            state.auto_continue = False
+        elif not settings.api_key:
+            state.auto_continue = False
+            state.run_active = False
+            st.error("Provide OPENAI_API_KEY before running batches.")
+        else:
+            state.auto_continue = False
+            _process_batch()
+            if state.get("auto_advance") and state.current_index < total:
+                state.auto_continue = True
+                try:
+                    st.rerun()
+                except Exception:
+                    st.experimental_rerun()
 
     preview_container = st.container()
     st.divider()
