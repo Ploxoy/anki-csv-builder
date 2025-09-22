@@ -93,7 +93,9 @@ def render_input_section(demo_words: List[dict]) -> None:
                     for row in demo_words
                 ]
         with manual_cols[2]:
-            st.caption("Добавьте слова, определения и при необходимости перевод. Строки можно редактировать и удалять.")
+            st.caption(
+                "Add words, definitions, and translations if needed. You can edit or delete rows."
+            )
 
         manual_rows = list(st.session_state.manual_rows or [])
 
