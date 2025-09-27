@@ -45,7 +45,11 @@ desktop.ini
 # --- IDE/редакторы ---
 .vscode/
 .idea/
+.devcontainer/
+.github/
 *.code-workspace
+
+
 
 # --- Логи/временные файлы ---
 *.log
@@ -68,3 +72,7 @@ anki_cards.csv
 # --- Среда ---
 .env
 .env.*
+
+# Local notes and ideas (private)
+idea.md
+notes/

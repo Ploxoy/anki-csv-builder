@@ -1,11 +1,9 @@
 # Основные зависимости
 streamlit
 pandas
-
-# OpenAI API
 openai>=1.99.0
 genanki
-
+wordfreq
 
 # Встроенные модули Python (не требуют установки):
 # - re (регулярные выражения)
