@@ -1,16 +1,17 @@
 """Main generation, preview, audio, and export UI for the app."""
 from __future__ import annotations
 
+import hashlib
 import random
 import time
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
 
-from core.audio import ensure_audio_for_cards, sentence_for_tts
+from core.audio import ensure_audio_for_cards, fetch_elevenlabs_voices, sentence_for_tts
 from core.export_anki import HAS_GENANKI, build_anki_package
 from core.export_csv import generate_csv
 from core.generation import GenerationSettings, generate_card
@@ -22,10 +23,8 @@ from .sidebar import SidebarConfig
 
 @dataclass
 class AudioConfig:
-    voices: List[Dict[str, str]]
-    model: str
-    fallback_model: Optional[str]
-    instructions: Dict[str, str]
+    providers: Dict[str, Dict[str, Any]]
+    default_provider: str
 
 
 @dataclass
@@ -460,21 +459,155 @@ def render_generation_page(
         state.audio_panel_expanded = True
         audio_summary = state.get("audio_summary")
         audio_cache = state.get("audio_cache", {})
-        voices = audio_config.voices
-        voice_ids = [voice["id"] for voice in voices]
-        if not voice_ids:
-            st.warning("No TTS voices configured in settings.")
-            selected_voice = ""
+
+        providers = audio_config.providers or {}
+        provider_keys = list(providers.keys())
+        default_provider = audio_config.default_provider
+
+        def _provider_label(key: str) -> str:
+            data = providers.get(key, {})
+            if isinstance(data, dict):
+                label = data.get("label")
+                if isinstance(label, str) and label:
+                    return label
+            return key
+
+        selected_provider = ""
+        if not provider_keys:
+            st.warning("No TTS providers configured in settings.")
         else:
-            default_voice_id = state.get("audio_voice") or voice_ids[0]
-            voice_index = voice_ids.index(default_voice_id) if default_voice_id in voice_ids else 0
-            selected_voice = st.selectbox(
+            current_provider = state.get("audio_provider") or default_provider or provider_keys[0]
+            if current_provider not in providers:
+                current_provider = provider_keys[0]
+            provider_index = provider_keys.index(current_provider) if current_provider in provider_keys else 0
+            selected_provider = st.selectbox(
+                "TTS provider",
+                options=provider_keys,
+                index=provider_index,
+                format_func=_provider_label,
+                key="audio_provider",
+            )
+
+        provider_data = providers.get(selected_provider, {}) if selected_provider else {}
+        provider_type = str(provider_data.get("type", selected_provider or "")) if isinstance(provider_data, dict) else ""
+
+        if provider_type == "elevenlabs":
+            if "elevenlabs_api_key" not in state or not state.get("elevenlabs_api_key"):
+                secret = ui_helpers.get_secret("ELEVENLABS_API_KEY")
+                if secret:
+                    state.elevenlabs_api_key = secret
+            eleven_api_key = st.text_input(
+                "ElevenLabs API Key",
+                type="password",
+                value=state.get("elevenlabs_api_key", ""),
+                key="elevenlabs_api_key",
+                help="Stored in ELEVENLABS_API_KEY env variable or Streamlit secrets.",
+            )
+        else:
+            eleven_api_key = state.get("elevenlabs_api_key")
+
+        dynamic_voice_list: List[Dict[str, str]] = []
+        dynamic_voice_error: Optional[str] = None
+        fetched_this_run = False
+        if provider_type == "elevenlabs" and eleven_api_key:
+            api_key_hash = hashlib.sha1(eleven_api_key.encode("utf-8")).hexdigest()
+            cached_hash = state.get("elevenlabs_voice_catalog_key")
+            cached_catalog = state.get("elevenlabs_voice_catalog")
+            if not isinstance(cached_catalog, list) or cached_hash != api_key_hash:
+                try:
+                    dynamic_voice_list = fetch_elevenlabs_voices(
+                        eleven_api_key,
+                        language_codes=provider_data.get("voice_language_codes"),
+                    )
+                    state.elevenlabs_voice_catalog = dynamic_voice_list
+                    state.elevenlabs_voice_catalog_key = api_key_hash
+                    state.elevenlabs_voice_catalog_error = None
+                    fetched_this_run = True
+                except Exception as exc:  # pragma: no cover - network dependent
+                    dynamic_voice_error = str(exc)
+                    state.elevenlabs_voice_catalog = None
+                    state.elevenlabs_voice_catalog_error = dynamic_voice_error
+            else:
+                dynamic_voice_list = cached_catalog
+            if dynamic_voice_error is None:
+                cached_error = state.get("elevenlabs_voice_catalog_error")
+                if isinstance(cached_error, str) and cached_error:
+                    dynamic_voice_error = cached_error
+        else:
+            state.elevenlabs_voice_catalog_error = None
+
+        static_voices = provider_data.get("voices") if isinstance(provider_data, dict) else []
+        voices_list = dynamic_voice_list if dynamic_voice_list else static_voices
+
+        default_voice = str(provider_data.get("voice_default", "")) if isinstance(provider_data, dict) else ""
+        if provider_type == "elevenlabs" and voices_list:
+            first_voice = voices_list[0]
+            if isinstance(first_voice, dict):
+                default_voice = str(first_voice.get("id", "")) or default_voice
+        voice_map = state.get("audio_voice_map")
+        if not isinstance(voice_map, dict):
+            voice_map = {}
+            state.audio_voice_map = voice_map
+
+        voice_ids = [voice.get("id") for voice in voices_list if isinstance(voice, dict) and voice.get("id")]
+
+        if selected_provider and state.get("_audio_provider_last") != selected_provider:
+            stored_voice = voice_map.get(selected_provider)
+            if stored_voice and stored_voice in voice_ids:
+                state.audio_voice = stored_voice
+            elif default_voice and default_voice in voice_ids:
+                state.audio_voice = default_voice
+            elif voice_ids:
+                state.audio_voice = voice_ids[0]
+            state.audio_include_word = bool(provider_data.get("include_word_default", True))
+            state.audio_include_sentence = bool(provider_data.get("include_sentence_default", True))
+            sentence_default = provider_data.get("sentence_default", "") if isinstance(provider_data, dict) else ""
+            word_default = provider_data.get("word_default", "") if isinstance(provider_data, dict) else ""
+            if isinstance(sentence_default, str) and sentence_default:
+                state.audio_sentence_instruction = sentence_default
+            if isinstance(word_default, str) and word_default:
+                state.audio_word_instruction = word_default
+            state._audio_provider_last = selected_provider
+
+        if fetched_this_run and provider_type == "elevenlabs" and voice_ids:
+            current_voice = state.get("audio_voice")
+            if current_voice not in voice_ids:
+                state.audio_voice = voice_ids[0]
+
+        if voice_ids:
+            current_voice = state.get("audio_voice") or voice_ids[0]
+            if current_voice not in voice_ids:
+                current_voice = voice_ids[0]
+            voice_widget_key = f"audio_voice__{selected_provider}" if selected_provider else "audio_voice__default"
+            widget_default = current_voice
+            if voice_widget_key not in st.session_state or st.session_state.get(voice_widget_key) not in voice_ids:
+                st.session_state[voice_widget_key] = widget_default
+
+            def _voice_label(vid: str) -> str:
+                return next(
+                    (voice.get("label", vid) for voice in voices_list if isinstance(voice, dict) and voice.get("id") == vid),
+                    vid,
+                )
+
+            st.selectbox(
                 "Voice",
                 options=voice_ids,
-                format_func=lambda vid: next((v["label"] for v in voices if v["id"] == vid), vid),
-                index=voice_index,
-                key="audio_voice",
+                format_func=_voice_label,
+                key=voice_widget_key,
             )
+            selected_voice = st.session_state.get(voice_widget_key, voice_ids[0])
+            state.audio_voice = selected_voice
+            if selected_provider:
+                voice_map[selected_provider] = selected_voice
+        else:
+            if selected_provider:
+                st.warning("No voices configured for this provider.")
+            selected_voice = ""
+
+        if provider_type == "elevenlabs" and dynamic_voice_error:
+            st.warning(f"Failed to load ElevenLabs voices: {dynamic_voice_error}")
+        elif provider_type == "elevenlabs" and not dynamic_voice_list and static_voices:
+            st.info("Showing default ElevenLabs voices because none matched the requested language.")
 
         max_audio_workers = st.slider(
             "Parallel audio workers",
@@ -485,6 +618,8 @@ def render_generation_page(
             help="How many TTS requests to run in parallel.",
             key="audio_workers",
         )
+        if provider_type == "elevenlabs" and max_audio_workers > 2:
+            st.caption("ElevenLabs rate limits are strict — backend caps workers at 2 to avoid 429 errors.")
 
         include_word = st.checkbox(
             "Include word audio",
@@ -497,35 +632,58 @@ def render_generation_page(
             key="audio_include_sentence",
         )
 
-        def _instruction_label(key: str) -> str:
-            if key.startswith("Dutch_sentence_"):
-                suffix = key.split("Dutch_sentence_", 1)[1].replace("_", " ")
-                return f"Sentence · {suffix.capitalize()}"
-            if key.startswith("Dutch_word_"):
-                suffix = key.split("Dutch_word_", 1)[1].replace("_", " ")
-                return f"Word · {suffix.capitalize()}"
+        sentence_styles_map = provider_data.get("sentence_styles") if isinstance(provider_data, dict) else {}
+        word_styles_map = provider_data.get("word_styles") if isinstance(provider_data, dict) else {}
+
+        def _style_label(style_map: Dict[str, Any], key: str) -> str:
+            option = style_map.get(key) if isinstance(style_map, dict) else None
+            if isinstance(option, dict):
+                label = option.get("label")
+                if isinstance(label, str) and label:
+                    return label
             return key
 
-        sentence_options = sorted([k for k in audio_config.instructions if k.startswith("Dutch_sentence_")])
-        word_options = sorted([k for k in audio_config.instructions if k.startswith("Dutch_word_")])
+        sentence_options = list(sentence_styles_map.keys()) if isinstance(sentence_styles_map, dict) else []
+        if sentence_options:
+            sentence_current = state.get("audio_sentence_instruction") or provider_data.get("sentence_default")
+            if sentence_current not in sentence_options:
+                sentence_current = provider_data.get("sentence_default") if provider_data.get("sentence_default") in sentence_options else sentence_options[0]
+                state.audio_sentence_instruction = sentence_current
+            sentence_choice = st.selectbox(
+                "Sentence style",
+                options=sentence_options,
+                format_func=lambda key: _style_label(sentence_styles_map, key),
+                key="audio_sentence_instruction",
+            )
+            sentence_caption = st.empty()
+            sentence_caption.caption(
+                str(sentence_styles_map.get(sentence_choice, {}).get("description", "")) or " "
+            )
+        else:
+            sentence_choice = ""
+            if selected_provider:
+                st.info("No sentence styles configured for this provider.")
 
-        sentence_choice = st.selectbox(
-            "Sentence style",
-            options=sentence_options,
-            format_func=_instruction_label,
-            key="audio_sentence_instruction",
-        )
-        sentence_caption = st.empty()
-        sentence_caption.caption(audio_config.instructions.get(sentence_choice, "") or " ")
-
-        word_choice = st.selectbox(
-            "Word style",
-            options=word_options,
-            format_func=_instruction_label,
-            key="audio_word_instruction",
-        )
-        word_caption = st.empty()
-        word_caption.caption(audio_config.instructions.get(word_choice, "") or " ")
+        word_options = list(word_styles_map.keys()) if isinstance(word_styles_map, dict) else []
+        if word_options:
+            word_current = state.get("audio_word_instruction") or provider_data.get("word_default")
+            if word_current not in word_options:
+                word_current = provider_data.get("word_default") if provider_data.get("word_default") in word_options else word_options[0]
+                state.audio_word_instruction = word_current
+            word_choice = st.selectbox(
+                "Word style",
+                options=word_options,
+                format_func=lambda key: _style_label(word_styles_map, key),
+                key="audio_word_instruction",
+            )
+            word_caption = st.empty()
+            word_caption.caption(
+                str(word_styles_map.get(word_choice, {}).get("description", "")) or " "
+            )
+        else:
+            word_choice = ""
+            if selected_provider:
+                st.info("No word styles configured for this provider.")
 
         cards = state.results
         unique_words = set()
@@ -560,6 +718,8 @@ def render_generation_page(
                 msg += f" Cache hits: {cache_hits}."
             if fallback_hits:
                 msg += f" Fallback used: {fallback_hits}×."
+            summary_provider_key = audio_summary.get("provider") or selected_provider
+            summary_provider = providers.get(summary_provider_key, {}) if isinstance(providers, dict) else {}
             st.success(msg)
             st.caption(
                 "Requests: {req} • Word skips: {w_skip} • Sentence skips: {s_skip}".format(
@@ -574,17 +734,31 @@ def render_generation_page(
                 if len(errors) > 3:
                     preview_err += " …"
                 st.warning(f"Audio issues: {preview_err}")
+
+            summary_sentence_styles = summary_provider.get("sentence_styles", {}) if isinstance(summary_provider, dict) else {}
+            summary_word_styles = summary_provider.get("word_styles", {}) if isinstance(summary_provider, dict) else {}
             styles = []
             sent_key = audio_summary.get("sentence_instruction_key") or ""
             word_key = audio_summary.get("word_instruction_key") or ""
             if sent_key:
-                styles.append(f"sentence: {_instruction_label(sent_key)}")
+                styles.append(f"sentence: {_style_label(summary_sentence_styles, sent_key)}")
             if word_key:
-                styles.append(f"word: {_instruction_label(word_key)}")
+                styles.append(f"word: {_style_label(summary_word_styles, word_key)}")
             if styles:
                 st.caption("Styles → " + "; ".join(styles))
+            provider_label = _provider_label(summary_provider_key) if summary_provider_key else _provider_label(selected_provider)
+            if provider_label:
+                st.caption(f"Provider → {provider_label}")
+            if audio_summary.get("voice"):
+                st.caption(f"Voice → {audio_summary['voice']}")
 
-        button_disabled = requests_estimate == 0 or not selected_voice
+        button_disabled = requests_estimate == 0 or not selected_voice or not selected_provider
+        instruction_payloads = {
+            "sentence": sentence_styles_map.get(sentence_choice, {}).get("payload") if sentence_choice else None,
+            "word": word_styles_map.get(word_choice, {}).get("payload") if word_choice else None,
+        }
+        instruction_keys = {"sentence": sentence_choice, "word": word_choice}
+
         generate_audio = st.button(
             "🔊 Generate audio",
             type="primary",
@@ -595,10 +769,12 @@ def render_generation_page(
         if generate_audio:
             if button_disabled:
                 st.info("No text to synthesize — enable word or sentence above.")
-            elif not settings.api_key:
-                st.error("OPENAI_API_KEY is required for audio synthesis.")
+            elif provider_type == "openai" and not settings.api_key:
+                st.error("OPENAI_API_KEY is required for OpenAI TTS synthesis.")
+            elif provider_type == "elevenlabs" and not eleven_api_key:
+                st.error("Provide ELEVENLABS_API_KEY (environment, secrets, or field above) for ElevenLabs TTS.")
             else:
-                client = OpenAI(api_key=settings.api_key)
+                openai_client = OpenAI(api_key=settings.api_key) if provider_type == "openai" else None
                 progress_placeholder = st.empty()
                 status_placeholder = st.empty()
                 progress_bar = progress_placeholder.progress(0.0)
@@ -616,24 +792,22 @@ def render_generation_page(
                     )
 
                 try:
-                    instruction_keys = {"sentence": sentence_choice, "word": word_choice}
-                    instruction_texts = {
-                        "sentence": audio_config.instructions.get(sentence_choice, ""),
-                        "word": audio_config.instructions.get(word_choice, ""),
-                    }
                     media_map, summary_obj = ensure_audio_for_cards(
                         state.results,
-                        client=client,
-                        model=audio_config.model,
-                        fallback_model=audio_config.fallback_model,
+                        provider=provider_type,
                         voice=selected_voice,
                         include_word=include_word,
                         include_sentence=include_sentence,
                         cache=audio_cache,
                         progress_cb=_progress,
-                        instructions=instruction_texts,
+                        instruction_payloads=instruction_payloads,
                         instruction_keys=instruction_keys,
                         max_workers=int(state.get("audio_workers", 3)),
+                        openai_client=openai_client,
+                        openai_model=str(provider_data.get("model")) if provider_type == "openai" and provider_data.get("model") else None,
+                        openai_fallback_model=str(provider_data.get("fallback_model")) if provider_type == "openai" and provider_data.get("fallback_model") else None,
+                        eleven_api_key=eleven_api_key if provider_type == "elevenlabs" else None,
+                        eleven_model=str(provider_data.get("model")) if provider_type == "elevenlabs" and provider_data.get("model") else None,
                     )
                     state.audio_media = media_map
                     state.audio_summary = asdict(summary_obj)
@@ -648,11 +822,14 @@ def render_generation_page(
                         success_msg += f" Fallback used: {summary_obj.fallback_switches}×."
                     styles_now = []
                     if summary_obj.sentence_instruction_key:
-                        styles_now.append(f"sentence: {_instruction_label(summary_obj.sentence_instruction_key)}")
+                        styles_now.append(f"sentence: {_style_label(sentence_styles_map, summary_obj.sentence_instruction_key)}")
                     if summary_obj.word_instruction_key:
-                        styles_now.append(f"word: {_instruction_label(summary_obj.word_instruction_key)}")
+                        styles_now.append(f"word: {_style_label(word_styles_map, summary_obj.word_instruction_key)}")
                     if styles_now:
                         success_msg += " | Styles → " + "; ".join(styles_now)
+                    provider_label = _provider_label(summary_obj.provider or provider_type)
+                    if provider_label:
+                        success_msg += f" | Provider → {provider_label}"
                     st.success(success_msg)
                     if summary_obj.errors:
                         err_preview = "; ".join(summary_obj.errors[:3])

@@ -2,7 +2,9 @@
 Configuration for Anki CSV Builder
 """
 
-from typing import List, Dict, Tuple
+import os
+
+from typing import Any, Dict, List, Tuple
 
 # ==========================
 # Models: default list + dynamic loading from API
@@ -180,6 +182,165 @@ AUDIO_SENTENCE_INSTRUCTION_DEFAULT: str = "Dutch_sentence_learning"
 AUDIO_WORD_INSTRUCTION_DEFAULT: str = "Dutch_word_dictionary"
 AUDIO_INCLUDE_WORD_DEFAULT: bool = True
 AUDIO_INCLUDE_SENTENCE_DEFAULT: bool = True
+
+ELEVENLABS_DEFAULT_API_KEY: str = os.environ.get("ELEVENLABS_API_KEY", "")
+
+
+def _style_label_from_key(key: str) -> str:
+    if key.startswith("Dutch_sentence_"):
+        suffix = key.split("Dutch_sentence_", 1)[1].replace("_", " ")
+        return f"Sentence · {suffix.capitalize()}"
+    if key.startswith("Dutch_word_"):
+        suffix = key.split("Dutch_word_", 1)[1].replace("_", " ")
+        return f"Word · {suffix.capitalize()}"
+    if key.startswith("Eleven_sentence_"):
+        suffix = key.split("Eleven_sentence_", 1)[1].replace("_", " ")
+        return f"Sentence · {suffix.capitalize()}"
+    if key.startswith("Eleven_word_"):
+        suffix = key.split("Eleven_word_", 1)[1].replace("_", " ")
+        return f"Word · {suffix.capitalize()}"
+    return key
+
+
+AUDIO_ELEVEN_VOICES: List[Dict[str, str]] = [
+    {"id": "21m00Tcm4TlvDq8ikWAM", "label": "Rachel — balanced NL"},
+    {"id": "AZnzlk1XvdvUeBnXmlld", "label": "Domi — calm feminine"},
+    {"id": "ErXwobaYiN019PkySvjV", "label": "Antoni — clear masculine"},
+    {"id": "EXAVITQu4vr4xnSDxMaL", "label": "Bella — bright feminine"},
+]
+
+AUDIO_ELEVEN_STYLES: Dict[str, Dict[str, Any]] = {
+    "sentence": {
+        "Eleven_sentence_tutor": {
+            "label": _style_label_from_key("Eleven_sentence_tutor"),
+            "description": "Neutral Dutch tutor voice. Calm delivery, clear articulation (style 0.35).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.55,
+                    "similarity_boost": 0.85,
+                    "style": 0.35,
+                    "use_speaker_boost": True,
+                },
+                "spoken_language": "nl",
+            },
+        },
+        "Eleven_sentence_radio": {
+            "label": _style_label_from_key("Eleven_sentence_radio"),
+            "description": "Lively radio-style narration with more energy (style 0.6).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.6,
+                    "similarity_boost": 0.8,
+                    "style": 0.6,
+                    "use_speaker_boost": True,
+                },
+                "spoken_language": "nl",
+            },
+        },
+        "Eleven_sentence_story": {
+            "label": _style_label_from_key("Eleven_sentence_story"),
+            "description": "Narrative storytelling tone with gentle emphasis (style 0.45).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                    "style": 0.45,
+                    "use_speaker_boost": False,
+                },
+                "spoken_language": "nl",
+            },
+        },
+    },
+    "word": {
+        "Eleven_word_dictionary": {
+            "label": _style_label_from_key("Eleven_word_dictionary"),
+            "description": "Dictionary-style single word: clean and precise (style 0.15).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.6,
+                    "similarity_boost": 0.9,
+                    "style": 0.15,
+                    "use_speaker_boost": False,
+                },
+                "spoken_language": "nl",
+            },
+        },
+        "Eleven_word_learning": {
+            "label": _style_label_from_key("Eleven_word_learning"),
+            "description": "Language-learning focus: slightly slower, very clear (style 0.25).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.65,
+                    "similarity_boost": 0.88,
+                    "style": 0.25,
+                    "use_speaker_boost": False,
+                },
+                "spoken_language": "nl",
+            },
+        },
+        "Eleven_word_dynamic": {
+            "label": _style_label_from_key("Eleven_word_dynamic"),
+            "description": "Dynamic pronunciation with slight emphasis (style 0.45).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.82,
+                    "style": 0.45,
+                    "use_speaker_boost": True,
+                },
+                "spoken_language": "nl",
+            },
+        },
+    },
+}
+
+
+def _build_instruction_styles(prefix: str) -> Dict[str, Dict[str, Any]]:
+    result: Dict[str, Dict[str, Any]] = {}
+    for key, text in AUDIO_TTS_INSTRUCTIONS.items():
+        if not key.startswith(prefix):
+            continue
+        result[key] = {
+            "label": _style_label_from_key(key),
+            "description": text,
+            "payload": {"instructions": text},
+        }
+    return result
+
+
+AUDIO_PROVIDER_DEFAULT: str = "openai"
+AUDIO_TTS_PROVIDERS: Dict[str, Dict[str, Any]] = {
+    "openai": {
+        "label": "OpenAI",
+        "type": "openai",
+        "model": AUDIO_TTS_MODEL,
+        "fallback_model": AUDIO_TTS_FALLBACK,
+        "voices": AUDIO_VOICES,
+        "voice_default": AUDIO_VOICES[0]["id"] if AUDIO_VOICES else "",
+        "include_word_default": AUDIO_INCLUDE_WORD_DEFAULT,
+        "include_sentence_default": AUDIO_INCLUDE_SENTENCE_DEFAULT,
+        "sentence_styles": _build_instruction_styles("Dutch_sentence_"),
+        "word_styles": _build_instruction_styles("Dutch_word_"),
+        "sentence_default": AUDIO_SENTENCE_INSTRUCTION_DEFAULT,
+        "word_default": AUDIO_WORD_INSTRUCTION_DEFAULT,
+    },
+    "elevenlabs": {
+        "label": "ElevenLabs",
+        "type": "elevenlabs",
+        "model": "eleven_multilingual_v2",
+        "fallback_model": None,
+        "voices": AUDIO_ELEVEN_VOICES,
+        "voice_default": AUDIO_ELEVEN_VOICES[0]["id"] if AUDIO_ELEVEN_VOICES else "",
+        "include_word_default": True,
+        "include_sentence_default": True,
+        "sentence_styles": AUDIO_ELEVEN_STYLES["sentence"],
+        "word_styles": AUDIO_ELEVEN_STYLES["word"],
+        "sentence_default": "Eleven_sentence_tutor",
+        "word_default": "Eleven_word_dictionary",
+        "dynamic_voices": True,
+        "voice_language_codes": ["nl"],
+    },
+}
 
 # ==========================
 # CSV headers

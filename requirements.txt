@@ -4,6 +4,7 @@ pandas
 openai>=1.99.0
 genanki
 wordfreq
+requests>=2.31.0
 
 # Встроенные модули Python (не требуют установки):
 # - re (регулярные выражения)

@@ -17,13 +17,6 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from config.settings import (  # noqa: E402
-    AUDIO_INCLUDE_SENTENCE_DEFAULT as CFG_AUDIO_INCLUDE_SENTENCE_DEFAULT,
-    AUDIO_INCLUDE_WORD_DEFAULT as CFG_AUDIO_INCLUDE_WORD_DEFAULT,
-    AUDIO_SENTENCE_INSTRUCTION_DEFAULT as CFG_SENTENCE_INSTR_DEFAULT,
-    AUDIO_TTS_FALLBACK as CFG_AUDIO_TTS_FALLBACK,
-    AUDIO_TTS_INSTRUCTIONS as CFG_AUDIO_TTS_INSTRUCTIONS,
-    AUDIO_TTS_MODEL as CFG_AUDIO_TTS_MODEL,
-    AUDIO_VOICES as CFG_AUDIO_VOICES,
     CSV_DELIMITER as CFG_CSV_DELIM,
     CSV_LINETERMINATOR as CFG_CSV_EOL,
     DEFAULT_MODELS as CFG_DEFAULT_MODELS,
@@ -39,7 +32,6 @@ from config.settings import (  # noqa: E402
     ANKI_MODEL_ID as CFG_ANKI_MODEL_ID,
     ANKI_MODEL_NAME as CFG_ANKI_MODEL_NAME,
     API_REQUEST_DELAY as CFG_API_DELAY,
-    AUDIO_WORD_INSTRUCTION_DEFAULT as CFG_WORD_INSTR_DEFAULT,
     BACK_HTML_TEMPLATE as CFG_BACK_HTML_TEMPLATE,
     CSS_STYLING as CFG_CSS_STYLING,
     DEMO_WORDS as CFG_DEMO_WORDS,
@@ -51,6 +43,9 @@ from config.settings import (  # noqa: E402
 )
 from config.settings import SIGNALWORDS_B1 as CFG_SIGNALWORDS_B1  # noqa: E402
 from config.settings import SIGNALWORDS_B2_PLUS as CFG_SIGNALWORDS_B2_PLUS  # noqa: E402
+from config.settings import AUDIO_PROVIDER_DEFAULT as CFG_AUDIO_PROVIDER_DEFAULT  # noqa: E402
+from config.settings import AUDIO_TTS_PROVIDERS as CFG_AUDIO_TTS_PROVIDERS  # noqa: E402
+from config.settings import ELEVENLABS_DEFAULT_API_KEY as CFG_ELEVENLABS_KEY  # noqa: E402
 from config.signalword_groups import SIGNALWORD_GROUPS as CFG_SIGNALWORD_GROUPS  # noqa: E402
 
 from . import ui_helpers  # noqa: E402
@@ -61,13 +56,10 @@ from .sidebar import render_sidebar  # noqa: E402
 
 st.set_page_config(page_title=CFG_PAGE_TITLE, layout=CFG_PAGE_LAYOUT)
 
-default_voice = CFG_AUDIO_VOICES[0]["id"] if CFG_AUDIO_VOICES else ""
 ui_helpers.ensure_session_defaults(
-    default_voice=default_voice,
-    include_word_default=CFG_AUDIO_INCLUDE_WORD_DEFAULT,
-    include_sentence_default=CFG_AUDIO_INCLUDE_SENTENCE_DEFAULT,
-    sentence_instruction_default=CFG_SENTENCE_INSTR_DEFAULT,
-    word_instruction_default=CFG_WORD_INSTR_DEFAULT,
+    providers=CFG_AUDIO_TTS_PROVIDERS,
+    default_provider=CFG_AUDIO_PROVIDER_DEFAULT,
+    elevenlabs_default_key=CFG_ELEVENLABS_KEY,
 )
 
 # Apply deferred batch parameters (set before widget creation)
@@ -117,10 +109,8 @@ render_generation_page(
     signalwords_b2_plus=CFG_SIGNALWORDS_B2_PLUS,
     api_delay=CFG_API_DELAY,
     audio_config=AudioConfig(
-        voices=CFG_AUDIO_VOICES,
-        model=CFG_AUDIO_TTS_MODEL,
-        fallback_model=CFG_AUDIO_TTS_FALLBACK,
-        instructions=CFG_AUDIO_TTS_INSTRUCTIONS,
+        providers=CFG_AUDIO_TTS_PROVIDERS,
+        default_provider=CFG_AUDIO_PROVIDER_DEFAULT,
     ),
     export_config=ExportConfig(
         csv_delimiter=CFG_CSV_DELIM,

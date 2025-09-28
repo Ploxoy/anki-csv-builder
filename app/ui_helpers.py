@@ -45,11 +45,9 @@ def toast(message: str, *, icon: Optional[str] = None, variant: str = "info") ->
 
 def ensure_session_defaults(
     *,
-    default_voice: str,
-    include_word_default: bool,
-    include_sentence_default: bool,
-    sentence_instruction_default: str,
-    word_instruction_default: str,
+    providers: Dict[str, Dict[str, object]],
+    default_provider: str,
+    elevenlabs_default_key: str = "",
 ) -> None:
     """Populate session_state with defaults expected by the UI."""
 
@@ -60,12 +58,36 @@ def ensure_session_defaults(
     state.setdefault("audio_cache", {})
     state.setdefault("audio_media", {})
     state.setdefault("audio_summary", None)
-    state.setdefault("audio_voice", default_voice)
-    state.setdefault("audio_include_word", include_word_default)
-    state.setdefault("audio_include_sentence", include_sentence_default)
-    state.setdefault("audio_sentence_instruction", sentence_instruction_default)
-    state.setdefault("audio_word_instruction", word_instruction_default)
+    state.setdefault("audio_voice_map", {})
+
+    provider_keys = list(providers.keys())
+    provider_key = default_provider if default_provider in providers else (provider_keys[0] if provider_keys else "")
+    state.setdefault("audio_provider", provider_key)
+
+    current = providers.get(state.get("audio_provider", provider_key), {})
+
+    voices = current.get("voices") if isinstance(current, dict) else None
+    default_voice = current.get("voice_default") if isinstance(current, dict) else None
+    if not default_voice and isinstance(voices, list) and voices:
+        voice_entry = voices[0]
+        if isinstance(voice_entry, dict):
+            default_voice = voice_entry.get("id", "")
+
+    state.setdefault("audio_voice", default_voice or "")
+    state.setdefault("audio_include_word", bool(current.get("include_word_default", True)))
+    state.setdefault("audio_include_sentence", bool(current.get("include_sentence_default", True)))
+    sentence_default = str(current.get("sentence_default", "")) if isinstance(current, dict) else ""
+    word_default = str(current.get("word_default", "")) if isinstance(current, dict) else ""
+    state.setdefault("audio_sentence_instruction", sentence_default)
+    state.setdefault("audio_word_instruction", word_default)
     state.setdefault("audio_panel_expanded", bool(state.get("results")))
+
+    if "elevenlabs_api_key" not in state or not state.get("elevenlabs_api_key"):
+        secret = get_secret("ELEVENLABS_API_KEY")
+        if secret:
+            state.elevenlabs_api_key = secret
+        elif elevenlabs_default_key:
+            state.elevenlabs_api_key = elevenlabs_default_key
 
 
 def init_signalword_state() -> None:
