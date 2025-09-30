@@ -69,6 +69,8 @@ def render_audio_panel(
     provider_keys = list(providers.keys())
     default_provider = audio_config.default_provider
 
+    secret_elevenlabs = ui_helpers.get_secret("ELEVENLABS_API_KEY")
+
     with st.expander("🔊 Audio (optional)", expanded=state.get("audio_panel_expanded", False)):
         state.audio_panel_expanded = True
         audio_summary = state.get("audio_summary")
@@ -106,52 +108,67 @@ def render_audio_panel(
             st.session_state.pop(f"audio_voice__{selected_provider}", None)
 
         if provider_type == "elevenlabs":
-            if "elevenlabs_api_key" not in state or not state.get("elevenlabs_api_key"):
-                secret = ui_helpers.get_secret("ELEVENLABS_API_KEY")
-                if secret:
-                    state.elevenlabs_api_key = secret
-            eleven_api_key = st.text_input(
-                "ElevenLabs API Key",
-                type="password",
-                value=state.get("elevenlabs_api_key", ""),
-                key="elevenlabs_api_key",
-                help="Stored in ELEVENLABS_API_KEY env variable or Streamlit secrets.",
-            )
+            eleven_api_key = state.get("elevenlabs_api_key", "")
+            if not eleven_api_key:
+                if secret_elevenlabs:
+                    state.elevenlabs_api_key = secret_elevenlabs
+                    eleven_api_key = secret_elevenlabs
+                    st.caption("Using ELEVENLABS_API_KEY from secrets.")
+                else:
+                    st.text_input(
+                        "ElevenLabs API Key",
+                        type="password",
+                        key="elevenlabs_api_key",
+                        help="Stored in ELEVENLABS_API_KEY env variable or enter manually for this session.",
+                    )
+                    eleven_api_key = state.get("elevenlabs_api_key", "")
+                    if eleven_api_key:
+                        state.elevenlabs_catalog_loaded = False
+            else:
+                st.caption("ElevenLabs key stored for this session.")
         else:
             eleven_api_key = state.get("elevenlabs_api_key")
 
-        dynamic_voice_list: List[Dict[str, str]] = []
+        dynamic_voice_list: List[Dict[str, Any]] = []
         dynamic_voice_error: Optional[str] = None
-        fetched_this_run = False
-        if provider_type == "elevenlabs" and eleven_api_key:
-            api_key_hash = hashlib.sha1(eleven_api_key.encode("utf-8")).hexdigest()
-            cached_hash = state.get("elevenlabs_voice_catalog_key")
-            cached_catalog = state.get("elevenlabs_voice_catalog")
-            if not isinstance(cached_catalog, list) or cached_hash != api_key_hash:
+        if provider_type == "elevenlabs":
+            key_hash = hashlib.sha1((eleven_api_key or "").encode("utf-8")).hexdigest() if eleven_api_key else ""
+            if key_hash != state.get("elevenlabs_voice_catalog_key"):
+                state.elevenlabs_voice_catalog_key = key_hash
+                state.elevenlabs_catalog_loaded = False
+                state.elevenlabs_voice_catalog = None
+                state.elevenlabs_voice_catalog_error = None
+
+            if eleven_api_key and not state.get("elevenlabs_catalog_loaded"):
+                st.caption("Loading ElevenLabs voices…")
                 try:
                     dynamic_voice_list = fetch_elevenlabs_voices(
                         eleven_api_key,
                         language_codes=provider_data.get("voice_language_codes"),
                     )
                     state.elevenlabs_voice_catalog = dynamic_voice_list
-                    state.elevenlabs_voice_catalog_key = api_key_hash
+                    state.elevenlabs_catalog_loaded = True
                     state.elevenlabs_voice_catalog_error = None
-                    fetched_this_run = True
                 except Exception as exc:  # pragma: no cover - network dependent
                     dynamic_voice_error = str(exc)
                     state.elevenlabs_voice_catalog = None
+                    state.elevenlabs_catalog_loaded = False
                     state.elevenlabs_voice_catalog_error = dynamic_voice_error
+
+            if state.get("elevenlabs_catalog_loaded"):
+                dynamic_voice_list = state.get("elevenlabs_voice_catalog") or []
             else:
-                dynamic_voice_list = cached_catalog
+                st.caption("Using fallback ElevenLabs voices until the catalogue loads.")
             if dynamic_voice_error is None:
-                cached_error = state.get("elevenlabs_voice_catalog_error")
-                if isinstance(cached_error, str) and cached_error:
-                    dynamic_voice_error = cached_error
+                dynamic_voice_error = state.get("elevenlabs_voice_catalog_error")
+            voices_list = dynamic_voice_list if dynamic_voice_list else []
         else:
             state.elevenlabs_voice_catalog_error = None
+            voices_list = []
 
         static_voices = provider_data.get("voices") if isinstance(provider_data, dict) else []
-        voices_list = dynamic_voice_list if dynamic_voice_list else static_voices
+        if not voices_list and static_voices:
+            voices_list = static_voices
 
         default_voice = str(provider_data.get("voice_default", "")) if isinstance(provider_data, dict) else ""
         if provider_type == "elevenlabs" and voices_list:
@@ -183,11 +200,6 @@ def render_audio_panel(
             if isinstance(word_default, str) and word_default:
                 state.audio_word_instruction = word_default
             state._audio_provider_last = selected_provider
-
-        if fetched_this_run and provider_type == "elevenlabs" and voice_ids:
-            current_voice = state.get("audio_voice")
-            if current_voice not in voice_ids:
-                state.audio_voice = voice_ids[0]
 
         if voice_ids:
             current_voice = state.get("audio_voice") or voice_ids[0]

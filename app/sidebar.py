@@ -106,6 +106,8 @@ def render_sidebar(
         "OpenAI API Key",
         type="password",
     )
+    if not api_key:
+        st.sidebar.caption("Tip: store the key via `.streamlit/secrets.toml` or environment variables so it autofills here.")
 
     try:
         import openai as _openai  # type: ignore
@@ -173,7 +175,12 @@ def render_sidebar(
         profile_default = profile_keys[0]
         state.sidebar_profile_current = profile_default
     profile_index = profile_keys.index(profile_default) if profile_default in profile_keys else 0
-    profile = st.sidebar.selectbox("Prompt profile", profile_keys, index=profile_index)
+    profile = st.sidebar.selectbox(
+        "Prompt profile",
+        profile_keys,
+        index=profile_index,
+        help="`strict` keeps sentences literal; `balanced` allows friendlier tone; pick others for specific styles.",
+    )
     state.sidebar_profile_current = profile
 
     levels = ["A1", "A2", "B1", "B2", "C1", "C2"]
@@ -182,7 +189,12 @@ def render_sidebar(
         level_default = "B1"
         state.sidebar_level_current = level_default
     level_index = levels.index(level_default)
-    level = st.sidebar.selectbox("CEFR", levels, index=level_index)
+    level = st.sidebar.selectbox(
+        "CEFR",
+        levels,
+        index=level_index,
+        help="Choose the difficulty: A-level = beginner, B-level = intermediate, C-level = advanced Dutch.",
+    )
     state.sidebar_level_current = level
 
     L1_keys = list(l1_langs.keys())
@@ -207,7 +219,7 @@ def render_sidebar(
     limit_tokens = st.sidebar.checkbox(
         "Limit output tokens",
         value=limit_tokens_default,
-        help="Check to limit the number of output tokens. Uncheck to allow unlimited tokens.",
+        help="Leave on to keep responses concise; disable only if you need very long answers (higher cost).",
     )
     state.sidebar_limit_tokens_current = limit_tokens
 
@@ -231,7 +243,7 @@ def render_sidebar(
     force_flagged = st.sidebar.checkbox(
         "Force generate for flagged entries",
         value=state.get("force_flagged", False),
-        help="If off, rows flagged as suspicious by a quick heuristic will be skipped from generation.",
+        help="If off, rows flagged as suspicious by a heuristic (digits, ALL CAPS, likely English) will be skipped.",
     )
 
     st.session_state["csv_with_header"] = csv_with_header
@@ -276,6 +288,14 @@ def render_sidebar(
         help="Parallel requests inside a batch. Keep modest (3–4) to avoid rate limits.",
         key="max_workers",
     )
+
+    with st.sidebar.expander("Why entries get flagged?"):
+        st.markdown(
+            "* `contains digit` — numbers suggest the token is not a Dutch lemma.\n"
+            "* `all-caps token` — ALL CAPS words are marked as potential abbreviations.\n"
+            "* `token 'xxx' suspicious` — heuristic thinks the word might be English/foreign.\n"
+            "Enable **Force generate for flagged entries** if you intentionally want to keep them."
+        )
 
     with st.sidebar.expander("Advanced (Responses schema)"):
         st.checkbox(

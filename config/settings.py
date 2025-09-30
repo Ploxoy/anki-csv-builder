@@ -109,9 +109,9 @@ DEMO_WORDS: List[Dict[str, str]] = [
     {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
     {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
     {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
-    {"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
-    {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
-    {"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
+    #{"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
+    #{"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
+    #{"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
 ]
 
 # ==========================

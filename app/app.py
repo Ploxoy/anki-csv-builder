@@ -101,6 +101,16 @@ with st.expander("ℹ️ Quick help", expanded=False):
         """
     )
 
+if not sidebar_config.api_key or not st.session_state.get("input_data"):
+    steps = [
+        "Add your OpenAI API key in the sidebar (or load it from secrets).",
+        "Pick a preset (Starter/Fast/Quality) or adjust model & CEFR manually.",
+        "Upload a word list or use the demo/manual editor to populate input.",
+        "Hit **Generate → Preview → Export** to run the quick flow.",
+        "Review flagged rows in the preview — hover tooltips explain why they were flagged.",
+    ]
+    st.info("**Getting started**\n- " + "\n- ".join(steps))
+
 render_input_section(CFG_DEMO_WORDS)
 
 render_generation_page(

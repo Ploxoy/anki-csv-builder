@@ -135,9 +135,9 @@ def render_input_section(demo_words: List[dict]) -> None:
             width="stretch",
             hide_index=True,
             column_config={
-                "woord": st.column_config.TextColumn("woord", help="Целевое нидерландское слово"),
-                "def_nl": st.column_config.TextColumn("def_nl", help="Опционально: определение или контекст"),
-                "translation": st.column_config.TextColumn("translation", help="Опционально: перевод на L1"),
+                "woord": st.column_config.TextColumn("woord", help="Target Dutch lemma (required)"),
+                "def_nl": st.column_config.TextColumn("def_nl", help="Optional: Dutch definition or context"),
+                "translation": st.column_config.TextColumn("translation", help="Optional: translation in your L1"),
             },
         )
 
@@ -161,9 +161,9 @@ def render_input_section(demo_words: List[dict]) -> None:
                         variant="success",
                     )
                 else:
-                    st.warning("Нужно заполнить хотя бы одну строку с полем 'woord'.")
+                    st.warning("Please fill at least one row with the `woord` column.")
         with info_col:
-            st.caption(f"Активные строки: {len(manual_clean)}")
+            st.caption(f"Active rows: {len(manual_clean)}")
 
     if st.session_state.input_data:
         for row in st.session_state.input_data:
@@ -174,13 +174,28 @@ def render_input_section(demo_words: List[dict]) -> None:
         flagged = [r for r in st.session_state.input_data if not r.get("_flag_ok", True)]
         if flagged:
             st.warning(
-                f"{len(flagged)} rows flagged as suspicious by a quick heuristic. "
-                "Use 'Force generate for flagged entries' in the sidebar to ignore flags."
+                f"{len(flagged)} rows flagged as suspicious. Check reasons in the preview table and sidebar tips."
             )
 
         st.subheader("🔍 Parsed rows")
         preview_in = pd.DataFrame(st.session_state.input_data)
-        cols = [c for c in ["woord", "def_nl", "ru_short", "_flag_ok", "_flag_reason"] if c in preview_in.columns]
-        st.dataframe(preview_in[cols], width="stretch")
+        cols = [c for c in ["woord", "def_nl", "translation", "_flag_ok", "_flag_reason"] if c in preview_in.columns]
+
+        def _reason_hint(reason: str) -> str:
+            if not reason:
+                return ""
+            if reason == "contains digit":
+                return "Example: 12345"
+            if reason == "all-caps token":
+                return "Example: HELLO"
+            if reason.startswith("token '") and reason.endswith(" suspicious"):
+                return "Example: hello (looks English)"
+            return ""
+
+        styled_df = preview_in[cols].style.format({
+            "_flag_ok": lambda v: "✅" if v else "⚠️",
+            "_flag_reason": lambda v: f"{v} ({_reason_hint(v)})" if v else "",
+        })
+        st.dataframe(styled_df, width="stretch")
     else:
         st.info("Upload a file or click **Try demo**")
