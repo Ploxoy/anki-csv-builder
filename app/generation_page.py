@@ -4,7 +4,7 @@ from __future__ import annotations
 import random
 import time
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
@@ -96,11 +96,7 @@ def render_generation_page(
     overall.progress(min(1.0, processed / max(total, 1)))
     overall_caption.caption(f"Overall: {processed}/{total} processed")
 
-    col_start, col_next, col_stop, col_rerun = st.columns([1, 1, 1, 1])
-    start_run = col_start.button("Start run", type="primary")
-    next_batch = col_next.button("Next batch")
-    stop_run = col_stop.button("Stop run")
-    rerun_errored = col_rerun.button("Re‑run errored only")
+    run_controls = _render_run_controls()
 
     def _process_batch() -> None:
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -319,72 +315,176 @@ def render_generation_page(
         state.sig_last = last
         st.success("Errored items re-run completed.")
 
-    if start_run:
-        if not settings.api_key:
-            st.error("Provide OPENAI_API_KEY via Secrets, environment variable, or the input field.")
-        else:
-            state.results = []
-            state.audio_media = {}
-            state.audio_summary = None
-            state.current_index = 0
-            state.run_stats = {"batches": 0, "items": 0, "elapsed": 0.0, "errors": 0, "transient": 0, "start_ts": None}
-            state.run_active = True
-            client = create_client(settings.api_key)
-            if client is not None:
-                ui_helpers.probe_response_format_support(client, settings.model)
-            _process_batch()
-            if state.get("auto_advance") and state.current_index < total:
-                state.auto_continue = True
-                try:
-                    st.rerun()
-                except Exception:
-                    st.experimental_rerun()
-    elif next_batch:
-        if not state.get("run_active"):
-            state.run_active = True
-        if not settings.api_key:
-            st.error("Provide OPENAI_API_KEY before running batches.")
-        else:
-            _process_batch()
-            if state.get("auto_advance") and state.current_index < total:
-                state.auto_continue = True
-                try:
-                    st.rerun()
-                except Exception:
-                    st.experimental_rerun()
-    elif stop_run:
-        state.run_active = False
-        state.auto_continue = False
-        st.info("Run paused. Use Next batch or Start run to continue.")
-    elif rerun_errored:
-        if not settings.api_key:
-            st.error("Provide OPENAI_API_KEY before retrying errors.")
-        else:
-            _rerun_errored_only()
+    RunController(
+        settings=settings,
+        state=state,
+        total=total,
+        process_batch=_process_batch,
+        rerun_errored=_rerun_errored_only,
+    ).handle(run_controls)
 
-    if state.get("auto_continue") and state.get("run_active") and state.current_index < total:
-        if not state.get("auto_advance"):
-            state.auto_continue = False
-        elif not settings.api_key:
-            state.auto_continue = False
-            state.run_active = False
-            st.error("Provide OPENAI_API_KEY before running batches.")
-        else:
-            state.auto_continue = False
-            _process_batch()
-            if state.get("auto_advance") and state.current_index < total:
-                state.auto_continue = True
-                try:
-                    st.rerun()
-                except Exception:
-                    st.experimental_rerun()
-
-    preview_container = st.container()
     st.divider()
 
     render_audio_panel(audio_config=audio_config, settings=settings)
+    _render_preview_section(state)
 
-    with preview_container:
+    st.divider()
+
+    _render_export_section(state, settings, export_config)
+
+    last_meta = (state.results or [{}])[-1].get("meta", {}) if state.results else {}
+    req_dbg = last_meta.get("request") if isinstance(last_meta, dict) else None
+    with st.expander("🐞 Debug: last model request", expanded=False):
+        if req_dbg:
+            st.json(req_dbg)
+            st.caption(
+                f"response_format_removed={last_meta.get('response_format_removed')} | "
+                f"temperature_removed={last_meta.get('temperature_removed')}"
+            )
+            try:
+                import openai as _openai  # type: ignore
+
+                st.caption(f"openai SDK version: {_openai.__version__}")
+            except Exception:
+                pass
+        else:
+            st.caption("No recent request captured yet.")
+
+
+def _render_run_controls() -> Dict[str, bool]:
+    """Render run control buttons and return their click states."""
+
+    col_start, col_next, col_stop, col_rerun = st.columns([1, 1, 1, 1])
+    return {
+        "start": col_start.button("Start run", type="primary"),
+        "next": col_next.button("Next batch"),
+        "stop": col_stop.button("Stop run"),
+        "rerun": col_rerun.button("Re-run errored only"),
+    }
+
+
+@dataclass
+class RunController:
+    settings: SidebarConfig
+    state: Any
+    total: int
+    process_batch: Callable[[], None]
+    rerun_errored: Callable[[], None]
+
+    def handle(self, actions: Dict[str, bool]) -> None:
+        """Apply run control state transitions and batch handling."""
+
+        if actions.get("start"):
+            self._start_run()
+        elif actions.get("next"):
+            self._next_batch()
+        elif actions.get("stop"):
+            self.state.run_active = False
+            self.state.auto_continue = False
+            st.info("Run paused. Use Next batch or Start run to continue.")
+        elif actions.get("rerun"):
+            if not self.settings.api_key:
+                st.error("Provide OPENAI_API_KEY before retrying errors.")
+            else:
+                self.rerun_errored()
+
+        self._auto_advance_if_needed()
+
+    def _start_run(self) -> None:
+        if not self.settings.api_key:
+            st.error("Provide OPENAI_API_KEY via Secrets, environment variable, or the input field.")
+            return
+
+        self.state.results = []
+        self.state.audio_media = {}
+        self.state.audio_summary = None
+        self.state.current_index = 0
+        self.state.run_stats = {
+            "batches": 0,
+            "items": 0,
+            "elapsed": 0.0,
+            "errors": 0,
+            "transient": 0,
+            "start_ts": None,
+        }
+        self.state.run_active = True
+        client = create_client(self.settings.api_key)
+        if client is not None:
+            ui_helpers.probe_response_format_support(client, self.settings.model)
+        self.process_batch()
+        self._schedule_auto_continue()
+
+    def _next_batch(self) -> None:
+        if not self.state.get("run_active"):
+            self.state.run_active = True
+        if not self.settings.api_key:
+            st.error("Provide OPENAI_API_KEY before running batches.")
+            return
+
+        self.process_batch()
+        self._schedule_auto_continue()
+
+    def _auto_advance_if_needed(self) -> None:
+        if not (
+            self.state.get("auto_continue")
+            and self.state.get("run_active")
+            and self.state.current_index < self.total
+        ):
+            return
+
+        if not self.state.get("auto_advance"):
+            self.state.auto_continue = False
+            return
+
+        if not self.settings.api_key:
+            self.state.auto_continue = False
+            self.state.run_active = False
+            st.error("Provide OPENAI_API_KEY before running batches.")
+            return
+
+        self.state.auto_continue = False
+        self.process_batch()
+        self._schedule_auto_continue()
+
+    def _schedule_auto_continue(self) -> None:
+        if not (self.state.get("auto_advance") and self.state.current_index < self.total):
+            return
+
+        self.state.auto_continue = True
+        try:
+            st.rerun()
+        except Exception:
+            st.experimental_rerun()
+
+
+def _prepare_generation_run(state: Any, settings: SidebarConfig) -> Optional[GenerationRunContext]:
+    """Create a reusable generation context or report a missing SDK."""
+
+    client = create_client(settings.api_key)
+    if client is None:
+        st.error("OpenAI SDK not available; install the openai package to continue.")
+        return None
+
+    max_tokens = 3000 if settings.limit_tokens else None
+    temperature = settings.temperature if ui_helpers.should_pass_temperature(settings.model) else None
+    no_rf_models = set(state.get("no_response_format_models", set()))
+    force_schema = state.get("force_schema_checkbox", False)
+    allow_response_format = settings.model not in no_rf_models or force_schema
+    force_flagged = state.get("force_flagged", False)
+
+    return GenerationRunContext(
+        client=client,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        allow_response_format=allow_response_format,
+        force_flagged=force_flagged,
+    )
+
+
+def _render_preview_section(state: Any) -> None:
+    """Render the results preview table with filters and navigation."""
+
+    with st.container():
         st.subheader("📋 Preview (all)")
         total_rows = len(state.results)
         total_errors = sum(1 for card in state.results if card.get("error"))
@@ -421,7 +521,11 @@ def render_generation_page(
         else:
             st.info("No results yet — run a batch to populate preview.")
 
-    st.divider()
+
+def _render_export_section(
+    state: Any, settings: SidebarConfig, export_config: ExportConfig
+) -> None:
+    """Render CSV and APKG export controls."""
 
     csv_extras = {
         "level": state.get("level", settings.level),
@@ -493,48 +597,6 @@ def render_generation_page(
             st.error(f"Failed to build .apkg: {exc}")
     else:
         st.info("To enable .apkg export, add 'genanki' to requirements.txt and restart the app.")
-
-    last_meta = (state.results or [{}])[-1].get("meta", {}) if state.results else {}
-    req_dbg = last_meta.get("request") if isinstance(last_meta, dict) else None
-    with st.expander("🐞 Debug: last model request", expanded=False):
-        if req_dbg:
-            st.json(req_dbg)
-            st.caption(
-                f"response_format_removed={last_meta.get('response_format_removed')} | "
-                f"temperature_removed={last_meta.get('temperature_removed')}"
-            )
-            try:
-                import openai as _openai  # type: ignore
-
-                st.caption(f"openai SDK version: {_openai.__version__}")
-            except Exception:
-                pass
-        else:
-            st.caption("No recent request captured yet.")
-
-
-def _prepare_generation_run(state: Any, settings: SidebarConfig) -> Optional[GenerationRunContext]:
-    """Create a reusable generation context or report a missing SDK."""
-
-    client = create_client(settings.api_key)
-    if client is None:
-        st.error("OpenAI SDK not available; install the openai package to continue.")
-        return None
-
-    max_tokens = 3000 if settings.limit_tokens else None
-    temperature = settings.temperature if ui_helpers.should_pass_temperature(settings.model) else None
-    no_rf_models = set(state.get("no_response_format_models", set()))
-    force_schema = state.get("force_schema_checkbox", False)
-    allow_response_format = settings.model not in no_rf_models or force_schema
-    force_flagged = state.get("force_flagged", False)
-
-    return GenerationRunContext(
-        client=client,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        allow_response_format=allow_response_format,
-        force_flagged=force_flagged,
-    )
 
 
 def _build_generation_settings(
