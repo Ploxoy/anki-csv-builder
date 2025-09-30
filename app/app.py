@@ -49,9 +49,10 @@ from config.settings import ELEVENLABS_DEFAULT_API_KEY as CFG_ELEVENLABS_KEY  # 
 from config.signalword_groups import SIGNALWORD_GROUPS as CFG_SIGNALWORD_GROUPS  # noqa: E402
 
 from . import ui_helpers  # noqa: E402
-from .generation_page import AudioConfig, ExportConfig, render_generation_page  # noqa: E402
+from .generation_page import render_generation_page  # noqa: E402
 from .input_ui import render_input_section  # noqa: E402
 from .sidebar import render_sidebar  # noqa: E402
+from .ui_models import AudioConfig, ExportConfig  # noqa: E402
 
 
 st.set_page_config(page_title=CFG_PAGE_TITLE, layout=CFG_PAGE_LAYOUT)

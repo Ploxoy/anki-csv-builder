@@ -18,8 +18,8 @@ except ImportError:  # pragma: no cover - Python <3.11 fallback
     TYPE_CHECKING = False  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - to avoid circular import at runtime
-    from .generation_page import AudioConfig
     from .sidebar import SidebarConfig
+    from .ui_models import AudioConfig
 
 
 def _provider_label(providers: Dict[str, Dict[str, Any]], key: str) -> str:
