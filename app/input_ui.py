@@ -15,6 +15,24 @@ from . import ui_helpers
 def render_input_section(demo_words: List[dict]) -> None:
     """Render upload/manual tabs and populate session input data."""
 
+    quick_cols = st.columns([2, 1])
+    with quick_cols[0]:
+        st.markdown("### 🚀 Quick flow: Generate → Preview → Export")
+        st.caption(
+            "1. Load or enter words • 2. Press the button below • 3. Review the preview and download exports."
+        )
+    with quick_cols[1]:
+        st.caption("Tip: the button enables auto-advance for all batches.")
+
+    quick_start = st.button("Generate → Preview → Export", type="primary", key="quick_pipeline_start")
+    if quick_start:
+        if st.session_state.get("input_data"):
+            st.session_state.simple_start_requested = True
+            st.session_state.auto_advance_pending = True
+            st.session_state.simple_flow_message = "Starting generation…"
+        else:
+            st.warning("Load input via Upload or Manual editor first, then run the quick flow again.")
+
     col_demo, col_clear = st.columns([1, 1])
     with col_demo:
         if st.button("Try demo", type="secondary"):

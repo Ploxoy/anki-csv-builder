@@ -36,6 +36,9 @@ def render_generation_page(
     state.setdefault("run_active", False)
     state.setdefault("auto_continue", False)
 
+    simple_trigger = bool(state.pop("simple_start_requested", False))
+    simple_msg = state.pop("simple_flow_message", None)
+
     total = len(state.input_data)
     processed = len(state.get("results", []))
     run_stats = state.get("run_stats") or {
@@ -47,6 +50,10 @@ def render_generation_page(
         "start_ts": None,
     }
     state.run_stats = run_stats
+
+    st.markdown("### ① Generate")
+    if simple_trigger and simple_msg:
+        st.info(simple_msg)
 
     summary = st.empty()
     valid_now = sum(1 for card in state.get("results", []) if not card.get("error"))
@@ -65,7 +72,11 @@ def render_generation_page(
     overall.progress(min(1.0, processed / max(total, 1)))
     overall_caption.caption(f"Overall: {processed}/{total} processed")
 
-    actions = render_run_controls()
+    with st.expander("Advanced run controls", expanded=False):
+        actions = render_run_controls()
+
+    if simple_trigger:
+        actions["start"] = True
 
     batch_runner = BatchRunner(
         settings=settings,
@@ -88,10 +99,15 @@ def render_generation_page(
 
     st.divider()
 
-    render_audio_panel(audio_config=audio_config, settings=settings)
+    st.markdown("### ② Preview & fix")
     render_preview_section(state)
 
     st.divider()
 
+    st.markdown("### ③ Export deck")
     render_export_section(state, settings, export_config)
+
+    st.divider()
+
+    render_audio_panel(audio_config=audio_config, settings=settings)
     render_debug_panel(state)
