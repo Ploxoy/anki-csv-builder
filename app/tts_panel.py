@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import streamlit as st
 from openai import OpenAI
@@ -57,6 +58,50 @@ def _voice_label(voices_list: List[Dict[str, Any]], vid: str) -> str:
     )
 
 
+def _elevenlabs_cache_key(api_key: str, language_codes: Optional[Sequence[str]]) -> str:
+    normalized_codes = ",".join(sorted(code.strip().lower() for code in (language_codes or []) if code))
+    key_hash = hashlib.sha1(api_key.encode("utf-8")).hexdigest()
+    return f"{key_hash}:{normalized_codes or 'all'}"
+
+
+def _ensure_state_dict(state: Any, key: str) -> Dict[str, Any]:
+    data = state.get(key)
+    if not isinstance(data, dict):
+        data = {}
+        state[key] = data
+    return data
+
+
+_ELEVENLABS_API_WIDGET_KEY = "elevenlabs_api_key_input"
+
+
+def _refresh_elevenlabs_voice_catalog(
+    *,
+    api_key: str,
+    provider_data: Dict[str, Any],
+    cache_key: str,
+    voice_cache: Dict[str, Any],
+    voice_errors: Dict[str, str],
+) -> Tuple[List[Dict[str, Any]], Optional[float], Optional[str]]:
+    """Fetch voices from ElevenLabs and update cache structures."""
+
+    language_codes = provider_data.get("voice_language_codes")
+    try:
+        fetched_voices = fetch_elevenlabs_voices(api_key, language_codes=language_codes)
+    except Exception as exc:  # pragma: no cover - network dependent
+        voice_errors[cache_key] = str(exc)
+        return [], None, voice_errors[cache_key]
+
+    timestamp = time.time()
+    voice_cache[cache_key] = {
+        "voices": fetched_voices,
+        "updated_at": timestamp,
+        "language_codes": list(language_codes or []),
+    }
+    voice_errors.pop(cache_key, None)
+    return fetched_voices, timestamp, None
+
+
 def render_audio_panel(
     *,
     audio_config: "AudioConfig",
@@ -108,62 +153,136 @@ def render_audio_panel(
             st.session_state.pop(f"audio_voice__{selected_provider}", None)
 
         if provider_type == "elevenlabs":
-            eleven_api_key = state.get("elevenlabs_api_key", "")
-            if not eleven_api_key:
-                if secret_elevenlabs:
-                    state.elevenlabs_api_key = secret_elevenlabs
-                    eleven_api_key = secret_elevenlabs
+            stored_key = (state.get("elevenlabs_api_key", "") or "").strip()
+            if not stored_key and secret_elevenlabs:
+                secret_clean = secret_elevenlabs.strip()
+                if secret_clean:
+                    state.elevenlabs_api_key = secret_clean
+                    stored_key = secret_clean
                     st.caption("Using ELEVENLABS_API_KEY from secrets.")
-                else:
-                    st.text_input(
-                        "ElevenLabs API Key",
-                        type="password",
-                        key="elevenlabs_api_key",
-                        help="Stored in ELEVENLABS_API_KEY env variable or enter manually for this session.",
-                    )
-                    eleven_api_key = state.get("elevenlabs_api_key", "")
-                    if eleven_api_key:
-                        state.elevenlabs_catalog_loaded = False
-            else:
+
+            if stored_key:
                 st.caption("ElevenLabs key stored for this session.")
+                placeholder = "Paste a new ElevenLabs API key to replace the stored value."
+            else:
+                placeholder = "Paste your ElevenLabs API key to enable this provider."
+
+            widget_value = state.get(_ELEVENLABS_API_WIDGET_KEY)
+            if stored_key and not widget_value:
+                state[_ELEVENLABS_API_WIDGET_KEY] = stored_key
+
+            manual_entry = st.text_input(
+                "ElevenLabs API Key",
+                type="password",
+                key=_ELEVENLABS_API_WIDGET_KEY,
+                help="Stored in ELEVENLABS_API_KEY env variable or enter manually for this session.",
+                placeholder=placeholder,
+            )
+            manual_entry = (manual_entry or "").strip()
+            if manual_entry:
+                state.elevenlabs_api_key = manual_entry
+                stored_key = manual_entry
+                st.caption("ElevenLabs key stored for this session.")
+
+            eleven_api_key = stored_key
         else:
             eleven_api_key = state.get("elevenlabs_api_key")
 
         dynamic_voice_list: List[Dict[str, Any]] = []
         dynamic_voice_error: Optional[str] = None
+        last_loaded_at: Optional[float] = None
+        voices_list: List[Dict[str, Any]] = []
+
         if provider_type == "elevenlabs":
-            key_hash = hashlib.sha1((eleven_api_key or "").encode("utf-8")).hexdigest() if eleven_api_key else ""
-            if key_hash != state.get("elevenlabs_voice_catalog_key"):
-                state.elevenlabs_voice_catalog_key = key_hash
-                state.elevenlabs_catalog_loaded = False
-                state.elevenlabs_voice_catalog = None
-                state.elevenlabs_voice_catalog_error = None
+            voice_cache = _ensure_state_dict(state, "elevenlabs_voice_catalog_cache")
+            voice_errors = _ensure_state_dict(state, "elevenlabs_voice_catalog_errors")
+            voice_meta = _ensure_state_dict(state, "elevenlabs_voice_catalog_meta")
+            cache_key = (
+                _elevenlabs_cache_key(eleven_api_key, provider_data.get("voice_language_codes"))
+                if eleven_api_key
+                else ""
+            )
 
-            if eleven_api_key and not state.get("elevenlabs_catalog_loaded"):
-                st.caption("Loading ElevenLabs voices…")
-                try:
-                    dynamic_voice_list = fetch_elevenlabs_voices(
-                        eleven_api_key,
-                        language_codes=provider_data.get("voice_language_codes"),
+            cached_entry = voice_cache.get(cache_key) if cache_key else None
+            if isinstance(cached_entry, dict):
+                cached_voices = cached_entry.get("voices")
+                if isinstance(cached_voices, list):
+                    dynamic_voice_list = cached_voices
+                updated_at = cached_entry.get("updated_at")
+                if isinstance(updated_at, (int, float)):
+                    last_loaded_at = float(updated_at)
+
+            dynamic_voice_error = voice_errors.get(cache_key) if cache_key else None
+
+            loading_flag = bool(state.get("elevenlabs_voice_catalog_loading"))
+            button_label = "Load ElevenLabs voices" if not dynamic_voice_list else "Refresh ElevenLabs voices"
+            load_button = st.button(
+                button_label,
+                key="elevenlabs_voice_catalog_trigger",
+                disabled=loading_flag or not eleven_api_key,
+                help="Fetch the latest ElevenLabs voices for the provided API key.",
+            )
+
+            meta_entry = voice_meta.get(cache_key, {}) if cache_key else {}
+            should_autoload = (
+                bool(eleven_api_key)
+                and bool(cache_key)
+                and not dynamic_voice_list
+                and not loading_flag
+                and not meta_entry.get("autoloaded")
+            )
+
+            fetch_reason: Optional[str] = None
+            if load_button and not eleven_api_key:
+                ui_helpers.toast(
+                    "Provide ELEVENLABS_API_KEY to load ElevenLabs voices.",
+                    icon="⚠️",
+                    variant="warning",
+                )
+            elif load_button and eleven_api_key:
+                fetch_reason = "manual"
+            elif should_autoload:
+                fetch_reason = "auto"
+
+            if fetch_reason and eleven_api_key and cache_key:
+                state.elevenlabs_voice_catalog_loading = True
+                with st.spinner("Loading ElevenLabs voices…"):
+                    fetched_voices, refreshed_at, fetch_error = _refresh_elevenlabs_voice_catalog(
+                        api_key=eleven_api_key,
+                        provider_data=provider_data,
+                        cache_key=cache_key,
+                        voice_cache=voice_cache,
+                        voice_errors=voice_errors,
                     )
-                    state.elevenlabs_voice_catalog = dynamic_voice_list
-                    state.elevenlabs_catalog_loaded = True
-                    state.elevenlabs_voice_catalog_error = None
-                except Exception as exc:  # pragma: no cover - network dependent
-                    dynamic_voice_error = str(exc)
-                    state.elevenlabs_voice_catalog = None
-                    state.elevenlabs_catalog_loaded = False
-                    state.elevenlabs_voice_catalog_error = dynamic_voice_error
+                state.elevenlabs_voice_catalog_loading = False
 
-            if state.get("elevenlabs_catalog_loaded"):
-                dynamic_voice_list = state.get("elevenlabs_voice_catalog") or []
-            else:
-                st.caption("Using fallback ElevenLabs voices until the catalogue loads.")
-            if dynamic_voice_error is None:
-                dynamic_voice_error = state.get("elevenlabs_voice_catalog_error")
+                if fetch_error:
+                    dynamic_voice_error = fetch_error
+                else:
+                    dynamic_voice_list = fetched_voices
+                    last_loaded_at = refreshed_at
+
+                meta_update = dict(meta_entry)
+                if fetch_reason == "auto":
+                    meta_update["autoloaded"] = True
+                meta_update["last_attempt"] = time.time()
+                meta_update["last_status"] = "error" if fetch_error else "success"
+                voice_meta[cache_key] = meta_update
+
+            if not dynamic_voice_list and eleven_api_key and not loading_flag and dynamic_voice_error is None:
+                st.caption('Click "Load ElevenLabs voices" to fetch the voice catalogue.')
+
+            if last_loaded_at:
+                formatted_time = time.strftime("%H:%M:%S", time.localtime(last_loaded_at))
+                if dynamic_voice_error:
+                    st.caption(
+                        f"Using cached ElevenLabs voices from {formatted_time}; last refresh failed."
+                    )
+                else:
+                    st.caption(f"ElevenLabs voices cached at {formatted_time}.")
+
             voices_list = dynamic_voice_list if dynamic_voice_list else []
         else:
-            state.elevenlabs_voice_catalog_error = None
             voices_list = []
 
         static_voices = provider_data.get("voices") if isinstance(provider_data, dict) else []
@@ -223,8 +342,12 @@ def render_audio_panel(
             if selected_provider:
                 voice_map[selected_provider] = selected_voice
         else:
-            if selected_provider:
-                st.warning("No voices configured for this provider.")
+            if provider_type == "elevenlabs":
+                st.info(
+                    'Provide ELEVENLABS_API_KEY above and click "Load ElevenLabs voices" to fetch the catalogue.'
+                )
+            elif selected_provider:
+                st.info("No voices available for this provider yet.")
             selected_voice = ""
 
         if provider_type == "elevenlabs" and dynamic_voice_error:
