@@ -269,22 +269,42 @@ def _synthesize_elevenlabs(
     raise RuntimeError("ElevenLabs request failed after retries")
 
 
+_NL_ALIASES: Set[str] = {
+    "nl",
+    "nl-nl",
+    "nl_be",
+    "nl-be",
+    "nl_nl",
+    "nld",
+    "dut",
+    "dutch",
+    "nederlands",
+    "flemish",
+    "vlaams",
+    "belgian-dutch",
+    "netherlandic",
+}
+
+
 def _normalize_lang_token(value: Any) -> str:
     if value is None:
         return ""
     token = str(value).strip().lower()
     if not token:
         return ""
-    if token in {"nl", "nld", "nl_nl"}:
-        return "nl"
+    token = token.replace("_", "-")
+    token = token.replace("(", " ").replace(")", " ")
+    token = "-".join(token.split())
     if token.startswith("nl-"):
         return "nl"
-    if "dutch" in token or "flemish" in token:
+    if token in _NL_ALIASES:
+        return "nl"
+    if any(alias in token for alias in ("dutch", "nederlands", "flemish", "vlaams")):
         return "nl"
     return token
 
 
-def _voice_supports_languages(voice: Dict[str, Any], desired: Set[str]) -> bool:
+def _collect_language_tokens(voice: Dict[str, Any]) -> List[str]:
     tokens: List[str] = []
     languages = voice.get("languages")
     if isinstance(languages, list):
@@ -297,14 +317,195 @@ def _voice_supports_languages(voice: Dict[str, Any], desired: Set[str]) -> bool:
                 tokens.append(_normalize_lang_token(entry))
     labels = voice.get("labels")
     if isinstance(labels, dict):
-        for value in labels.values():
+        for key, value in labels.items():
+            tokens.append(_normalize_lang_token(key))
             tokens.append(_normalize_lang_token(value))
     tokens.append(_normalize_lang_token(voice.get("language")))
     tokens.append(_normalize_lang_token(voice.get("name")))
-    for token in tokens:
-        if token and token in desired:
-            return True
+    tokens.append(_normalize_lang_token(voice.get("description")))
+    tokens.append(_normalize_lang_token(voice.get("accent")))
+    return [token for token in tokens if token]
+
+
+_MULTILINGUAL_MARKERS: Set[str] = {
+    "multilingual",
+    "multi-language",
+    "multi-lingual",
+    "polyglot",
+    "global",
+    "universal",
+}
+
+_ENGLISH_ONLY_MARKERS: Set[str] = {
+    "en",
+    "eng",
+    "en-us",
+    "en-gb",
+    "english-only",
+    "us-english",
+    "gb-english",
+}
+
+_LANGUAGE_TOKEN_HINTS: Set[str] = {
+    "nl",
+    "nederlands",
+    "dutch",
+    "flemish",
+    "english",
+    "en-",
+    "german",
+    "de",
+    "deutsch",
+    "spanish",
+    "es",
+    "italian",
+    "it",
+    "french",
+    "fr",
+    "portuguese",
+    "pt",
+    "polish",
+    "pl",
+    "turkish",
+    "tr",
+    "arabic",
+    "ar",
+    "persian",
+    "farsi",
+    "fa",
+    "russian",
+    "ru",
+    "ukrainian",
+    "uk",
+    "spanish",
+    "mexican",
+    "brazilian",
+    "swedish",
+    "norwegian",
+    "danish",
+    "finnish",
+    "czech",
+    "slovak",
+    "hungarian",
+    "romanian",
+    "serbian",
+    "croatian",
+    "bulgarian",
+    "greek",
+    "hebrew",
+    "hindi",
+    "urdu",
+    "bengali",
+    "thai",
+    "vietnamese",
+    "indonesian",
+    "malay",
+    "japanese",
+    "korean",
+    "mandarin",
+    "cantonese",
+    "chinese",
+    "swahili",
+    "afrikaans",
+    "tigrinya",
+    "amharic",
+    "filipino",
+    "tagalog",
+    "multilingual",
+    "polyglot",
+    "global",
+    "universal",
+}
+
+
+def _looks_like_language_token(token: str) -> bool:
+    return any(hint in token for hint in _LANGUAGE_TOKEN_HINTS)
+
+
+def _is_english_token(token: str) -> bool:
+    if token in _ENGLISH_ONLY_MARKERS:
+        return True
+    return "english" in token or token.startswith("en-") or token.endswith("-english")
+
+
+def _voice_supports_languages(
+    voice: Dict[str, Any],
+    desired: Set[str],
+    *,
+    model_is_multilingual: bool = False,
+) -> bool:
+    tokens = _collect_language_tokens(voice)
+
+    if any(token in desired for token in tokens):
+        return True
+
+    languages_field = voice.get("languages")
+    available_languages: Set[str] = set()
+    if isinstance(languages_field, list):
+        for entry in languages_field:
+            if isinstance(entry, dict):
+                available_languages.add(_normalize_lang_token(entry.get("language_code")))
+                available_languages.add(_normalize_lang_token(entry.get("language")))
+                available_languages.add(_normalize_lang_token(entry.get("name")))
+            else:
+                available_languages.add(_normalize_lang_token(entry))
+    available_languages.discard("")
+
+    if available_languages & desired:
+        return True
+
+    if not model_is_multilingual:
+        return False
+
+    if any(marker in token for token in tokens for marker in _MULTILINGUAL_MARKERS):
+        return True
+
+    language_tokens = [token for token in tokens if _looks_like_language_token(token)]
+    if not language_tokens:
+        return True
+
     return False
+
+
+_LANGUAGE_LABELS: Dict[str, str] = {
+    "nl": "Dutch",
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "pl": "Polish",
+    "tr": "Turkish",
+    "ar": "Arabic",
+    "fa": "Persian",
+    "ru": "Russian",
+    "uk": "Ukrainian",
+}
+
+
+def _shared_voice_language_param(desired: Optional[Set[str]]) -> Optional[str]:
+    if not desired:
+        return None
+    for code in desired:
+        label = _LANGUAGE_LABELS.get(code)
+        if label:
+            return label
+    return None
+
+
+def _label_from_shared_voice(entry: Dict[str, Any]) -> str:
+    name = str(entry.get("name") or "").strip()
+    accent = str(entry.get("accent") or "").strip()
+    descriptive = str(entry.get("descriptive") or "").strip()
+    use_case = str(entry.get("use_case") or "").strip()
+    language = str(entry.get("language") or "").strip()
+
+    tag_candidates = [accent, descriptive, use_case, language]
+    tag = next((candidate for candidate in tag_candidates if candidate and candidate.lower() not in {"standard", "neutral"}), "")
+    if tag:
+        return f"{name} — {tag}"
+    return name
 
 
 def fetch_elevenlabs_voices(
@@ -327,7 +528,11 @@ def fetch_elevenlabs_voices(
         "Accept": "application/json",
     }
     try:
-        response = requests.get("https://api.elevenlabs.io/v1/voices", headers=headers, timeout=timeout)
+        response = requests.get(
+            "https://api.elevenlabs.io/v1/voices",
+            headers=headers,
+            timeout=timeout,
+        )
         response.raise_for_status()
     except requests.RequestException as err:  # pragma: no cover - network dependent
         raise RuntimeError(f"Failed to list ElevenLabs voices: {err}") from err
@@ -359,12 +564,51 @@ def fetch_elevenlabs_voices(
             continue
         record = {"id": voice_id, "label": str(name)}
         if desired:
-            if _voice_supports_languages(entry, desired):
+            if _voice_supports_languages(entry, desired, model_is_multilingual=True):
                 catalogue.append(record)
             else:
                 fallback_catalogue.append(record)
         else:
             catalogue.append(record)
+
+    if desired:
+        try:
+            shared_params: Dict[str, Any] = {"page_size": 100}
+            shared_language = _shared_voice_language_param(desired)
+            if shared_language:
+                shared_params["language"] = shared_language
+            shared_response = requests.get(
+                "https://api.elevenlabs.io/v1/shared-voices",
+                headers=headers,
+                params=shared_params,
+                timeout=timeout,
+            )
+            shared_response.raise_for_status()
+            shared_payload = shared_response.json()
+            shared_raw = shared_payload.get("voices")
+            if isinstance(shared_raw, list):
+                for entry in shared_raw:
+                    if not isinstance(entry, dict):
+                        continue
+                    voice_id = entry.get("voice_id")
+                    name = entry.get("name") or voice_id
+                    if not voice_id or not name:
+                        continue
+                    language_hints: Set[str] = {
+                        _normalize_lang_token(entry.get("language")),
+                        _normalize_lang_token(entry.get("accent")),
+                        _normalize_lang_token(entry.get("locale")),
+                    }
+                    language_hints.discard("")
+                    if desired and language_hints and not (language_hints & desired):
+                        continue
+                    if not _voice_supports_languages(entry, desired, model_is_multilingual=True):
+                        continue
+                    catalogue.append({"id": voice_id, "label": _label_from_shared_voice(entry)})
+        except requests.RequestException:
+            pass  # pragma: no cover - network dependent
+        except ValueError:
+            pass  # pragma: no cover - network dependent
 
     if not catalogue and desired:
         catalogue = fallback_catalogue

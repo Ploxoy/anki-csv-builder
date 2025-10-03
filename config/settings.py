@@ -207,6 +207,15 @@ AUDIO_ELEVEN_VOICES: List[Dict[str, str]] = [
     {"id": "AZnzlk1XvdvUeBnXmlld", "label": "Domi — calm feminine"},
     {"id": "ErXwobaYiN019PkySvjV", "label": "Antoni — clear masculine"},
     {"id": "EXAVITQu4vr4xnSDxMaL", "label": "Bella — bright feminine"},
+    # Extra multilingual presets that perform well even without explicit NL label
+    {"id": "N2lVS1w4EtoT3dr4eOWO", "label": "Callum — newsy male"},
+    {"id": "XB0fDUnXU5powFXDhCwa", "label": "Charlotte — warm neutral"},
+    {"id": "XrExE9yKIg1WjnnlVkGX", "label": "Matilda — clear neutral"},
+    {"id": "ZQe5CZNOzWyzPSCn5a3c", "label": "James — neutral male"},
+    {"id": "piTKgcLEGmPE4e6mEKli", "label": "Nicole — soft neutral"},
+    {"id": "ODq5zmih8GrVes37Dizd", "label": "Patrick — deep male"},
+    {"id": "SOYHLrjzK2X1ezoPC6cr", "label": "Harry — friendly male"},
+    {"id": "Zlb1dXrM653N07WRdFW3", "label": "Joseph — warm baritone"},
 ]
 
 AUDIO_ELEVEN_STYLES: Dict[str, Dict[str, Any]] = {

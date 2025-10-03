@@ -46,10 +46,24 @@ def test_fetch_elevenlabs_voices_filters_and_deduplicates(monkeypatch: pytest.Mo
         ]
     }
 
-    def fake_get(url: str, headers: Dict[str, str], timeout: float):  # type: ignore[override]
+    shared_payload = {
+        "voices": [
+            {
+                "voice_id": "S1",
+                "name": "Shared Voice",
+                "language": "Dutch",
+                "accent": "Standard",
+            }
+        ]
+    }
+
+    def fake_get(url: str, headers: Dict[str, str], timeout: float, params: Dict[str, Any] | None = None):  # type: ignore[override]
         assert "xi-api-key" in headers
-        assert url.endswith("/voices")
-        return _DummyResponse(payload)
+        if url.endswith("/voices"):
+            return _DummyResponse(payload)
+        assert url.endswith("/shared-voices")
+        assert params is not None
+        return _DummyResponse(shared_payload)
 
     monkeypatch.setattr(audio.requests, "get", fake_get)
 
@@ -58,10 +72,8 @@ def test_fetch_elevenlabs_voices_filters_and_deduplicates(monkeypatch: pytest.Mo
     assert voices == [
         {"id": "A", "label": "Anne"},
         {"id": "B", "label": "Ben"},
+        {"id": "S1", "label": "Shared Voice — Dutch"},
     ]
-
-    ids = {voice["id"] for voice in voices}
-    assert ids == {"A", "B"}
 
 
 def test_ensure_audio_for_cards_reuses_cache(monkeypatch: pytest.MonkeyPatch) -> None:

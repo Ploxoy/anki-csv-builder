@@ -12,6 +12,7 @@ from core.audio import fetch_elevenlabs_voices
 _CACHE_KEY = "elevenlabs_voice_catalog_cache"
 _ERROR_KEY = "elevenlabs_voice_catalog_errors"
 _LOADING_KEY = "elevenlabs_voice_catalog_loading"
+_ATTEMPT_KEY = "elevenlabs_voice_catalog_attempts"
 
 
 def _ensure_dict(store: MutableMapping[str, Any], key: str) -> Dict[str, Any]:
@@ -37,6 +38,31 @@ def elevenlabs_cache_key(api_key: str, language_codes: Optional[Sequence[str]]) 
     normalized = ",".join(sorted(code.strip().lower() for code in (language_codes or []) if code))
     digest = hashlib.sha1(api_key.encode("utf-8")).hexdigest()
     return f"{digest}:{normalized or 'all'}"
+
+
+def _attempts(store: MutableMapping[str, Any]) -> Dict[str, float]:
+    attempts = store.get(_ATTEMPT_KEY)
+    if not isinstance(attempts, dict):
+        attempts = {}
+        store[_ATTEMPT_KEY] = attempts
+    return attempts
+
+
+def record_attempt(store: MutableMapping[str, Any], cache_key: str, *, timestamp: Optional[float] = None) -> None:
+    if not cache_key:
+        return
+    attempts = _attempts(store)
+    attempts[cache_key] = float(timestamp if timestamp is not None else time.time())
+
+
+def should_throttle(store: MutableMapping[str, Any], cache_key: str, *, cooldown_seconds: float = 3.0) -> bool:
+    if not cache_key or cooldown_seconds <= 0:
+        return False
+    attempts = _attempts(store)
+    last_attempt = attempts.get(cache_key)
+    if not isinstance(last_attempt, (int, float)):
+        return False
+    return (time.time() - float(last_attempt)) < cooldown_seconds
 
 
 def get_catalog(store: MutableMapping[str, Any], cache_key: str) -> ElevenLabsCatalog:

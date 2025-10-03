@@ -237,21 +237,18 @@ def _render_elevenlabs_credentials(
             state.bump_nonce()
             nonce_changed = True
 
+    secret_loaded = False
     if not stored_key and secret:
         secret_clean = secret.strip()
         if secret_clean:
             _apply_key(secret_clean)
-            st.caption("Using ELEVENLABS_API_KEY from secrets.")
+            secret_loaded = True
 
     placeholder = (
         "Paste a new ElevenLabs API key to replace the stored value."
         if stored_key
         else "Paste your ElevenLabs API key to enable this provider."
     )
-
-    widget_value = st.session_state.get(_ELEVENLABS_API_WIDGET_KEY)
-    if stored_key and not widget_value:
-        st.session_state[_ELEVENLABS_API_WIDGET_KEY] = stored_key
 
     manual_entry = st.text_input(
         "ElevenLabs API Key",
@@ -266,7 +263,10 @@ def _render_elevenlabs_credentials(
         _apply_key(manual_entry)
         st.caption("ElevenLabs key stored for this session.")
     elif stored_key:
-        st.caption("ElevenLabs key stored for this session.")
+        message = "ElevenLabs key stored for this session."
+        if secret_loaded or (secret and stored_key == secret.strip()):
+            message += " Loaded from Streamlit secrets."
+        st.caption(message)
 
     return stored_key, nonce_changed
 
@@ -297,17 +297,28 @@ def _resolve_elevenlabs_catalog(
             variant="warning",
         )
     elif load_button and api_key and cache_key:
-        audio_catalog.set_loading(state.store, True)
-        with st.spinner("Loading ElevenLabs voices…"):
-            catalog = audio_catalog.refresh_catalog(
-                state.store,
-                cache_key=cache_key,
-                api_key=api_key,
-                language_codes=language_codes,
+        cached_voices = bool(catalog.voices)
+        if cached_voices and audio_catalog.should_throttle(state.store, cache_key):
+            ui_helpers.toast(
+                "Reusing cached ElevenLabs voices — recent refresh already completed.",
+                icon="ℹ️",
+                variant="info",
             )
-        audio_catalog.set_loading(state.store, False)
-        state.bump_nonce()
-        nonce_changed = True
+        else:
+            audio_catalog.record_attempt(state.store, cache_key)
+            audio_catalog.set_loading(state.store, True)
+            try:
+                with st.spinner("Loading ElevenLabs voices…"):
+                    catalog = audio_catalog.refresh_catalog(
+                        state.store,
+                        cache_key=cache_key,
+                        api_key=api_key,
+                        language_codes=language_codes,
+                    )
+            finally:
+                audio_catalog.set_loading(state.store, False)
+            state.bump_nonce()
+            nonce_changed = True
 
     catalog = audio_catalog.get_catalog(state.store, cache_key)
     loading = audio_catalog.is_loading(state.store)
