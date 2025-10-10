@@ -11,6 +11,35 @@ from core.llm_clients import create_client, responses_accepts_param
 from . import ui_helpers
 
 
+PRESET_CUSTOM_LABEL = "Custom"
+SIDEBAR_PRESETS: Dict[str, Dict[str, object]] = {
+    "Starter (B1 • RU • gpt-4.1-mini)": {
+        "model": "gpt-4.1-mini",
+        "level": "B1",
+        "profile": "strict",
+        "L1": "RU",
+        "limit_tokens": True,
+        "force_flagged": False,
+    },
+    "Fast (B1 • RU • gpt-4o)": {
+        "model": "gpt-4o",
+        "level": "B1",
+        "profile": "balanced",
+        "L1": "RU",
+        "limit_tokens": True,
+        "force_flagged": False,
+    },
+    "Quality (B2 • RU • gpt-4.1)": {
+        "model": "gpt-4.1",
+        "level": "B2",
+        "profile": "balanced",
+        "L1": "RU",
+        "limit_tokens": False,
+        "force_flagged": True,
+    },
+}
+
+
 @dataclass
 class SidebarConfig:
     api_key: Optional[str]
@@ -42,12 +71,43 @@ def render_sidebar(
 ) -> SidebarConfig:
     """Render sidebar controls and return collected configuration."""
 
+    state = st.session_state
+    state.setdefault("sidebar_model_current", "gpt-4.1-mini")
+    state.setdefault("sidebar_profile_current", "strict")
+    state.setdefault("sidebar_level_current", "B1")
+    state.setdefault("sidebar_limit_tokens_current", True)
+    state.setdefault("sidebar_preset_choice", PRESET_CUSTOM_LABEL)
+    state.setdefault("sidebar_preset_last_applied", PRESET_CUSTOM_LABEL)
+    state.setdefault("force_flagged", False)
+
+    l1_keys = list(l1_langs.keys()) if l1_langs else []
+    if l1_keys:
+        state.setdefault("sidebar_L1_current", l1_keys[0])
+    else:
+        state.setdefault("sidebar_L1_current", "")
+
+    preset_options = [PRESET_CUSTOM_LABEL] + list(SIDEBAR_PRESETS.keys())
+    current_choice = state.get("sidebar_preset_choice", PRESET_CUSTOM_LABEL)
+    if current_choice not in preset_options:
+        current_choice = PRESET_CUSTOM_LABEL
+        state.sidebar_preset_choice = current_choice
+    preset_index = preset_options.index(current_choice)
+    selected_preset = st.sidebar.selectbox(
+        "🎛️ Preset",
+        preset_options,
+        index=preset_index,
+        help="Quick-start configuration for model, CEFR, L1 and flags. Choose 'Custom' to tweak manually.",
+    )
+    state.sidebar_preset_choice = selected_preset
+
     st.sidebar.header("🔐 API Settings")
 
     api_key = ui_helpers.get_secret("OPENAI_API_KEY") or st.sidebar.text_input(
         "OpenAI API Key",
         type="password",
     )
+    if not api_key:
+        st.sidebar.caption("Tip: store the key via `.streamlit/secrets.toml` or environment variables so it autofills here.")
 
     try:
         import openai as _openai  # type: ignore
@@ -64,7 +124,38 @@ def render_sidebar(
         default_models=default_models,
     )
 
-    preferred_default = "gpt-4.1-mini"
+    selected_preset = state.get("sidebar_preset_choice", PRESET_CUSTOM_LABEL)
+    last_applied = state.get("sidebar_preset_last_applied", PRESET_CUSTOM_LABEL)
+    if (
+        selected_preset != PRESET_CUSTOM_LABEL
+        and selected_preset in SIDEBAR_PRESETS
+        and selected_preset != last_applied
+    ):
+        preset_cfg = SIDEBAR_PRESETS[selected_preset]
+        preset_model = str(preset_cfg.get("model", "") or "")
+        if preset_model in model_options:
+            state.sidebar_model_current = preset_model
+        elif model_options:
+            state.sidebar_model_current = model_options[0]
+        preset_profile = str(preset_cfg.get("profile", ""))
+        if preset_profile:
+            state.sidebar_profile_current = preset_profile
+        preset_level = str(preset_cfg.get("level", ""))
+        if preset_level:
+            state.sidebar_level_current = preset_level
+        preset_L1 = str(preset_cfg.get("L1", ""))
+        if preset_L1 and preset_L1 in l1_langs:
+            state.sidebar_L1_current = preset_L1
+        state.sidebar_limit_tokens_current = bool(preset_cfg.get("limit_tokens", state.sidebar_limit_tokens_current))
+        state.force_flagged = bool(preset_cfg.get("force_flagged", state.get("force_flagged", False)))
+        state.sidebar_preset_last_applied = selected_preset
+    elif selected_preset == PRESET_CUSTOM_LABEL:
+        state.sidebar_preset_last_applied = PRESET_CUSTOM_LABEL
+
+    preferred_default = state.get("sidebar_model_current", "gpt-4.1-mini")
+    if preferred_default not in model_options and model_options:
+        preferred_default = model_options[0]
+        state.sidebar_model_current = preferred_default
     try:
         default_index = model_options.index(preferred_default)
     except ValueError:
@@ -76,16 +167,44 @@ def render_sidebar(
         index=default_index,
         help="Best quality — gpt-5 (if available); balanced — gpt-4.1; faster/cheaper — gpt-4o / gpt-5-mini.",
     )
+    state.sidebar_model_current = model
 
+    profile_keys = list(prompt_profiles.keys())
+    profile_default = state.get("sidebar_profile_current", "strict")
+    if profile_default not in profile_keys and profile_keys:
+        profile_default = profile_keys[0]
+        state.sidebar_profile_current = profile_default
+    profile_index = profile_keys.index(profile_default) if profile_default in profile_keys else 0
     profile = st.sidebar.selectbox(
         "Prompt profile",
-        list(prompt_profiles.keys()),
-        index=list(prompt_profiles.keys()).index("strict") if "strict" in prompt_profiles else 0,
+        profile_keys,
+        index=profile_index,
+        help="`strict` keeps sentences literal; `balanced` allows friendlier tone; pick others for specific styles.",
     )
+    state.sidebar_profile_current = profile
 
-    level = st.sidebar.selectbox("CEFR", ["A1", "A2", "B1", "B2", "C1", "C2"], index=2)
+    levels = ["A1", "A2", "B1", "B2", "C1", "C2"]
+    level_default = state.get("sidebar_level_current", "B1")
+    if level_default not in levels:
+        level_default = "B1"
+        state.sidebar_level_current = level_default
+    level_index = levels.index(level_default)
+    level = st.sidebar.selectbox(
+        "CEFR",
+        levels,
+        index=level_index,
+        help="Choose the difficulty: A-level = beginner, B-level = intermediate, C-level = advanced Dutch.",
+    )
+    state.sidebar_level_current = level
 
-    L1_code = st.sidebar.selectbox("Your language (L1)", list(l1_langs.keys()), index=0)
+    L1_keys = list(l1_langs.keys())
+    L1_default = state.get("sidebar_L1_current", L1_keys[0] if L1_keys else "")
+    if L1_default not in L1_keys and L1_keys:
+        L1_default = L1_keys[0]
+        state.sidebar_L1_current = L1_default
+    L1_index = L1_keys.index(L1_default) if L1_default in L1_keys else 0
+    L1_code = st.sidebar.selectbox("Your language (L1)", L1_keys, index=L1_index)
+    state.sidebar_L1_current = L1_code
     L1_meta = l1_langs[L1_code]
 
     temperature = st.sidebar.slider(
@@ -96,11 +215,13 @@ def render_sidebar(
         temperature_step,
     )
 
+    limit_tokens_default = bool(state.get("sidebar_limit_tokens_current", True))
     limit_tokens = st.sidebar.checkbox(
         "Limit output tokens",
-        value=True,
-        help="Check to limit the number of output tokens. Uncheck to allow unlimited tokens.",
+        value=limit_tokens_default,
+        help="Leave on to keep responses concise; disable only if you need very long answers (higher cost).",
     )
+    state.sidebar_limit_tokens_current = limit_tokens
 
     display_raw_response = st.sidebar.checkbox(
         "Display raw responses",
@@ -121,8 +242,8 @@ def render_sidebar(
 
     force_flagged = st.sidebar.checkbox(
         "Force generate for flagged entries",
-        value=False,
-        help="If off, rows flagged as suspicious by a quick heuristic will be skipped from generation.",
+        value=state.get("force_flagged", False),
+        help="If off, rows flagged as suspicious by a heuristic (digits, ALL CAPS, likely English) will be skipped.",
     )
 
     st.session_state["csv_with_header"] = csv_with_header
@@ -167,6 +288,14 @@ def render_sidebar(
         help="Parallel requests inside a batch. Keep modest (3–4) to avoid rate limits.",
         key="max_workers",
     )
+
+    with st.sidebar.expander("Why entries get flagged?"):
+        st.markdown(
+            "* `contains digit` — numbers suggest the token is not a Dutch lemma.\n"
+            "* `all-caps token` — ALL CAPS words are marked as potential abbreviations.\n"
+            "* `token 'xxx' suspicious` — heuristic thinks the word might be English/foreign.\n"
+            "Enable **Force generate for flagged entries** if you intentionally want to keep them."
+        )
 
     with st.sidebar.expander("Advanced (Responses schema)"):
         st.checkbox(

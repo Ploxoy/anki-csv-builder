@@ -2,7 +2,9 @@
 Configuration for Anki CSV Builder
 """
 
-from typing import List, Dict, Tuple
+import os
+
+from typing import Any, Dict, List, Tuple
 
 # ==========================
 # Models: default list + dynamic loading from API
@@ -107,9 +109,9 @@ DEMO_WORDS: List[Dict[str, str]] = [
     {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
     {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
     {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
-    {"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
-    {"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
-    {"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
+    #{"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
+    #{"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
+    #{"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
 ]
 
 # ==========================
@@ -180,6 +182,174 @@ AUDIO_SENTENCE_INSTRUCTION_DEFAULT: str = "Dutch_sentence_learning"
 AUDIO_WORD_INSTRUCTION_DEFAULT: str = "Dutch_word_dictionary"
 AUDIO_INCLUDE_WORD_DEFAULT: bool = True
 AUDIO_INCLUDE_SENTENCE_DEFAULT: bool = True
+
+ELEVENLABS_DEFAULT_API_KEY: str = os.environ.get("ELEVENLABS_API_KEY", "")
+
+
+def _style_label_from_key(key: str) -> str:
+    if key.startswith("Dutch_sentence_"):
+        suffix = key.split("Dutch_sentence_", 1)[1].replace("_", " ")
+        return f"Sentence · {suffix.capitalize()}"
+    if key.startswith("Dutch_word_"):
+        suffix = key.split("Dutch_word_", 1)[1].replace("_", " ")
+        return f"Word · {suffix.capitalize()}"
+    if key.startswith("Eleven_sentence_"):
+        suffix = key.split("Eleven_sentence_", 1)[1].replace("_", " ")
+        return f"Sentence · {suffix.capitalize()}"
+    if key.startswith("Eleven_word_"):
+        suffix = key.split("Eleven_word_", 1)[1].replace("_", " ")
+        return f"Word · {suffix.capitalize()}"
+    return key
+
+
+AUDIO_ELEVEN_VOICES: List[Dict[str, str]] = [
+    {"id": "21m00Tcm4TlvDq8ikWAM", "label": "Rachel — balanced NL"},
+    {"id": "AZnzlk1XvdvUeBnXmlld", "label": "Domi — calm feminine"},
+    {"id": "ErXwobaYiN019PkySvjV", "label": "Antoni — clear masculine"},
+    {"id": "EXAVITQu4vr4xnSDxMaL", "label": "Bella — bright feminine"},
+    # Extra multilingual presets that perform well even without explicit NL label
+    {"id": "N2lVS1w4EtoT3dr4eOWO", "label": "Callum — newsy male"},
+    {"id": "XB0fDUnXU5powFXDhCwa", "label": "Charlotte — warm neutral"},
+    {"id": "XrExE9yKIg1WjnnlVkGX", "label": "Matilda — clear neutral"},
+    {"id": "ZQe5CZNOzWyzPSCn5a3c", "label": "James — neutral male"},
+    {"id": "piTKgcLEGmPE4e6mEKli", "label": "Nicole — soft neutral"},
+    {"id": "ODq5zmih8GrVes37Dizd", "label": "Patrick — deep male"},
+    {"id": "SOYHLrjzK2X1ezoPC6cr", "label": "Harry — friendly male"},
+    {"id": "Zlb1dXrM653N07WRdFW3", "label": "Joseph — warm baritone"},
+]
+
+AUDIO_ELEVEN_STYLES: Dict[str, Dict[str, Any]] = {
+    "sentence": {
+        "Eleven_sentence_tutor": {
+            "label": _style_label_from_key("Eleven_sentence_tutor"),
+            "description": "Neutral Dutch tutor voice. Calm delivery, clear articulation (style 0.35).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.55,
+                    "similarity_boost": 0.85,
+                    "style": 0.35,
+                    "use_speaker_boost": True,
+                },
+                "spoken_language": "nl",
+            },
+        },
+        "Eleven_sentence_radio": {
+            "label": _style_label_from_key("Eleven_sentence_radio"),
+            "description": "Lively radio-style narration with more energy (style 0.6).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.6,
+                    "similarity_boost": 0.8,
+                    "style": 0.6,
+                    "use_speaker_boost": True,
+                },
+                "spoken_language": "nl",
+            },
+        },
+        "Eleven_sentence_story": {
+            "label": _style_label_from_key("Eleven_sentence_story"),
+            "description": "Narrative storytelling tone with gentle emphasis (style 0.45).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                    "style": 0.45,
+                    "use_speaker_boost": False,
+                },
+                "spoken_language": "nl",
+            },
+        },
+    },
+    "word": {
+        "Eleven_word_dictionary": {
+            "label": _style_label_from_key("Eleven_word_dictionary"),
+            "description": "Dictionary-style single word: clean and precise (style 0.15).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.6,
+                    "similarity_boost": 0.9,
+                    "style": 0.15,
+                    "use_speaker_boost": False,
+                },
+                "spoken_language": "nl",
+            },
+        },
+        "Eleven_word_learning": {
+            "label": _style_label_from_key("Eleven_word_learning"),
+            "description": "Language-learning focus: slightly slower, very clear (style 0.25).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.65,
+                    "similarity_boost": 0.88,
+                    "style": 0.25,
+                    "use_speaker_boost": False,
+                },
+                "spoken_language": "nl",
+            },
+        },
+        "Eleven_word_dynamic": {
+            "label": _style_label_from_key("Eleven_word_dynamic"),
+            "description": "Dynamic pronunciation with slight emphasis (style 0.45).",
+            "payload": {
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.82,
+                    "style": 0.45,
+                    "use_speaker_boost": True,
+                },
+                "spoken_language": "nl",
+            },
+        },
+    },
+}
+
+
+def _build_instruction_styles(prefix: str) -> Dict[str, Dict[str, Any]]:
+    result: Dict[str, Dict[str, Any]] = {}
+    for key, text in AUDIO_TTS_INSTRUCTIONS.items():
+        if not key.startswith(prefix):
+            continue
+        result[key] = {
+            "label": _style_label_from_key(key),
+            "description": text,
+            "payload": {"instructions": text},
+        }
+    return result
+
+
+AUDIO_PROVIDER_DEFAULT: str = "openai"
+AUDIO_TTS_PROVIDERS: Dict[str, Dict[str, Any]] = {
+    "openai": {
+        "label": "OpenAI",
+        "type": "openai",
+        "model": AUDIO_TTS_MODEL,
+        "fallback_model": AUDIO_TTS_FALLBACK,
+        "voices": AUDIO_VOICES,
+        "voice_default": AUDIO_VOICES[0]["id"] if AUDIO_VOICES else "",
+        "include_word_default": AUDIO_INCLUDE_WORD_DEFAULT,
+        "include_sentence_default": AUDIO_INCLUDE_SENTENCE_DEFAULT,
+        "sentence_styles": _build_instruction_styles("Dutch_sentence_"),
+        "word_styles": _build_instruction_styles("Dutch_word_"),
+        "sentence_default": AUDIO_SENTENCE_INSTRUCTION_DEFAULT,
+        "word_default": AUDIO_WORD_INSTRUCTION_DEFAULT,
+    },
+    "elevenlabs": {
+        "label": "ElevenLabs",
+        "type": "elevenlabs",
+        "model": "eleven_multilingual_v2",
+        "fallback_model": None,
+        "voices": AUDIO_ELEVEN_VOICES,
+        "voice_default": AUDIO_ELEVEN_VOICES[0]["id"] if AUDIO_ELEVEN_VOICES else "",
+        "include_word_default": True,
+        "include_sentence_default": True,
+        "sentence_styles": AUDIO_ELEVEN_STYLES["sentence"],
+        "word_styles": AUDIO_ELEVEN_STYLES["word"],
+        "sentence_default": "Eleven_sentence_tutor",
+        "word_default": "Eleven_word_dictionary",
+        "dynamic_voices": True,
+        "voice_language_codes": ["nl"],
+    },
+}
 
 # ==========================
 # CSV headers
@@ -256,7 +426,7 @@ MESSAGES = {
 ANKI_MODEL_ID: int = 1607392319
 ANKI_DECK_ID: int = 1970010101
 ANKI_MODEL_NAME: str = "Dutch Cloze (L2/L1)"
-ANKI_DECK_NAME: str = "Dutch • Cloze"
+ANKI_DECK_NAME: str = "Dutch"
 
 # ==========================
 # Anki templates (HTML/CSS)
@@ -348,7 +518,7 @@ BACK_HTML_TEMPLATE: str = """
 """.strip()
 
 CSS_STYLING: str = """
-/* ===== Scaling and layout ===== */
+/* ===== Minimal, unified styling for all cards ===== */
 :root{
   --fs-base: clamp(18px, 1.2vw + 1.1vh, 28px);
   --fs-sm: calc(var(--fs-base) * .9);
@@ -356,9 +526,8 @@ CSS_STYLING: str = """
   --hl-col:#1976d2;
   --hl-bg:rgba(25,118,210,.14);
 }
-html, body { height:100%; }
-.card{ font-size: var(--fs-base); line-height: 1.55; margin:0; min-height:100vh; display:flex; justify-content:center; align-items:flex-start; background: transparent; }
-.card-inner{ width: min(92vw, 80ch); padding: 2.5vh 3vw; }
+.card{ font-size: var(--fs-base); line-height: 1.55; margin:0; background: transparent; }
+.card-inner{ width: min(92vw, 80ch); margin: 2.5vh auto; padding: 0 3vw; }
 .answer { margin-top:.75em; }
 .audio-inline{ margin-top:.4em; }
 .audio-icon{ display:inline-flex; align-items:center; justify-content:center; margin-left:.35em; }
@@ -366,28 +535,15 @@ html, body { height:100%; }
 .lemma .audio-icon audio{ height:24px; width:120px; }
 .section + .section { margin-top:.55em; padding-top:.45em; border-top:1px solid rgba(0,0,0,.14); }
 @media (prefers-color-scheme: dark){ .section + .section { border-top-color: rgba(255,255,255,.22); } }
-.ru { font-weight:600; font-size: var(--fs-lg); }
 .def { font-style: italic; opacity:.9; font-size: var(--fs-sm); }
 .lemma { font-weight:600; }
 .lemma-nl{ color:var(--hl-col); font-variant: small-caps; letter-spacing:.02em; }
-.lemma-ru{ opacity:.9; }
 .colloc{ margin:.1em 0 0 1.1em; padding:0; }
 .colloc li{ margin:.12em 0; }
 .cloze{ color:var(--hl-col); font-weight:700; }
 mark.hl{ background:var(--hl-bg); color:inherit; padding:0 .12em; border-radius:.18em; }
-.def-hint { margin-top:.5em; }
-.def-hint b { opacity:.8; margin-right:.35em; }
-.def-toggle{ list-style:none; cursor:pointer; display:inline-block; }
-.def-toggle::-webkit-details-marker{ display:none; }
-.def-toggle::before{ content: attr(data-closed); text-decoration: underline dotted; }
-.def-details[open] .def-toggle::before{ content: attr(data-open); text-decoration:none; opacity:.75; }
 img{ max-width:100%; height:auto; }
-@media (max-width: 420px){ .card-inner{ width: 94vw; padding: 2vh 3vw; } }
-.hints{ margin-top:.6em; display:flex; gap:1em 1.2em; flex-wrap:wrap; align-items:flex-start; }
-.hint summary{ cursor:pointer; text-decoration: underline dotted; list-style:none; display:inline-block; }
-.hint summary::-webkit-details-marker{ display:none; }
-.hint[open] summary{ opacity:.75; text-decoration:none; }
-.hint-body{ margin-top:.25em; font-size: var(--fs-sm); }
+@media (max-width: 420px){ .card-inner{ width: 94vw; padding: 0 3vw; } }
 """.strip()
 
 # ==========================

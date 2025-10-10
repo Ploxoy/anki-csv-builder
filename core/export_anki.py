@@ -5,7 +5,7 @@ import hashlib
 import io
 import tempfile
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Tuple
 
 try:
     import genanki  # type: ignore
@@ -40,6 +40,8 @@ def build_anki_package(
     css: str,
     tags_meta: Dict[str, str] | None = None,
     media_files: Dict[str, bytes] | None = None,
+    include_basic_reversed: bool = False,
+    include_basic_typein: bool = False,
 ) -> bytes:
     """Сформировать .apkg пакет.
 
@@ -72,7 +74,7 @@ def build_anki_package(
         model_type=genanki.Model.CLOZE,
     )
 
-    deck = genanki.Deck(deck_id, deck_name)
+    deck_cloze = genanki.Deck(deck_id, f"{deck_name}::Cloze")
 
     base_tags = [
         f"CEFR::{tags_meta.get('level','')}",
@@ -98,9 +100,89 @@ def build_anki_package(
             guid=_compute_guid(card, guid_policy, run_id),
             tags=[t for t in set(base_tags) if t and not t.endswith('::')],
         )
-        deck.add_note(note)
+        deck_cloze.add_note(note)
 
-    pkg = genanki.Package(deck)
+    extra_decks: List[genanki.Deck] = [deck_cloze]
+
+    def _derive_id(base: int, salt: int) -> int:
+        # keep in 32-bit signed range to satisfy Anki expectations
+        limit = 2_147_483_647
+        return (int(base) + int(salt)) % limit or (int(base) ^ int(salt))
+
+    if include_basic_reversed:
+        basic_model_id = _derive_id(model_id, 101)
+        basic_model = genanki.Model(
+            basic_model_id,
+            f"{model_name} — Basic (and reversed)",
+            fields=[{"name": "Front"}, {"name": "Back"}],
+            templates=[
+                {
+                    "name": "Card 1",
+                    "qfmt": "<div class=\"card-inner\" style=\"text-align:center\">{{Front}}</div>",
+                    "afmt": "<div class=\"card-inner\" style=\"text-align:center\">{{Front}}<hr id=\"answer\">{{Back}}</div>",
+                },
+                {
+                    "name": "Card 2",
+                    "qfmt": "<div class=\"card-inner\" style=\"text-align:center\">{{Back}}</div>",
+                    "afmt": "<div class=\"card-inner\" style=\"text-align:center\">{{Front}}<hr id=\"answer\">{{Back}}</div>",
+                },
+            ],
+            css=css,
+        )
+        deck_basic = genanki.Deck(_derive_id(deck_id, 101), f"{deck_name}::Basic")
+        for card in cards:
+            front = card.get("L2_word", "")
+            back = card.get("L1_gloss", "")
+            audio_word = card.get("AudioWord", "")
+            if audio_word and front:
+                # Attach audio to the Dutch side (Front contains L2_word)
+                front = f"{front} {audio_word}".strip()
+            if not (front or back):
+                continue
+            note = genanki.Note(
+                model=basic_model,
+                fields=[front, back],
+                guid=genanki.guid_for(f"basic|{front}|{back}|{run_id}"),
+                tags=[t for t in set(base_tags) if t and not t.endswith('::')],
+            )
+            deck_basic.add_note(note)
+        extra_decks.append(deck_basic)
+
+    if include_basic_typein:
+        typein_model_id = _derive_id(model_id, 202)
+        typein_model = genanki.Model(
+            typein_model_id,
+            f"{model_name} — Basic (type-in)",
+            fields=[{"name": "Front"}, {"name": "Back"}],
+            templates=[
+                {
+                    "name": "Card 1",
+                    "qfmt": "<div class=\"card-inner\">{{Front}}<div class=\"answer\">{{type:Back}}</div></div>",
+                    "afmt": "<div class=\"card-inner\">{{Front}}<hr id=\"answer\">{{Back}}</div>",
+                },
+            ],
+            css=css,
+        )
+        deck_typein = genanki.Deck(_derive_id(deck_id, 202), f"{deck_name}::Type In")
+        for card in cards:
+            front = card.get("L1_gloss", "")
+            back = card.get("L2_word", "")
+            audio_word = card.get("AudioWord", "")
+            if audio_word and back:
+                # Attach audio to the Dutch side (Back contains L2_word)
+                back = f"{back} {audio_word}".strip()
+            if not (front or back):
+                continue
+            note = genanki.Note(
+                model=typein_model,
+                fields=[front, back],
+                guid=genanki.guid_for(f"typein|{front}|{back}|{run_id}"),
+                tags=[t for t in set(base_tags) if t and not t.endswith('::')],
+            )
+            deck_typein.add_note(note)
+        extra_decks.append(deck_typein)
+
+    pkg = genanki.Package(extra_decks if len(extra_decks) > 1 else extra_decks[0])
     media_files = media_files or {}
 
     with tempfile.TemporaryDirectory() as tmpdir:
