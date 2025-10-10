@@ -59,6 +59,19 @@ def render_export_section(state: Any, settings: SidebarConfig, export_config: Ex
                 "model": state.get("model_id", settings.model),
                 "L1": state.get("L1_code", settings.L1_code),
             }
+
+            st.caption("Also include additional decks in the package:")
+            col_a, col_b = st.columns(2)
+            include_basic_rev = col_a.checkbox(
+                "Basic (and reversed card) — Front: L2_word, Back: L1_gloss",
+                value=True,
+                key="export_include_basic_reversed",
+            )
+            include_basic_typein = col_b.checkbox(
+                "Basic (type in the answer) — Front: L1_gloss, Back: L2_word",
+                value=True,
+                key="export_include_basic_typein",
+            )
             anki_bytes = build_anki_package(
                 export_cards,
                 l1_label=settings.L1_meta["label"],
@@ -73,6 +86,8 @@ def render_export_section(state: Any, settings: SidebarConfig, export_config: Ex
                 css=export_config.css,
                 tags_meta=tags_meta,
                 media_files=state.get("audio_media"),
+                include_basic_reversed=include_basic_rev,
+                include_basic_typein=include_basic_typein,
             )
             state.last_anki_package = anki_bytes
             st.download_button(

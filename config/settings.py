@@ -426,7 +426,7 @@ MESSAGES = {
 ANKI_MODEL_ID: int = 1607392319
 ANKI_DECK_ID: int = 1970010101
 ANKI_MODEL_NAME: str = "Dutch Cloze (L2/L1)"
-ANKI_DECK_NAME: str = "Dutch • Cloze"
+ANKI_DECK_NAME: str = "Dutch"
 
 # ==========================
 # Anki templates (HTML/CSS)
@@ -518,7 +518,7 @@ BACK_HTML_TEMPLATE: str = """
 """.strip()
 
 CSS_STYLING: str = """
-/* ===== Scaling and layout ===== */
+/* ===== Minimal, unified styling for all cards ===== */
 :root{
   --fs-base: clamp(18px, 1.2vw + 1.1vh, 28px);
   --fs-sm: calc(var(--fs-base) * .9);
@@ -526,9 +526,8 @@ CSS_STYLING: str = """
   --hl-col:#1976d2;
   --hl-bg:rgba(25,118,210,.14);
 }
-html, body { height:100%; }
-.card{ font-size: var(--fs-base); line-height: 1.55; margin:0; min-height:100vh; display:flex; justify-content:center; align-items:flex-start; background: transparent; }
-.card-inner{ width: min(92vw, 80ch); padding: 2.5vh 3vw; }
+.card{ font-size: var(--fs-base); line-height: 1.55; margin:0; background: transparent; }
+.card-inner{ width: min(92vw, 80ch); margin: 2.5vh auto; padding: 0 3vw; }
 .answer { margin-top:.75em; }
 .audio-inline{ margin-top:.4em; }
 .audio-icon{ display:inline-flex; align-items:center; justify-content:center; margin-left:.35em; }
@@ -536,28 +535,15 @@ html, body { height:100%; }
 .lemma .audio-icon audio{ height:24px; width:120px; }
 .section + .section { margin-top:.55em; padding-top:.45em; border-top:1px solid rgba(0,0,0,.14); }
 @media (prefers-color-scheme: dark){ .section + .section { border-top-color: rgba(255,255,255,.22); } }
-.ru { font-weight:600; font-size: var(--fs-lg); }
 .def { font-style: italic; opacity:.9; font-size: var(--fs-sm); }
 .lemma { font-weight:600; }
 .lemma-nl{ color:var(--hl-col); font-variant: small-caps; letter-spacing:.02em; }
-.lemma-ru{ opacity:.9; }
 .colloc{ margin:.1em 0 0 1.1em; padding:0; }
 .colloc li{ margin:.12em 0; }
 .cloze{ color:var(--hl-col); font-weight:700; }
 mark.hl{ background:var(--hl-bg); color:inherit; padding:0 .12em; border-radius:.18em; }
-.def-hint { margin-top:.5em; }
-.def-hint b { opacity:.8; margin-right:.35em; }
-.def-toggle{ list-style:none; cursor:pointer; display:inline-block; }
-.def-toggle::-webkit-details-marker{ display:none; }
-.def-toggle::before{ content: attr(data-closed); text-decoration: underline dotted; }
-.def-details[open] .def-toggle::before{ content: attr(data-open); text-decoration:none; opacity:.75; }
 img{ max-width:100%; height:auto; }
-@media (max-width: 420px){ .card-inner{ width: 94vw; padding: 2vh 3vw; } }
-.hints{ margin-top:.6em; display:flex; gap:1em 1.2em; flex-wrap:wrap; align-items:flex-start; }
-.hint summary{ cursor:pointer; text-decoration: underline dotted; list-style:none; display:inline-block; }
-.hint summary::-webkit-details-marker{ display:none; }
-.hint[open] summary{ opacity:.75; text-decoration:none; }
-.hint-body{ margin-top:.25em; font-size: var(--fs-sm); }
+@media (max-width: 420px){ .card-inner{ width: 94vw; padding: 0 3vw; } }
 """.strip()
 
 # ==========================
