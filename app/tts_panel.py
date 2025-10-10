@@ -691,6 +691,14 @@ def _render_generate_button(
             if summary_obj.total_requests
             else "Audio progress: 0/0 (0%)"
         )
+        # Ensure the Export section above re-renders with fresh media map.
+        try:
+            st.rerun()
+        except Exception:
+            try:
+                st.experimental_rerun()  # Streamlit <1.29 fallback
+            except Exception:
+                pass
     except Exception as exc:  # pragma: no cover
         st.error(f"Audio synthesis failed: {exc}")
         status_placeholder.text("Audio generation failed.")

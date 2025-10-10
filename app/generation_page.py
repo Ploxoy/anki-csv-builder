@@ -104,10 +104,13 @@ def render_generation_page(
 
     st.divider()
 
-    st.markdown("### ③ Export deck")
-    render_export_section(state, settings, export_config)
+    # Render audio controls before export so freshly generated media
+    # is immediately visible when exporting.
+    st.markdown("### ③ Audio (optional)")
+    render_audio_panel(audio_config=audio_config, settings=settings)
 
     st.divider()
 
-    render_audio_panel(audio_config=audio_config, settings=settings)
+    st.markdown("### ④ Export deck")
+    render_export_section(state, settings, export_config)
     render_debug_panel(state)
