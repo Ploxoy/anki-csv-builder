@@ -151,31 +151,34 @@ AUDIO_VOICES: List[Dict[str, str]] = [
     {"id": "ballad", "label": "Ballad — soft NL female"},
 ]
 AUDIO_TTS_INSTRUCTIONS: Dict[str, str] = {
+    # Sentences
     "Dutch_sentence_news": (
-        "Speak in Dutch (nl-NL). Use a clear Randstad Dutch accent, "
-        "as in NOS news broadcasts. Keep intonation natural and flowing, "
-        "moderate speed, no raspiness."
+        "Speak Dutch (nl-NL, Netherlands). Neutral Randstad accent. "
+        "Natural, flowing prosody at normal pace. Do not translate or explain. "
+        "No Flemish influence, no English coloring, no spelling of words."
     ),
     "Dutch_sentence_learning": (
-        "Speak Dutch (nl-NL) with a neutral, standard accent, "
-        "suitable for language learners. Keep tempo slightly slower than normal, "
-        "articulate clearly, no Flemish influence."
+        "Speak Dutch (nl-NL, Netherlands) with a neutral standard accent, "
+        "slightly slower than normal for learners, very clear articulation. "
+        "Do not translate, spell letters, or add explanations."
     ),
     "Dutch_sentence_radio": (
-        "Read in Dutch (nl-NL) with a standard accent as used in national radio. "
-        "Use warm, clear tone, no rasp, steady rhythm."
+        "Read in Dutch (nl-NL) with warm, clear tone similar to national radio. "
+        "Steady rhythm, no raspiness, no Flemish accent, no explanations."
     ),
+    # Single words
     "Dutch_word_dictionary": (
-        "Pronounce in Dutch (nl-NL) with standard dictionary pronunciation. "
-        "Say the single word only, clear and clean, no added intonation."
+        "Pronounce in Dutch (nl-NL, Netherlands). Produce exactly the single word only — "
+        "no translation, no letter spelling, no punctuation, no extra words. "
+        "Avoid English or Flemish accent; use neutral Dutch dictionary pronunciation."
     ),
     "Dutch_word_learning": (
-        "Speak this word in Dutch (nl-NL), with careful articulation, neutral accent. "
-        "Produce only the word, no surrounding sounds or rasp."
+        "Say the single word in Dutch (nl-NL) with careful, clean articulation. "
+        "Output only the word itself — do not spell letters, do not translate, no extra sounds."
     ),
     "Dutch_word_academic": (
-        "Give the single word in Dutch (nl-NL), with exact phonetic accuracy. "
-        "Neutral Dutch pronunciation, no Flemish accent, no raspiness."
+        "Pronounce the single word in Dutch (nl-NL) with precise, neutral pronunciation. "
+        "No Flemish or English accent; do not add anything besides the word."
     ),
 }
 AUDIO_SENTENCE_INSTRUCTION_DEFAULT: str = "Dutch_sentence_learning"
@@ -346,7 +349,7 @@ AUDIO_TTS_PROVIDERS: Dict[str, Dict[str, Any]] = {
         "word_styles": AUDIO_ELEVEN_STYLES["word"],
         "sentence_default": "Eleven_sentence_tutor",
         "word_default": "Eleven_word_dictionary",
-        "dynamic_voices": True,
+        "dynamic_voices": False,
         "voice_language_codes": ["nl"],
     },
 }

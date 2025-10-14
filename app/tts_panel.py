@@ -100,15 +100,23 @@ def render_audio_panel(
             return
 
         if provider_type == "elevenlabs":
-            eleven_api_key, key_changed = _render_elevenlabs_credentials(state, secret_elevenlabs)
-            if key_changed:
-                nonce = state.nonce()
-            catalog, refreshed = _resolve_elevenlabs_catalog(state, provider_data, eleven_api_key)
-            if refreshed:
-                nonce = state.nonce()
-            dynamic_voices = catalog.voices
-            dynamic_error = catalog.error
-            catalog_updated_at = catalog.updated_at
+            # Respect a feature flag: only load dynamic voices when enabled.
+            if bool(provider_data.get("dynamic_voices")):
+                eleven_api_key, key_changed = _render_elevenlabs_credentials(state, secret_elevenlabs)
+                if key_changed:
+                    nonce = state.nonce()
+                catalog, refreshed = _resolve_elevenlabs_catalog(state, provider_data, eleven_api_key)
+                if refreshed:
+                    nonce = state.nonce()
+                dynamic_voices = catalog.voices
+                dynamic_error = catalog.error
+                catalog_updated_at = catalog.updated_at
+            else:
+                eleven_api_key = state.get_elevenlabs_key()
+                dynamic_voices = []
+                dynamic_error = None
+                catalog_updated_at = None
+                st.caption("Using preset ElevenLabs voices (online catalogue disabled).")
         else:
             eleven_api_key = state.get_elevenlabs_key()
             dynamic_voices = []
