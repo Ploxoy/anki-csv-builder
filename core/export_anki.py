@@ -42,10 +42,14 @@ def build_anki_package(
     media_files: Dict[str, bytes] | None = None,
     include_basic_reversed: bool = False,
     include_basic_typein: bool = False,
+    basic_templates: Dict[str, str] | None = None,
+    typein_templates: Dict[str, str] | None = None,
 ) -> bytes:
     """Сформировать .apkg пакет.
 
     tags_meta может включать level/profile/model/L1 для тегов.
+    basic_templates / typein_templates ожидают готовые HTML-шаблоны,
+    передаваемые при включении соответствующих доп. колод.
     """
 
     if not HAS_GENANKI:
@@ -109,22 +113,28 @@ def build_anki_package(
         limit = 2_147_483_647
         return (int(base) + int(salt)) % limit or (int(base) ^ int(salt))
 
+    def _require_template(templates: Dict[str, str] | None, key: str, deck_label: str) -> str:
+        if not templates or key not in templates:
+            raise ValueError(f"Missing template '{key}' required for {deck_label} deck.")
+        return templates[key]
+
     if include_basic_reversed:
+        deck_label = "Basic (and reversed)"
         basic_model_id = _derive_id(model_id, 101)
         basic_model = genanki.Model(
             basic_model_id,
-            f"{model_name} — Basic (and reversed)",
+            f"{model_name} — {deck_label}",
             fields=[{"name": "Front"}, {"name": "Back"}],
             templates=[
                 {
                     "name": "Card 1",
-                    "qfmt": "<div class=\"card-inner\" style=\"text-align:center\">{{Front}}</div>",
-                    "afmt": "<div class=\"card-inner\" style=\"text-align:center\">{{Front}}<hr id=\"answer\">{{Back}}</div>",
+                    "qfmt": _require_template(basic_templates, "card1_front", deck_label),
+                    "afmt": _require_template(basic_templates, "card1_back", deck_label),
                 },
                 {
                     "name": "Card 2",
-                    "qfmt": "<div class=\"card-inner\" style=\"text-align:center\">{{Back}}</div>",
-                    "afmt": "<div class=\"card-inner\" style=\"text-align:center\">{{Front}}<hr id=\"answer\">{{Back}}</div>",
+                    "qfmt": _require_template(basic_templates, "card2_front", deck_label),
+                    "afmt": _require_template(basic_templates, "card2_back", deck_label),
                 },
             ],
             css=css,
@@ -149,16 +159,17 @@ def build_anki_package(
         extra_decks.append(deck_basic)
 
     if include_basic_typein:
+        deck_label = "Basic (type-in)"
         typein_model_id = _derive_id(model_id, 202)
         typein_model = genanki.Model(
             typein_model_id,
-            f"{model_name} — Basic (type-in)",
+            f"{model_name} — {deck_label}",
             fields=[{"name": "Front"}, {"name": "Back"}],
             templates=[
                 {
                     "name": "Card 1",
-                    "qfmt": "<div class=\"card-inner\">{{Front}}<div class=\"answer\">{{type:Back}}</div></div>",
-                    "afmt": "<div class=\"card-inner\">{{Front}}<hr id=\"answer\">{{Back}}</div>",
+                    "qfmt": _require_template(typein_templates, "front", deck_label),
+                    "afmt": _require_template(typein_templates, "back", deck_label),
                 },
             ],
             css=css,

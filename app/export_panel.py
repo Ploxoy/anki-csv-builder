@@ -52,7 +52,10 @@ def render_export_section(state: Any, settings: SidebarConfig, export_config: Ex
 
     if HAS_GENANKI:
         try:
-            front_html = export_config.front_template.replace("{L1_LABEL}", settings.L1_meta["label"])
+            front_template_raw = export_config.front_template_path.read_text(encoding="utf-8")
+            front_html = front_template_raw.replace("{L1_LABEL}", settings.L1_meta["label"])
+            back_html = export_config.back_template_path.read_text(encoding="utf-8")
+            css_content = export_config.css_path.read_text(encoding="utf-8")
             tags_meta = {
                 "level": state.get("level", settings.level),
                 "profile": state.get("prompt_profile", settings.profile),
@@ -72,6 +75,18 @@ def render_export_section(state: Any, settings: SidebarConfig, export_config: Ex
                 value=True,
                 key="export_include_basic_typein",
             )
+            basic_templates = None
+            if include_basic_rev:
+                basic_templates = {
+                    key: path.read_text(encoding="utf-8")
+                    for key, path in export_config.basic_templates.items()
+                }
+            typein_templates = None
+            if include_basic_typein:
+                typein_templates = {
+                    key: path.read_text(encoding="utf-8")
+                    for key, path in export_config.typein_templates.items()
+                }
             anki_bytes = build_anki_package(
                 export_cards,
                 l1_label=settings.L1_meta["label"],
@@ -82,12 +97,14 @@ def render_export_section(state: Any, settings: SidebarConfig, export_config: Ex
                 deck_id=export_config.anki_deck_id,
                 deck_name=export_config.anki_deck_name,
                 front_template=front_html,
-                back_template=export_config.back_template,
-                css=export_config.css,
+                back_template=back_html,
+                css=css_content,
                 tags_meta=tags_meta,
                 media_files=state.get("audio_media"),
                 include_basic_reversed=include_basic_rev,
                 include_basic_typein=include_basic_typein,
+                basic_templates=basic_templates,
+                typein_templates=typein_templates,
             )
             state.last_anki_package = anki_bytes
             st.download_button(

@@ -1,0 +1,75 @@
+<div class="card-inner">
+
+  <!-- First line: cloze + sentence audio (matches Front Template behavior) -->
+  <div class="section cloze-line">
+    {{cloze:L2_cloze}}
+    {{#AudioSentence}}
+      <span class="audio-icon">{{AudioSentence}}</span>
+    {{/AudioSentence}}
+  </div>
+
+  <div class="answer">
+
+    {{#L1_sentence}}
+    <div class="section l1">
+      <!-- L1 sentence shown without a duplicated audio button -->
+      {{L1_sentence}}
+    </div>
+    {{/L1_sentence}}
+
+    {{#L2_collocations}}
+    <div class="section">
+      <!-- Pass raw collocations safely via textContent -->
+      <div class="colloc-data" style="display:none;">{{L2_collocations}}</div>
+      <div class="colloc-container"></div>
+      <script>
+        (function () {
+          // Read raw text safely (prevents quote/HTML escaping issues)
+          var dataEl = document.querySelector('.colloc-data');
+          var container = document.querySelector('.colloc-container');
+          if (!dataEl || !container) return;
+
+          var collocText = (dataEl.textContent || '').trim();
+          if (!collocText) return;
+
+          // Split by ';', trim, dedupe
+          var seen = Object.create(null);
+          var items = collocText.split(';')
+            .map(function (s) { return s.trim(); })
+            .filter(function (s) { return s.length > 0 && !seen[s] && (seen[s] = true); });
+
+          if (items.length === 0) return;
+
+          // Render as <ul><li>...</li></ul>
+          var ul = document.createElement('ul');
+          ul.className = 'colloc';
+
+          for (var i = 0; i < items.length; i++) {
+            var li = document.createElement('li');
+            li.textContent = items[i];
+            ul.appendChild(li);
+          }
+          container.appendChild(ul);
+        })();
+      </script>
+    </div>
+    {{/L2_collocations}}
+
+    {{#L2_definition}}
+    <div class="section def">{{L2_definition}}</div>
+    {{/L2_definition}}
+
+    {{#L2_word}}
+    <div class="section lemma">
+      <span class="lemma-nl">{{L2_word}}</span>
+      {{#AudioWord}}
+      <span class="audio-icon">{{AudioWord}}</span>
+      {{/AudioWord}}
+      {{#L1_gloss}}
+      <span class="lemma-l1">— {{L1_gloss}}</span>
+      {{/L1_gloss}}
+    </div>
+    {{/L2_word}}
+
+  </div>
+</div>

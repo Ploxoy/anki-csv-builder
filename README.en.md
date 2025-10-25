@@ -1,4 +1,4 @@
-# Anki CSV Builder
+# 📘 Anki CSV Builder
 
 Streamlit app that turns Dutch vocabulary into ready-to-import Anki decks with help from the OpenAI Responses API.
 
@@ -9,46 +9,44 @@ Streamlit app that turns Dutch vocabulary into ready-to-import Anki decks with h
 - **Word validation with flags** plus an override option when you want to force generation
 - **Balanced signal words and separable-verb support**, including deterministic selection driven by a seed
 - **Smart model selection** with automatic fallback when `response_format` is not supported
-- **CSV and .apkg export** so you can either import or immediately load the deck into Anki
-- **Optional TTS** – after generation you can synthesize MP3 for both the word and the sentence (OpenAI TTS) with caching, fallback, and preserved summary logs with selectable voice and style presets (news, learning, radio, etc.)
+- **CSV and .apkg export** with optional Basic / Type In subdecks that share the same styling and audio attachments
+- **Optional TTS** — synthesize MP3 for both the word and the sentence (OpenAI TTS and ElevenLabs) with caching, retries, and per-card voice mapping
+
+## UI flow
+
+1. **Generate** — launch batch generation with live progress
+2. **Preview & fix** — inspect cards, flagged rows, and quick fixes
+3. **Audio (optional)** — pick provider, voice, and run TTS; exports pick up audio automatically
+4. **Export deck** — download CSV and/or `.apkg`, including the extra subdecks if enabled
 
 ## Card structure
 
-Each generated note contains the following fields:
+Each generated note includes:
 
-- `woord` – target Dutch word
-- `cloze_sentence` – Dutch sentence with cloze markup
-- `ru_sentence` – sentence translation (default L1 is Russian; other languages are available in the UI)
-- `collocaties` – three frequent collocations
-- `def_nl` – Dutch definition
-- `ru_short` – short gloss in the selected L1
+- `woord` — target Dutch word
+- `cloze_sentence` — Dutch sentence with cloze markup
+- `ru_sentence` — sentence translation (UI lets you pick other L1 languages)
+- `collocaties` — three frequent collocations
+- `def_nl` — Dutch definition
+- `ru_short` — short gloss in the selected L1
 
 ## Installation
 
-1. Clone the repository:
 ```bash
 git clone <repository-url>
 cd anki-csv-builder
-```
-
-2. Install dependencies:
-```bash
 pip install -r requirements.txt
 ```
 
-3. Configure the OpenAI API key:
-   - create `.streamlit/secrets.toml`, or
-   - enter the key in the Streamlit sidebar when the app starts
-
 ## Running the app
 
-Preferred entrypoint (new UI):
+Preferred entrypoint:
 
 ```bash
 streamlit run app/app.py
 ```
 
-Legacy shim that delegates to the same module (kept for compatibility):
+Legacy shim (kept for compatibility):
 
 ```bash
 streamlit run anki_csv_builder.py
@@ -58,30 +56,26 @@ streamlit run anki_csv_builder.py
 
 ```
 anki-csv-builder/
-├── app/
-│   └── app.py             # Streamlit UI
-├── anki_csv_builder.py    # Compatibility entrypoint that imports app/app.py
-├── core/                  # Parsing, generation, sanitisation, export helpers
-├── config/                # Settings, templates, signal-word groups, i18n
-├── notes/                 # Working notes (status, vision, idea, etc.)
-├── requirements.txt       # Dependencies
-├── README.md              # Russian documentation
-├── README.en.md           # English documentation
-└── tests/                 # Sample inputs and unit tests
+├── app/                 # Streamlit UI modules
+├── core/                # Parsing, generation, sanitisation, export helpers
+├── config/              # Settings, templates, signal-word groups, i18n
+├── notes/               # Project status, vision, specs
+├── tests/               # Unit tests and sample inputs
+├── README.md            # Russian documentation
+├── README.en.md         # English documentation
+└── requirements.txt     # Dependencies
 ```
 
 ## Configuration
 
-Key settings live in the `config/` package:
-
-- `config/settings.py` – available models, UI defaults, limits, request pacing
-- `config/templates_anki.py` – HTML/CSS note templates and Anki model/deck metadata
-- `config/signalword_groups.py` – signal-word pools grouped by CEFR level
-- `config/i18n.py` – CSV header localisation and L1 labels
+- `config/settings.py` — available models, UI defaults, pacing, template paths
+- `config/templates/` — HTML/CSS templates for Cloze, Basic, and Type In decks
+- `config/signalword_groups.py` — signal-word pools grouped by CEFR level
 
 ## Input formats
 
 ### Markdown table
+
 ```markdown
 | woord    | definitie NL | RU      |
 |----------|--------------|---------|
@@ -89,93 +83,95 @@ Key settings live in the `config/` package:
 ```
 
 ### TSV (tab-separated)
+
 ```
 aanraken	iets voelen	трогать
 begrijpen	snappen	понимать
 ```
 
 ### Plain text
+
 ```
 aanraken - iets voelen - трогать
 begrijpen - snappen - понимать
 ```
 
-## OpenAI API setup
+## OpenAI & ElevenLabs API setup
 
-1. Grab an API key from https://platform.openai.com
-2. Optional local secrets file:
+1. Create API keys at https://platform.openai.com and https://elevenlabs.io (optional).
+2. Store them in `.streamlit/secrets.toml`:
+
 ```toml
-OPENAI_API_KEY = "your-api-key-here"
+OPENAI_API_KEY = "your-openai-key"
+ELEVENLABS_API_KEY = "your-elevenlabs-key"
 ```
+
+…or enter them in the Streamlit sidebar when the app is running.
 
 ## Supported model families
 
-- `gpt-5*` – highest quality
-- `gpt-4.1*` – balance of speed and quality
-- `gpt-4o*` – faster and cheaper
-- `o3*` – reasoning-focused alternatives
+- `gpt-5*` — highest quality
+- `gpt-4.1*` — balance of speed and quality
+- `gpt-4o*` — faster and cheaper
+- `o3*` — reasoning-focused alternatives
 
 ## How to use
 
-1. Upload a word list or load the demo dataset
-2. Pick the OpenAI model and tweak generation settings
-3. Press "Generate" and review the preview
-4. Download the CSV or .apkg file and import it into Anki
+1. Upload a word list or load the demo dataset.
+2. Pick the OpenAI model and adjust generation settings.
+3. Press **Generate**, watch the progress, and review the preview.
+4. (Optional) Open **Audio** to synthesise word/sentence MP3.
+5. Download the CSV or `.apkg` file and import it into Anki.
 
 ### Extra tools
 
-- **Manual editor** – the ✍️ tab lets you build or tweak the list before generation.
-- **Quality flags** – warnings explain why a word was flagged; enable “Force generate for flagged entries” to process them anyway.
-- **Signal-word seed** – keep the same seed to reproduce the connector set across runs.
-- **Audio synthesis** – open the “🔊 Audio” panel, pick a voice, choose word/sentence toggles, then generate audio before exporting.
-- **Pronunciation styles** – select separate instruction presets for sentences vs. words (newsreader, learning, dictionary, academic).
+- **Manual editor** — build or tweak the list before generation.
+- **Quality flags** — see why a word was flagged; enable “Force generate for flagged entries” to include it anyway.
+- **Signal-word seed** — keep the same seed to reuse connector choices.
+- **Audio presets** — switch providers, voices, and instruction presets for sentences vs. words.
+- **Random voice per card** — optional mapping that keeps a consistent voice within each card.
+
+## Uploading to Anki
+
+1. Launch Anki Desktop and open the target deck.
+2. File → Import …
+   - For CSV: choose `anki_cards.csv`, set Type = Notes (Cloze) and delimiter `|`.
+   - For APKG: select `dutch_cloze.apkg` (creates the deck immediately).
+3. Confirm the field mapping (`L2_word` → Cloze field).
+4. Click **Import** and review the cards.
 
 ## Troubleshooting
 
-- **Invalid API key** – double-check the key in `.streamlit/secrets.toml` or the sidebar field.
-- **Slow generation** – switch to a faster model like `gpt-4o` or reduce the list size.
-- **Schema errors** – the app retries without `response_format`; if issues persist, re-run the item or choose a different model.
+- **Invalid API key** — double-check the key in `.streamlit/secrets.toml` or the sidebar field.
+- **Slow generation** — switch to a faster model like `gpt-4o` or reduce the batch size.
+- **Schema errors** — the app retries without `response_format`; if issues persist, re-run the item or choose a different model.
+- **No ElevenLabs voices** — use the refresh button in the audio panel or fall back to curated presets.
 
 ## Performance notes
 
-- **Request spacing** – 100 ms between calls (configurable via `config/settings.py`).
-- **Preview limit** – the UI shows the first 20 cards; full exports contain every successful item.
+- Default request spacing: 100 ms between API calls (configurable in `config/settings.py`).
+- Preview shows the first 20 cards; exports contain every successful item.
+- TTS workers automatically respect ElevenLabs rate limits (≤2 concurrent requests).
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Implement your changes
-4. Open a pull request
+1. Fork the repository.
+2. Create a feature branch.
+3. Implement your changes and add tests when possible.
+4. Open a pull request.
 
 ## License
 
-MIT License
+MIT License.
 
 ## Support
 
 Open an issue if you run into problems or have ideas to discuss.
 
+## Changelog highlights
 
+See `notes/status.md` for the full status log. Recent updates:
 
-## 📥 Uploading to Anki
-
-1. Launch Anki Desktop and open the deck where you want to import.
-2. File → Import …
-   - For CSV: choose `anki_cards.csv`, set Type = Notes (Cloze) and delimiter `|`.
-   - For APKG: just select `dutch_cloze.apkg` (creates deck immediately).
-3. Confirm the field mapping (L2_word → Cloze).
-4. Click `Import` and review the cards in the deck.
-
-## 🧾 Changelog (highlights)
-
-- Batch processing & parallel requests
-  - Added batch mode with Start/Next/Stop controls, auto‑advance, and both per‑batch and overall progress.
-  - Parallel requests inside a batch via ThreadPoolExecutor; results merged in input order for a stable preview.
-  - Auto‑tuning: recommended batch size/workers computed from dataset size (~20 per batch, ≤10 workers) and applied safely; workers adapt down on transient errors (429/timeout/5xx).
-- Structured outputs with Responses
-  - Switched to Responses `text.format` (`json_schema`) with schema normalisation; cache unsupported schema and automatically fall back to text parsing.
-- Debugging & UX
-  - Debug expander shows last request params, schema flags, and SDK version.
-  - Improved progress UI (“Overall X/Y”, “Done/Active/Queued • time • rate”) and a run summary (batches, processed, elapsed, rate, errors).
-  - Preview includes `error`/`error_stage`; errored cards are excluded from exports by default (toggle available).
+- Audio panel rebuilt with OpenAI + ElevenLabs support, presets, and detailed run summaries.
+- Anki templates moved to `config/templates/*` and loaded lazily during export.
+- `.apkg` export now bundles Cloze, Basic (reversed), and Type In subdecks with shared styling and audio hooks.

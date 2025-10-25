@@ -1,0 +1,17 @@
+<div class="card-inner">
+  <div class="section cloze-line">
+    {{cloze:L2_cloze}}
+    {{#AudioSentence}}<span class="audio-icon">{{AudioSentence}}</span>{{/AudioSentence}}
+  </div>
+  <div class="answer">
+    {{#L2_definition}}<div class="section def">{{L2_definition}}</div>{{/L2_definition}}
+    {{#L1_gloss}}
+    <div class="section">
+      <details class="hint">
+        <summary>RU</summary>
+        <div class="hint-body">{{L1_gloss}}</div>
+      </details>
+    </div>
+    {{/L1_gloss}}
+  </div>
+</div>
