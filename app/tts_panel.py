@@ -12,6 +12,7 @@ from core.audio import ensure_audio_for_cards, sentence_for_tts
 
 from . import audio_catalog, ui_helpers
 from .audio_state import AudioPanelState
+from .run_report import build_run_report
 
 try:  # pragma: no cover - optional import for type hints only
     from typing import TYPE_CHECKING
@@ -731,6 +732,7 @@ def _render_generate_button(
             )
         )
         state.set_results(results)
+        build_run_report(state.store)
         status_placeholder.text(
             f"Audio progress: {summary_obj.total_requests}/{summary_obj.total_requests} (100%)"
             if summary_obj.total_requests

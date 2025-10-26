@@ -8,6 +8,7 @@ import streamlit as st
 
 from .sidebar import SidebarConfig
 from .run_status import reset_run_stats
+from .run_report import reset_run_report
 
 
 ControlActions = Dict[str, bool]
@@ -63,6 +64,7 @@ class RunController:
         self.state.audio_summary = None
         self.state.current_index = 0
         reset_run_stats(self.state)
+        reset_run_report(self.state)
         self.state.run_active = True
         client = self._ensure_client()
         if client is not None:

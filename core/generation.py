@@ -579,6 +579,10 @@ def generate_card(
 
     # post-call: note if schema was removed by SDK
     request_info["response_format_removed"] = send_meta.get("response_format_removed", False)
+    request_info["temperature_removed"] = send_meta.get("temperature_removed", False)
+    request_info["retries"] = send_meta.get("retries", 0)
+    if send_meta.get("response_format_error"):
+        request_info["response_format_error"] = send_meta.get("response_format_error")
 
     meta: Dict[str, Any] = {
         "allowed_signalwords": allowed_signalwords,

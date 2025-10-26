@@ -13,6 +13,7 @@ from core.generation import GenerationSettings, generate_card
 from core.llm_clients import create_client
 
 from . import ui_helpers
+from .run_report import build_run_report
 from .run_status import (
     ensure_run_stats,
     record_batch_stats,
@@ -174,6 +175,7 @@ class BatchRunner:
             total=total_items,
             valid=valid_total,
         )
+        build_run_report(self.state)
 
         if batch_transient >= 2 and self.state.get("max_workers", 3) > 1:
             self.state.max_workers = int(self.state.get("max_workers", 3)) - 1
@@ -241,6 +243,7 @@ class BatchRunner:
         self.state.sig_usage = usage
         self.state.sig_last = last
         st.success("Errored items re-run completed.")
+        build_run_report(self.state)
 
     def _generate_entry(
         self,

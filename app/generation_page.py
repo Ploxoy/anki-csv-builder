@@ -11,6 +11,7 @@ from .debug_panel import render_debug_panel
 from .export_panel import render_export_section
 from .preview_panel import render_preview_section
 from .run_controls import RunController, render_run_controls
+from .run_report import render_run_report_section
 from .run_status import ensure_run_stats, update_overall_progress, update_run_summary
 from .sidebar import SidebarConfig
 from .tts_panel import render_audio_panel
@@ -97,4 +98,9 @@ def render_generation_page(
 
     st.markdown("### ④ Export deck")
     render_export_section(state, settings, export_config)
+    st.divider()
+
+    st.markdown("### ⑤ Run report")
+    render_run_report_section(state)
+
     render_debug_panel(state)
