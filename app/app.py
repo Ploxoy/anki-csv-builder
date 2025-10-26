@@ -62,42 +62,8 @@ from .ui_models import AudioConfig, ExportConfig  # noqa: E402
 
 
 st.set_page_config(page_title=CFG_PAGE_TITLE, layout=CFG_PAGE_LAYOUT)
-st.markdown("""
-<style>
-body {
-    background-color: #f8f8f8;
-    font-family: 'Inter', 'Segoe UI', sans-serif;
-    color: #333333;
-}
-h1, h2, h3, h4 {
-    font-family: 'Nunito Sans', 'Segoe UI', sans-serif;
-    color: #3178c6;
-}
-a, .stButton>button {
-    background-color: #3178c6 !important;
-    color: white !important;
-    border-radius: 6px;
-    border: none;
-    transition: background-color 0.2s ease;
-}
-a:hover, .stButton>button:hover {
-    background-color: #255a9b !important;
-}
-.stTextInput>div>div>input, .stTextArea textarea, .stSelectbox>div>div>select {
-    border: 1px solid #e0e0e0 !important;
-    border-radius: 6px !important;
-}
-.stAlert {
-    border-radius: 8px;
-    padding: 1em;
-}
-[data-testid="stSidebar"] {
-    background-color: #ffffff;
-    border-right: 1px solid #e0e0e0;
-}
-</style>
-""", unsafe_allow_html=True)
 
+ui_helpers.apply_theme()
 
 ui_helpers.ensure_session_defaults(
     providers=CFG_AUDIO_TTS_PROVIDERS,

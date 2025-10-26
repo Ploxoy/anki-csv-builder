@@ -11,6 +11,7 @@ from .debug_panel import render_debug_panel
 from .export_panel import render_export_section
 from .preview_panel import render_preview_section
 from .run_controls import RunController, render_run_controls
+from .run_status import ensure_run_stats, update_overall_progress, update_run_summary
 from .sidebar import SidebarConfig
 from .tts_panel import render_audio_panel
 from .ui_models import AudioConfig, ExportConfig
@@ -41,15 +42,7 @@ def render_generation_page(
 
     total = len(state.input_data)
     processed = len(state.get("results", []))
-    run_stats = state.get("run_stats") or {
-        "batches": 0,
-        "items": 0,
-        "elapsed": 0.0,
-        "errors": 0,
-        "transient": 0,
-        "start_ts": None,
-    }
-    state.run_stats = run_stats
+    run_stats = ensure_run_stats(state)
 
     st.markdown("### ① Generate")
     if simple_trigger and simple_msg:
@@ -57,20 +50,11 @@ def render_generation_page(
 
     summary = st.empty()
     valid_now = sum(1 for card in state.get("results", []) if not card.get("error"))
-    if run_stats["start_ts"]:
-        total_elapsed = max(0.001, time.time() - run_stats["start_ts"])
-        rate = run_stats["items"] / total_elapsed
-        summary.caption(
-            f"Run: batches {run_stats['batches']} • processed {processed}/{total} • valid {valid_now} • "
-            f"elapsed {total_elapsed:.1f}s • {rate:.2f}/s • errors {run_stats['errors']} (transient {run_stats['transient']})"
-        )
-    else:
-        summary.caption(f"Run: processed {processed}/{total} • valid {valid_now}")
+    update_run_summary(summary, run_stats, processed=processed, total=total, valid=valid_now)
 
     overall_caption = st.empty()
     overall = st.progress(0)
-    overall.progress(min(1.0, processed / max(total, 1)))
-    overall_caption.caption(f"Overall: {processed}/{total} processed")
+    update_overall_progress(overall, overall_caption, processed=processed, total=total)
 
     with st.expander("Advanced run controls", expanded=False):
         actions = render_run_controls()
