@@ -13,6 +13,14 @@ from core.generation import GenerationSettings, generate_card
 from core.llm_clients import create_client
 
 from . import ui_helpers
+from .run_report import build_run_report
+from .run_status import (
+    ensure_run_stats,
+    record_batch_stats,
+    render_batch_header,
+    update_overall_progress,
+    update_run_summary,
+)
 from .sidebar import SidebarConfig
 from .ui_models import GenerationRunContext
 
@@ -36,6 +44,7 @@ class BatchRunner:
         if run_ctx is None:
             return
 
+        run_stats = ensure_run_stats(self.state)
         ui_helpers.init_signalword_state()
         ui_helpers.init_response_format_cache()
         if not self.state.get("anki_run_id"):
@@ -53,12 +62,13 @@ class BatchRunner:
         input_snapshot = list(self.state.input_data)
         workers = int(self.state.get("max_workers", 3))
 
-        batch_header = st.empty()
-        batch_header.caption(
-            f"Batch {start_idx+1}–{end_idx} of {total_items} • size {len(indices)} • workers {workers}"
+        _, batch_prog, batch_status = render_batch_header(
+            start_index=start_idx,
+            end_index=end_idx,
+            total=total_items,
+            batch_size=len(indices),
+            workers=workers,
         )
-        batch_prog = st.progress(0)
-        batch_status = st.empty()
         batch_start_ts = time.time()
         results_map: Dict[int, dict] = {}
         completed = 0
@@ -88,8 +98,12 @@ class BatchRunner:
                     f"{elapsed:.1f}s • {rate:.2f}/s"
                 )
                 done_tasks = start_idx + completed
-                self.overall_progress.progress(min(1.0, done_tasks / max(total_items, 1)))
-                self.overall_caption.caption(f"Overall: {done_tasks}/{total_items} processed")
+                update_overall_progress(
+                    self.overall_progress,
+                    self.overall_caption,
+                    processed=done_tasks,
+                    total=total_items,
+                )
                 if self.api_delay > 0:
                     time.sleep(self.api_delay)
 
@@ -134,27 +148,34 @@ class BatchRunner:
         self.state.sig_last = last
         self.state.current_index = end_idx
         overall_count = len(self.state.results)
-        self.overall_progress.progress(min(1.0, overall_count / max(total_items, 1)))
-        self.overall_caption.caption(f"Overall: {overall_count}/{total_items} processed")
+        update_overall_progress(
+            self.overall_progress,
+            self.overall_caption,
+            processed=overall_count,
+            total=total_items,
+        )
         batch_elapsed = max(0.001, time.time() - batch_start_ts)
         batch_status.caption(
             f"Batch finished in {batch_elapsed:.1f}s • {len(indices)/batch_elapsed:.2f}/s"
         )
 
-        if not self.state.run_stats.get("start_ts"):
-            self.state.run_stats["start_ts"] = batch_start_ts
-        self.state.run_stats["batches"] += 1
-        self.state.run_stats["items"] += len(indices)
-        self.state.run_stats["elapsed"] += batch_elapsed
-        self.state.run_stats["errors"] += batch_errors
-        self.state.run_stats["transient"] += batch_transient
-        total_elapsed = max(0.001, time.time() - self.state.run_stats["start_ts"])
-        rate = self.state.run_stats["items"] / total_elapsed
-        self.summary.caption(
-            f"Run: batches {self.state.run_stats['batches']} • processed {overall_count}/{total_items} • "
-            f"elapsed {total_elapsed:.1f}s • {rate:.2f}/s • errors {self.state.run_stats['errors']} "
-            f"(transient {self.state.run_stats['transient']})"
+        record_batch_stats(
+            run_stats,
+            items_processed=len(indices),
+            errors=batch_errors,
+            transient_errors=batch_transient,
+            batch_started_at=batch_start_ts,
+            batch_duration=batch_elapsed,
         )
+        valid_total = sum(1 for card in self.state.results if not card.get("error"))
+        update_run_summary(
+            self.summary,
+            run_stats,
+            processed=overall_count,
+            total=total_items,
+            valid=valid_total,
+        )
+        build_run_report(self.state)
 
         if batch_transient >= 2 and self.state.get("max_workers", 3) > 1:
             self.state.max_workers = int(self.state.get("max_workers", 3)) - 1
@@ -222,6 +243,7 @@ class BatchRunner:
         self.state.sig_usage = usage
         self.state.sig_last = last
         st.success("Errored items re-run completed.")
+        build_run_report(self.state)
 
     def _generate_entry(
         self,

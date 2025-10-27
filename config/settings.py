@@ -3,6 +3,7 @@ Configuration for Anki CSV Builder
 """
 
 import os
+from pathlib import Path
 
 from typing import Any, Dict, List, Tuple
 
@@ -152,25 +153,25 @@ AUDIO_VOICES: List[Dict[str, str]] = [
 ]
 AUDIO_TTS_INSTRUCTIONS: Dict[str, str] = {
     "Dutch_sentence_news": (
-        "Speak in Dutch (nl-NL). Use a clear Randstad Dutch accent, "
+        "Speak in Dutch (nl-NL). Use a clear standart Dutch accent, "
         "as in NOS news broadcasts. Keep intonation natural and flowing, "
         "moderate speed, no raspiness."
     ),
     "Dutch_sentence_learning": (
-        "Speak Dutch (nl-NL) with a neutral, standard accent, "
+        "Speak Dutch (nl-NL) with a neutral, standart accent, "
         "suitable for language learners. Keep tempo slightly slower than normal, "
         "articulate clearly, no Flemish influence."
     ),
     "Dutch_sentence_radio": (
-        "Read in Dutch (nl-NL) with a standard accent as used in national radio. "
+        "Read in Dutch (nl-NL) with a standart accent as used in national radio. "
         "Use warm, clear tone, no rasp, steady rhythm."
     ),
     "Dutch_word_dictionary": (
-        "Pronounce in Dutch (nl-NL) with standard dictionary pronunciation. "
+        "Pronounce in Dutch (nl-NL) with standart dictionary pronunciation. "
         "Say the single word only, clear and clean, no added intonation."
     ),
     "Dutch_word_learning": (
-        "Speak this word in Dutch (nl-NL), with careful articulation, neutral accent. "
+        "Speak this word in Dutch (nl-NL), with careful articulation, neutral  accent. "
         "Produce only the word, no surrounding sounds or rasp."
     ),
     "Dutch_word_academic": (
@@ -346,7 +347,7 @@ AUDIO_TTS_PROVIDERS: Dict[str, Dict[str, Any]] = {
         "word_styles": AUDIO_ELEVEN_STYLES["word"],
         "sentence_default": "Eleven_sentence_tutor",
         "word_default": "Eleven_word_dictionary",
-        "dynamic_voices": True,
+        "dynamic_voices": False,
         "voice_language_codes": ["nl"],
     },
 }
@@ -429,122 +430,23 @@ ANKI_MODEL_NAME: str = "Dutch Cloze (L2/L1)"
 ANKI_DECK_NAME: str = "Dutch"
 
 # ==========================
-# Anki templates (HTML/CSS)
+# Template file paths (HTML/CSS)
 # ==========================
 
-FRONT_HTML_TEMPLATE: str = """
-<div class="card-inner">
-  {{cloze:L2_cloze}}
-  <div class="audio-inline">
-    {{#AudioSentence}}
-    <span class="audio-icon">{{AudioSentence}}</span>
-    {{/AudioSentence}}
-  </div>
-  <div class="hints">
-    {{#L1_gloss}}
-    <details class="hint">
-      <summary>{L1_LABEL}</summary>
-      <div class="hint-body">{{L1_gloss}}</div>
-    </details>
-    {{/L1_gloss}}
+_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
-    {{#L2_definition}}
-    <details class="hint">
-      <summary>NL</summary>
-      <div class="hint-body">{{L2_definition}}</div>
-    </details>
-    {{/L2_definition}}
-  </div>
-</div>
-""".strip()
+CLOZE_FRONT_TEMPLATE_PATH: Path = _TEMPLATES_DIR / "cloze_front.html"
+CLOZE_BACK_TEMPLATE_PATH: Path = _TEMPLATES_DIR / "cloze_back.html"
+CLOZE_CSS_PATH: Path = _TEMPLATES_DIR / "cloze.css"
 
-BACK_HTML_TEMPLATE: str = """
-<div class="card-inner">
-  {{cloze:L2_cloze}}
-  <div class="answer">
-    {{#L1_sentence}}
-    <div class="section l1">
-      {{L1_sentence}}
-      {{#AudioSentence}}
-      <span class="audio-icon">{{AudioSentence}}</span>
-      {{/AudioSentence}}
-    </div>
-    {{/L1_sentence}}
+BASIC_CARD1_FRONT_TEMPLATE_PATH: Path = _TEMPLATES_DIR / "basic_card1_front.html"
+BASIC_CARD1_BACK_TEMPLATE_PATH: Path = _TEMPLATES_DIR / "basic_card1_back.html"
+BASIC_CARD2_FRONT_TEMPLATE_PATH: Path = _TEMPLATES_DIR / "basic_card2_front.html"
+BASIC_CARD2_BACK_TEMPLATE_PATH: Path = _TEMPLATES_DIR / "basic_card2_back.html"
 
-    {{#L2_collocations}}
-    <div class="section">
-      <div class="colloc-container"></div>
-      <script>
-        (function () {
-          var collocText = "{{L2_collocations}}";
-          if (!collocText || collocText.trim() === "") return;
-          
-          var items = collocText.split(';').map(function (s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
-          var container = document.querySelector('.colloc-container');
-          if (!container || items.length === 0) return;
-          
-          var ul = document.createElement('ul');
-          ul.className = 'colloc';
-          
-          for (var i = 0; i < items.length; i++) {
-            var li = document.createElement('li');
-            li.textContent = items[i];
-            ul.appendChild(li);
-          }
-          
-          container.appendChild(ul);
-        })();
-      </script>
-    </div>
-    {{/L2_collocations}}
+TYPEIN_FRONT_TEMPLATE_PATH: Path = _TEMPLATES_DIR / "typein_front.html"
+TYPEIN_BACK_TEMPLATE_PATH: Path = _TEMPLATES_DIR / "typein_back.html"
 
-    {{#L2_definition}}
-    <div class="section def">{{L2_definition}}</div>
-    {{/L2_definition}}
-
-    {{#L2_word}}
-    <div class="section lemma">
-      <span class="lemma-nl">{{L2_word}}</span>
-      {{#AudioWord}}
-      <span class="audio-icon">{{AudioWord}}</span>
-      {{/AudioWord}}
-      {{#L1_gloss}}
-      <span class="lemma-l1">— {{L1_gloss}}</span>
-      {{/L1_gloss}}
-    </div>
-    {{/L2_word}}
-  </div>
-</div>
-""".strip()
-
-CSS_STYLING: str = """
-/* ===== Minimal, unified styling for all cards ===== */
-:root{
-  --fs-base: clamp(18px, 1.2vw + 1.1vh, 28px);
-  --fs-sm: calc(var(--fs-base) * .9);
-  --fs-lg: calc(var(--fs-base) * 1.12);
-  --hl-col:#1976d2;
-  --hl-bg:rgba(25,118,210,.14);
-}
-.card{ font-size: var(--fs-base); line-height: 1.55; margin:0; background: transparent; }
-.card-inner{ width: min(92vw, 80ch); margin: 2.5vh auto; padding: 0 3vw; }
-.answer { margin-top:.75em; }
-.audio-inline{ margin-top:.4em; }
-.audio-icon{ display:inline-flex; align-items:center; justify-content:center; margin-left:.35em; }
-.audio-icon audio{ display:inline-block; height:26px; width:140px; vertical-align:middle; }
-.lemma .audio-icon audio{ height:24px; width:120px; }
-.section + .section { margin-top:.55em; padding-top:.45em; border-top:1px solid rgba(0,0,0,.14); }
-@media (prefers-color-scheme: dark){ .section + .section { border-top-color: rgba(255,255,255,.22); } }
-.def { font-style: italic; opacity:.9; font-size: var(--fs-sm); }
-.lemma { font-weight:600; }
-.lemma-nl{ color:var(--hl-col); font-variant: small-caps; letter-spacing:.02em; }
-.colloc{ margin:.1em 0 0 1.1em; padding:0; }
-.colloc li{ margin:.12em 0; }
-.cloze{ color:var(--hl-col); font-weight:700; }
-mark.hl{ background:var(--hl-bg); color:inherit; padding:0 .12em; border-radius:.18em; }
-img{ max-width:100%; height:auto; }
-@media (max-width: 420px){ .card-inner{ width: 94vw; padding: 0 3vw; } }
-""".strip()
 
 # ==========================
 # Configuration utility functions

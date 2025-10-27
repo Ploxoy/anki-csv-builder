@@ -127,3 +127,14 @@ def is_loading(store: MutableMapping[str, Any]) -> bool:
 
 def set_loading(store: MutableMapping[str, Any], value: bool) -> None:
     store[_LOADING_KEY] = bool(value)
+
+
+def clear_catalog(store: MutableMapping[str, Any], cache_key: str) -> None:
+    if not cache_key:
+        return
+    cache = _ensure_dict(store, _CACHE_KEY)
+    cache.pop(cache_key, None)
+    errors = _ensure_dict(store, _ERROR_KEY)
+    errors.pop(cache_key, None)
+    attempts = _attempts(store)
+    attempts.pop(cache_key, None)

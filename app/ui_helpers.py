@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import streamlit as st
 
+from config.theme import load_theme_css
 from core.llm_clients import (
     create_client,
     responses_accepts_param,
@@ -88,6 +89,13 @@ def ensure_session_defaults(
             state.elevenlabs_api_key = secret
         elif elevenlabs_default_key:
             state.elevenlabs_api_key = elevenlabs_default_key
+
+
+def apply_theme() -> None:
+    """Apply the Doedutch base theme (light + dark) to the active page."""
+
+    css = load_theme_css()
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
 def init_signalword_state() -> None:

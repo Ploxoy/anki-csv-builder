@@ -168,6 +168,10 @@ class AudioPanelState:
     def set_elevenlabs_key(self, key: str) -> None:
         self.store["elevenlabs_api_key"] = key
 
+    def clear_elevenlabs_key(self) -> None:
+        self.store.pop("elevenlabs_api_key", None)
+        self.store.pop("_elevenlabs_api_key_snapshot", None)
+
     def api_key_snapshot(self) -> str:
         value = self.store.get("_elevenlabs_api_key_snapshot")
         return value if isinstance(value, str) else ""
@@ -184,3 +188,12 @@ class AudioPanelState:
             return
         if not isinstance(self.store.get("_elevenlabs_api_key_snapshot"), str):
             self.store["_elevenlabs_api_key_snapshot"] = value
+
+    def is_replacing_elevenlabs_key(self) -> bool:
+        return bool(self.store.get("_elevenlabs_replacing_key", False))
+
+    def begin_elevenlabs_key_replace(self) -> None:
+        self.store["_elevenlabs_replacing_key"] = True
+
+    def end_elevenlabs_key_replace(self) -> None:
+        self.store["_elevenlabs_replacing_key"] = False

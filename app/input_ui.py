@@ -59,10 +59,24 @@ def render_input_section(demo_words: List[dict]) -> None:
             st.session_state.manual_rows = [{"woord": "", "def_nl": "", "translation": ""}]
             st.session_state.audio_media = {}
             st.session_state.audio_summary = None
+            st.session_state.manual_override_token = None
 
-    tab_upload, tab_manual = st.tabs(["📄 Upload", "✍️ Manual editor"])
+    maybe_mode = st.session_state.get("input_mode_override") or st.session_state.get("input_mode")
+    if maybe_mode not in {"upload", "manual"}:
+        maybe_mode = "upload"
 
-    with tab_upload:
+    tab_choice = st.radio(
+        "Input mode",
+        options=("upload", "manual"),
+        format_func=lambda val: "📄 Upload" if val == "upload" else "✍️ Manual editor",
+        key="input_mode",
+        horizontal=True,
+        index=(0 if maybe_mode == "upload" else 1),
+    )
+
+    st.session_state.input_mode_override = tab_choice
+
+    if tab_choice == "upload":
         uploaded_file = st.file_uploader(
             "Upload .txt / .md / .tsv / .csv",
             type=["txt", "md", "tsv", "csv"],
@@ -72,7 +86,7 @@ def render_input_section(demo_words: List[dict]) -> None:
 
         if uploaded_file is not None:
             upload_token = f"{getattr(uploaded_file, 'name', '')}|{getattr(uploaded_file, 'size', '')}"
-            if st.session_state.get("upload_token") != upload_token:
+            if st.session_state.get("upload_token") != upload_token or st.session_state.get("manual_override_token") not in (None, upload_token):
                 try:
                     file_text = uploaded_file.read().decode("utf-8")
                 except UnicodeDecodeError:
@@ -89,17 +103,20 @@ def render_input_section(demo_words: List[dict]) -> None:
                 ]
                 st.session_state.results = []
                 st.session_state.upload_token = upload_token
+                st.session_state.manual_override_token = None
+                st.session_state.input_mode_override = "upload"
                 ui_helpers.apply_recommended_batch_params(
                     len(st.session_state.input_data),
                     token=ui_helpers.compute_list_token(st.session_state.input_data),
                 )
                 ui_helpers.toast("Input replaced with uploaded file", icon="📄")
-
-    with tab_manual:
+    else:
         manual_cols = st.columns([1, 1, 1])
         with manual_cols[0]:
             if st.button("Reset list", key="manual_reset"):
                 st.session_state.manual_rows = [{"woord": "", "def_nl": "", "translation": ""}]
+                st.session_state.manual_override_token = None
+                st.session_state.input_mode_override = "manual"
         with manual_cols[1]:
             if st.button("Load demo", key="manual_seed_demo"):
                 st.session_state.manual_rows = [
@@ -110,12 +127,20 @@ def render_input_section(demo_words: List[dict]) -> None:
                     }
                     for row in demo_words
                 ]
+                st.session_state.manual_override_token = None
         with manual_cols[2]:
             st.caption(
-                "Add words, definitions, and translations if needed. You can edit or delete rows."
+                "Add words, definitions, translations — mark rows as Delete to remove them."
             )
 
-        manual_rows = list(st.session_state.manual_rows or [])
+        def _normalize_row(row: dict) -> dict:
+            return {
+                "woord": str(row.get("woord", "") or ""),
+                "def_nl": str(row.get("def_nl", "") or ""),
+                "translation": str(row.get("translation", "") or ""),
+            }
+
+        manual_rows = [_normalize_row(row) for row in (st.session_state.manual_rows or [])]
 
         def _is_empty(row: dict) -> bool:
             return not (
@@ -124,10 +149,29 @@ def render_input_section(demo_words: List[dict]) -> None:
                 or (row.get("translation") or "").strip()
             )
 
-        if not manual_rows or not _is_empty(manual_rows[-1]):
-            manual_rows.append({"woord": "", "def_nl": "", "translation": ""})
+        def _ensure_trailing_blank(rows: list[dict]) -> list[dict]:
+            rows_clean = rows[:]
+            if not rows_clean or not _is_empty(rows_clean[-1]):
+                rows_clean.append({"woord": "", "def_nl": "", "translation": ""})
+            return rows_clean
 
-        manual_df = pd.DataFrame(manual_rows).reindex(columns=["woord", "def_nl", "translation"])
+        base_rows = _ensure_trailing_blank(manual_rows)
+
+        editor_rows = []
+        initial_state: list[bool] = st.session_state.get("_manual_delete_state", [])
+        for idx, row in enumerate(base_rows):
+            row_copy = dict(row)
+            row_copy["_delete"] = bool(initial_state[idx]) if idx < len(initial_state) else False
+            editor_rows.append(row_copy)
+
+        manual_df = (
+            pd.DataFrame(editor_rows)
+            .fillna({"woord": "", "def_nl": "", "translation": "", "_delete": False})
+            .reindex(columns=["woord", "def_nl", "translation", "_delete"])
+        )
+        delete_col_help = (
+            "Mark rows you no longer need and press the delete button below to remove them."
+        )
         edited_df = st.data_editor(
             manual_df,
             key="manual_editor",
@@ -138,19 +182,50 @@ def render_input_section(demo_words: List[dict]) -> None:
                 "woord": st.column_config.TextColumn("woord", help="Target Dutch lemma (required)"),
                 "def_nl": st.column_config.TextColumn("def_nl", help="Optional: Dutch definition or context"),
                 "translation": st.column_config.TextColumn("translation", help="Optional: translation in your L1"),
+                "_delete": st.column_config.CheckboxColumn("Delete", help=delete_col_help),
             },
         )
 
-        st.session_state.manual_rows = edited_df.fillna("").to_dict("records")
+        edited_records = (
+            edited_df.fillna({"woord": "", "def_nl": "", "translation": "", "_delete": False}).to_dict("records")
+        )
+        st.session_state["_manual_delete_state"] = [bool(rec.get("_delete")) for rec in edited_records]
+
+        if st.button("🗑️ Remove marked rows", key="manual_remove_marked"):
+            edited_records = [row for row in edited_records if not row.get("_delete")]
+            st.session_state["_manual_delete_state"] = []
+
+        kept_records = []
+        for record in edited_records:
+            if record.get("_delete"):
+                continue
+            kept_records.append(
+                {
+                    "woord": str(record.get("woord", "") or ""),
+                    "def_nl": str(record.get("def_nl", "") or ""),
+                    "translation": str(record.get("translation", "") or ""),
+                }
+            )
+
+        st.session_state.manual_rows = [row for row in kept_records if not _is_empty(row)]
         manual_clean = ui_helpers.clean_manual_rows(st.session_state.manual_rows)
 
         apply_col, info_col = st.columns([1, 1])
         with apply_col:
             if st.button("Use manual list", type="primary", key="manual_apply"):
                 if manual_clean:
+                    current_upload_token = st.session_state.get("upload_token")
+                    if current_upload_token:
+                        st.session_state.manual_override_token = current_upload_token
+                        st.session_state.input_mode_override = "manual"
+                    st.session_state.manual_rows = manual_clean
                     st.session_state.input_data = manual_clean
                     st.session_state.results = []
-                    st.session_state.upload_token = None
+                    # Keep upload_token untouched so the uploaded file is not reloaded immediately.
+                    if current_upload_token:
+                        st.session_state.upload_token = current_upload_token
+                    else:
+                        st.session_state.upload_token = None
                     ui_helpers.apply_recommended_batch_params(
                         len(manual_clean),
                         token=ui_helpers.compute_list_token(manual_clean),

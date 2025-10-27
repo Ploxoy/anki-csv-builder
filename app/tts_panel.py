@@ -12,6 +12,7 @@ from core.audio import ensure_audio_for_cards, sentence_for_tts
 
 from . import audio_catalog, ui_helpers
 from .audio_state import AudioPanelState
+from .run_report import build_run_report
 
 try:  # pragma: no cover - optional import for type hints only
     from typing import TYPE_CHECKING
@@ -100,15 +101,27 @@ def render_audio_panel(
             return
 
         if provider_type == "elevenlabs":
-            eleven_api_key, key_changed = _render_elevenlabs_credentials(state, secret_elevenlabs)
-            if key_changed:
-                nonce = state.nonce()
-            catalog, refreshed = _resolve_elevenlabs_catalog(state, provider_data, eleven_api_key)
-            if refreshed:
-                nonce = state.nonce()
-            dynamic_voices = catalog.voices
-            dynamic_error = catalog.error
-            catalog_updated_at = catalog.updated_at
+            # Respect a feature flag: only load dynamic voices when enabled.
+            if bool(provider_data.get("dynamic_voices")):
+                eleven_api_key, key_changed = _render_elevenlabs_credentials(
+                    state,
+                    secret_elevenlabs,
+                    provider_data.get("voice_language_codes"),
+                )
+                if key_changed:
+                    nonce = state.nonce()
+                catalog, refreshed = _resolve_elevenlabs_catalog(state, provider_data, eleven_api_key)
+                if refreshed:
+                    nonce = state.nonce()
+                dynamic_voices = catalog.voices
+                dynamic_error = catalog.error
+                catalog_updated_at = catalog.updated_at
+            else:
+                eleven_api_key = state.get_elevenlabs_key()
+                dynamic_voices = []
+                dynamic_error = None
+                catalog_updated_at = None
+                st.caption("Using preset ElevenLabs voices (online catalogue disabled).")
         else:
             eleven_api_key = state.get_elevenlabs_key()
             dynamic_voices = []
@@ -222,7 +235,9 @@ def _render_provider_selector(
 def _render_elevenlabs_credentials(
     state: AudioPanelState,
     secret: Optional[str],
+    language_codes: Optional[Sequence[str]],
 ) -> tuple[str, bool]:
+    codes_list = [code for code in (language_codes or []) if code]
     stored_key = state.get_elevenlabs_key()
     if stored_key:
         state.seed_api_key_snapshot(stored_key)
@@ -231,11 +246,16 @@ def _render_elevenlabs_credentials(
 
     def _apply_key(value: str) -> None:
         nonlocal stored_key, nonce_changed
+        previous_key = stored_key
+        previous_cache_key = audio_catalog.elevenlabs_cache_key(previous_key, codes_list)
         state.set_elevenlabs_key(value)
         stored_key = value
+        if previous_cache_key and value != previous_key:
+            audio_catalog.clear_catalog(state.store, previous_cache_key)
         if state.update_api_key_snapshot(value):
             state.bump_nonce()
             nonce_changed = True
+        state.end_elevenlabs_key_replace()
 
     secret_loaded = False
     if not stored_key and secret:
@@ -244,29 +264,55 @@ def _render_elevenlabs_credentials(
             _apply_key(secret_clean)
             secret_loaded = True
 
-    placeholder = (
-        "Paste a new ElevenLabs API key to replace the stored value."
-        if stored_key
-        else "Paste your ElevenLabs API key to enable this provider."
-    )
+    replacing_key = state.is_replacing_elevenlabs_key()
+    show_input = not stored_key or replacing_key
 
-    manual_entry = st.text_input(
-        "ElevenLabs API Key",
-        type="password",
-        key=_ELEVENLABS_API_WIDGET_KEY,
-        help="Stored in ELEVENLABS_API_KEY env variable or enter manually for this session.",
-        placeholder=placeholder,
-    )
-    manual_entry = (manual_entry or "").strip()
-
-    if manual_entry:
-        _apply_key(manual_entry)
-        st.caption("ElevenLabs key stored for this session.")
-    elif stored_key:
+    if stored_key and not replacing_key:
         message = "ElevenLabs key stored for this session."
         if secret_loaded or (secret and stored_key == secret.strip()):
             message += " Loaded from Streamlit secrets."
         st.caption(message)
+        col_replace, col_clear = st.columns([1, 1])
+        with col_replace:
+            if st.button("Replace ElevenLabs key", key="elevenlabs_replace_key_btn"):
+                state.begin_elevenlabs_key_replace()
+                state.bump_nonce()
+                nonce_changed = True
+        with col_clear:
+            if st.button("Forget key", key="elevenlabs_clear_key_btn"):
+                cache_key = audio_catalog.elevenlabs_cache_key(stored_key, codes_list)
+                if cache_key:
+                    audio_catalog.clear_catalog(state.store, cache_key)
+                state.clear_elevenlabs_key()
+                stored_key = ""
+                state.begin_elevenlabs_key_replace()
+                state.bump_nonce()
+                nonce_changed = True
+                show_input = True
+
+    if show_input:
+        placeholder = (
+            "Paste your ElevenLabs API key to enable this provider."
+            if not stored_key
+            else "Paste a new ElevenLabs API key."
+        )
+        manual_entry = st.text_input(
+            "ElevenLabs API Key",
+            type="password",
+            key=_ELEVENLABS_API_WIDGET_KEY,
+            help="Stored in ELEVENLABS_API_KEY env variable or enter manually for this session.",
+            placeholder=placeholder,
+        )
+        manual_entry = (manual_entry or "").strip()
+
+        if manual_entry:
+            _apply_key(manual_entry)
+            st.caption("ElevenLabs key stored for this session.")
+        elif stored_key and replacing_key:
+            if st.button("Cancel", key="elevenlabs_cancel_key_btn"):
+                state.end_elevenlabs_key_replace()
+                state.bump_nonce()
+                nonce_changed = True
 
     return stored_key, nonce_changed
 
@@ -686,6 +732,7 @@ def _render_generate_button(
             )
         )
         state.set_results(results)
+        build_run_report(state.store)
         status_placeholder.text(
             f"Audio progress: {summary_obj.total_requests}/{summary_obj.total_requests} (100%)"
             if summary_obj.total_requests

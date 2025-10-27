@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 
@@ -23,9 +24,11 @@ class ExportConfig:
     anki_deck_id: int
     anki_model_name: str
     anki_deck_name: str
-    front_template: str
-    back_template: str
-    css: str
+    front_template_path: Path
+    back_template_path: Path
+    css_path: Path
+    basic_templates: Dict[str, Path]
+    typein_templates: Dict[str, Path]
 
 
 @dataclass

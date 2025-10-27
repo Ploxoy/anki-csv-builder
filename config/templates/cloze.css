@@ -1,0 +1,106 @@
+/* ===== Unified minimal styling for all cards (cleaned) ===== */
+
+/* Palette & type scale */
+:root{
+  --fs-base: clamp(18px, 1.2vw + 1.1vh, 28px);
+  --fs-sm: calc(var(--fs-base) * .9);
+  --fs-lg: calc(var(--fs-base) * 1.12);
+  --hl-col: #1976d2;
+  --hl-bg: rgba(25,118,210,.14);
+  --col-def: rgba(0,0,0,.70);
+  --col-muted: rgba(0,0,0,.60);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --col-def: rgba(255,255,255,.80);
+    --col-muted: rgba(255,255,255,.70);
+  }
+}
+
+/* Base */
+.card{ font-size: var(--fs-base); line-height: 1.55; margin:0; background: transparent; }
+.card-inner{ width: min(92vw, 80ch); margin: 2.5vh auto 4vh; padding: 0 3vw; }
+img{ max-width:100%; height:auto; border-radius:.2em; }
+
+/* Sections & dividers */
+.section + .section{ margin-top:.55em; padding-top:.45em; border-top:1px solid rgba(0,0,0,.14); scroll-margin-top:.6em; }
+@media (prefers-color-scheme: dark){ .section + .section{ border-top-color: rgba(255,255,255,.22); } }
+
+/* Cloze line (full-width first divider) */
+.cloze-line{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:.35em;
+  width:100%;
+  box-sizing:border-box;
+  border-bottom:1px solid rgba(0,0,0,.14);
+  padding-bottom:.4em;
+  margin-bottom:.6em;
+}
+@media (prefers-color-scheme: dark){ .cloze-line{ border-bottom-color: rgba(255,255,255,.22); } }
+
+/* Audio */
+.audio-icon{ display:inline-flex; align-items:center; justify-content:center; margin-left:.35em;
+  transition: transform .15s ease, filter .15s ease; }
+.audio-icon:hover{ transform: scale(1.04); filter: brightness(1.05); cursor: pointer; }
+.audio-icon audio{ display:inline-block; height:26px; width:140px; vertical-align:middle; outline:none; }
+.lemma .audio-icon audio{ height:24px; width:120px; }
+/* Focus ring polish */
+.audio-icon:focus-within{ outline: 1.5px solid var(--hl-col); outline-offset: 1.5px; border-radius: .4em; padding: .05em; }
+/* Prevent focus cut-off at bottom */
+.lemma .audio-icon{ position:relative; margin-bottom:2px; }
+
+/* Text roles */
+.answer{ margin-top:.75em; contain: content; }
+.def{ font-style: italic; font-size: var(--fs-sm); color: var(--col-def); opacity:.95; }
+.section.l1{ color: var(--col-muted); }
+.lemma{ display:flex; align-items:center; gap:.45em; font-weight:600; }
+.lemma-nl{ color:var(--hl-col); font-variant: small-caps; letter-spacing:.02em; }
+.lemma-l1{ opacity:.95; }
+.cloze{ color:var(--hl-col); font-weight:700; }
+mark.hl{ background:var(--hl-bg); color:inherit; padding:0 .12em; border-radius:.18em; }
+
+/* Collocations */
+.colloc{ margin:.1em 0 0 1.1em; padding:0; }
+.colloc li{ margin:.12em 0; line-height:1.4; }
+.colloc li::marker{ color:var(--hl-col); }
+
+/* Hints (details/summary) */
+.hint summary{ list-style:none; cursor:pointer; font-weight:600; user-select:none; }
+.hint summary::-webkit-details-marker{ display:none; }
+.hint summary::before{ content:"▶ "; display:inline-block; transform: translateY(-.02em); opacity:.75; }
+.hint[open] summary::before{ content:"▼ "; }
+.hint .hint-body{ margin-top:.35em; color:var(--col-muted); }
+
+/* Small screens */
+@media (max-width: 420px){
+  .card-inner{ width:94vw; padding:0 3vw; }
+}
+
+/* Type-in cards */
+.typein-input{ display:block; }
+.typein-input input{
+  width:100%;
+  font-size: var(--fs-base);
+  padding:.45em .55em;
+  border:1px solid rgba(0,0,0,.18);
+  border-radius:.4em;
+  box-sizing:border-box;
+  background:rgba(255,255,255,.85);
+}
+@media (prefers-color-scheme: dark){
+  .typein-input input{
+    border-color: rgba(255,255,255,.28);
+    background: rgba(0,0,0,.25);
+    color: inherit;
+  }
+}
+.typeGood{ color:var(--hl-col); font-weight:600; }
+.typeBad{ color:#d32f2f; font-weight:600; }
+.typeMissed{ color:var(--col-muted); font-style:italic; }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce){
+  .audio-icon{ transition:none; }
+}
