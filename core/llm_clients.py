@@ -56,6 +56,45 @@ def _sleep_backoff(attempt: int, base: float = 0.5) -> None:
     time.sleep(base * (2 ** attempt))
 
 
+def _extract_usage_tokens(usage: Any) -> Dict[str, int]:
+    """Return token usage details from a Responses API usage payload."""
+
+    def _coerce(value: Any) -> int:
+        if isinstance(value, (int, float)):
+            return int(value)
+        return 0
+
+    if isinstance(usage, dict):
+        prompt_val = usage.get("input_tokens", usage.get("prompt_tokens"))
+        completion_val = usage.get("output_tokens", usage.get("completion_tokens"))
+        total_val = usage.get("total_tokens")
+        cached_val = usage.get("cached_tokens")
+    else:
+        prompt_val = getattr(usage, "input_tokens", None)
+        if prompt_val is None:
+            prompt_val = getattr(usage, "prompt_tokens", None)
+        completion_val = getattr(usage, "output_tokens", None)
+        if completion_val is None:
+            completion_val = getattr(usage, "completion_tokens", None)
+        total_val = getattr(usage, "total_tokens", None)
+        cached_val = getattr(usage, "cached_tokens", None)
+
+    prompt_tokens = _coerce(prompt_val)
+    completion_tokens = _coerce(completion_val)
+    total_tokens = _coerce(total_val)
+    cached_tokens = _coerce(cached_val)
+
+    if not total_tokens:
+        total_tokens = prompt_tokens + completion_tokens
+
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "cached_tokens": cached_tokens,
+    }
+
+
 def send_responses_request(
     client: Any,
     model: str,
@@ -109,12 +148,19 @@ def send_responses_request(
         "response_format_removed": False,
         "temperature_removed": False,
         "retries": 0,
+        "cached_tokens": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
     }
 
     while attempt <= retries:
         try:
             resp = client.responses.create(**kwargs)
             metadata["retries"] = attempt
+            usage = getattr(resp, "usage", None)
+            if usage is not None:
+                metadata.update(_extract_usage_tokens(usage))
             return resp, metadata
         except Exception as exc:
             last_exc = exc
@@ -158,6 +204,9 @@ def send_responses_request(
                 try:
                     resp = client.responses.create(**kwargs)
                     metadata["retries"] = attempt
+                    usage = getattr(resp, "usage", None)
+                    if usage is not None:
+                        metadata.update(_extract_usage_tokens(usage))
                     return resp, metadata
                 except Exception as exc2:
                     last_exc = exc2

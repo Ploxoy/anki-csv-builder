@@ -20,31 +20,42 @@ def test_build_run_report_aggregates_metrics() -> None:
     state = SimpleNamespace()
     state.results = [
         _card(
-            {
-                "repair_attempted": False,
-                "response_format_removed": False,
-                "temperature_removed": False,
-                "model": "gpt-5",
-                "level": "B1",
-                "request": {"response_format_used": True, "retries": 0},
-            }
-        ),
-        _card(
-            {
-                "repair_attempted": True,
+                {
+                    "repair_attempted": False,
+                    "response_format_removed": False,
+                    "temperature_removed": False,
+                    "model": "gpt-5",
+                    "level": "B1",
+                    "request": {
+                        "response_format_used": True,
+                        "retries": 0,
+                        "cached_tokens": 400,
+                        "prompt_tokens": 400,
+                        "completion_tokens": 120,
+                        "total_tokens": 520,
+                    },
+                }
+            ),
+            _card(
+                {
+                    "repair_attempted": True,
                 "response_format_removed": True,
                 "temperature_removed": True,
                 "repair_response_format_removed": True,
                 "model": "gpt-5",
                 "level": "B2",
-                "request": {
-                    "response_format_used": True,
-                    "retries": 1,
-                    "response_format_error": "unexpected keyword argument 'text'",
+                    "request": {
+                        "response_format_used": True,
+                        "retries": 1,
+                        "response_format_error": "unexpected keyword argument 'text'",
+                        "cached_tokens": 1100,
+                        "prompt_tokens": 500,
+                        "completion_tokens": 150,
+                        "total_tokens": 650,
+                    },
                 },
-            },
-            error="validation_failed: missing collocations",
-        ),
+                error="validation_failed: missing collocations",
+            ),
         _card({"repair_attempted": False}, error="flagged_precheck"),
     ]
     state.sig_usage = {"omdat": 2, "maar": 1}
@@ -79,6 +90,11 @@ def test_build_run_report_aggregates_metrics() -> None:
     assert report["response_format"]["schema_removed"] == 1
     assert report["response_format"]["temperature_removed"] == 1
     assert report["response_format"]["repair_schema_removed"] == 1
+    tokens = report["tokens"]
+    assert tokens["cached"] == 1500
+    assert tokens["prompt"] == 900
+    assert tokens["completion"] == 270
+    assert tokens["total"] == 1170
     assert report["signalwords"]["total_found"] == 3
     assert report["signalwords"]["last"] == "maar"
     assert report["timing"]["batches"] == 2

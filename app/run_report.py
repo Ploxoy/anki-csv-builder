@@ -68,6 +68,10 @@ def build_run_report(state: Any) -> RunReport:
     temp_removed = 0
     schema_attempted = 0
     retries = 0
+    cached_tokens_total = 0
+    prompt_tokens_total = 0
+    completion_tokens_total = 0
+    total_tokens_total = 0
     response_format_errors: Counter[str] = Counter()
     models_counter: Counter[str] = Counter()
     levels_counter: Counter[str] = Counter()
@@ -102,6 +106,10 @@ def build_run_report(state: Any) -> RunReport:
                 schema_attempted += 1
             if int(req.get("retries", 0) or 0) > 0:
                 retries += 1
+            cached_tokens_total += int(req.get("cached_tokens", 0) or 0)
+            prompt_tokens_total += int(req.get("prompt_tokens", 0) or 0)
+            completion_tokens_total += int(req.get("completion_tokens", 0) or 0)
+            total_tokens_total += int(req.get("total_tokens", 0) or 0)
             err_reason = req.get("response_format_error") or meta.get("response_format_error")
             if isinstance(err_reason, str) and err_reason:
                 response_format_errors[err_reason] += 1
@@ -143,6 +151,12 @@ def build_run_report(state: Any) -> RunReport:
             "temperature_removed": temp_removed,
             "errors": dict(response_format_errors),
         },
+        "tokens": {
+            "prompt": prompt_tokens_total,
+            "completion": completion_tokens_total,
+            "total": total_tokens_total,
+            "cached": cached_tokens_total,
+        },
         "signalwords": {
             "usage": dict(sig_usage),
             "total_found": int(sum(sig_usage.values())),
@@ -159,7 +173,7 @@ def build_run_report(state: Any) -> RunReport:
         "audio": audio_summary,
         "cost": {
             "estimated_usd": None,
-            "notes": "Token usage not yet tracked; costs unavailable.",
+            "notes": "Token usage tracked; cost estimation coming later.",
         },
         "metadata": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -208,6 +222,16 @@ def render_run_report_section(state: Any) -> None:
     rf_errors = rf.get("errors", {})
     if rf_errors:
         st.write("Schema issues:", rf_errors)
+
+    token_stats = report.get("tokens", {})
+    st.write(
+        "**Tokens:** prompt {prompt} • completion {completion} • total {total} • cached {cached}".format(
+            prompt=token_stats.get("prompt", 0),
+            completion=token_stats.get("completion", 0),
+            total=token_stats.get("total", 0),
+            cached=token_stats.get("cached", 0),
+        )
+    )
 
     signal = report.get("signalwords", {})
     usage = signal.get("usage", {})

@@ -581,6 +581,23 @@ def generate_card(
     request_info["response_format_removed"] = send_meta.get("response_format_removed", False)
     request_info["temperature_removed"] = send_meta.get("temperature_removed", False)
     request_info["retries"] = send_meta.get("retries", 0)
+    request_info["cached_tokens"] = send_meta.get("cached_tokens", 0)
+    request_info["prompt_tokens"] = send_meta.get("prompt_tokens", 0)
+    request_info["completion_tokens"] = send_meta.get("completion_tokens", 0)
+    request_info["total_tokens"] = send_meta.get("total_tokens", 0)
+    instr_hash = hashlib.sha1(instructions.encode("utf-8")).hexdigest()
+    logger.debug(
+        "Prompt usage model=%s level=%s profile=%s woord=%s hash=%s prompt=%d completion=%d total=%d cached=%d",
+        settings.model,
+        settings.level,
+        settings.profile,
+        row.get("woord", ""),
+        instr_hash,
+        request_info["prompt_tokens"],
+        request_info["completion_tokens"],
+        request_info["total_tokens"],
+        request_info["cached_tokens"],
+    )
     if send_meta.get("response_format_error"):
         request_info["response_format_error"] = send_meta.get("response_format_error")
 
