@@ -266,6 +266,10 @@ def generate_card(
     """Сгенерировать карточку и вернуть её вместе с метаданными."""
 
     instructions = compose_instructions_en(settings.L1_code, settings.level, settings.profile)
+    instructions += (
+        "\n\nProvide your answer by filling ONLY the fields of the JSON object shown below under DATA.\n"
+        "Do not add or remove keys. Follow the validation rules strictly."
+    )
 
     include_sig = (
         settings.include_signalword
@@ -350,12 +354,16 @@ def generate_card(
         },
     }
 
-    input_text = (
-        "Input JSON:\n"
-        + json.dumps(payload, ensure_ascii=False)
-        + "\nReply with STRICT JSON ONLY. It must match this template exactly (same keys, one-line JSON):\n"
-        + json_template
+    shared_header = (
+        "DATA:\n"
+        "The JSON schema below describes the required fields.\n"
+        "Fill each field according to the instructions above.\n"
+        "SCHEMA_JSON:\n"
+        f"{json_template}\n"
+        "DATA_JSON:\n"
     )
+
+    input_text = shared_header + json.dumps(payload, ensure_ascii=False)
 
     def _finalize_with_error(
         *,

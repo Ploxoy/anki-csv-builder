@@ -60,7 +60,9 @@ class BatchRunner:
 
         indices = list(range(start_idx, end_idx))
         input_snapshot = list(self.state.input_data)
-        workers = int(self.state.get("max_workers", 3))
+        workers_setting = self.state.get("max_workers_runtime", self.state.get("max_workers", 3))
+        workers = max(1, int(workers_setting or 1))
+        self.state.max_workers_runtime = workers
 
         _, batch_prog, batch_status = render_batch_header(
             start_index=start_idx,
@@ -177,10 +179,12 @@ class BatchRunner:
         )
         build_run_report(self.state)
 
-        if batch_transient >= 2 and self.state.get("max_workers", 3) > 1:
-            self.state.max_workers = int(self.state.get("max_workers", 3)) - 1
+        if batch_transient >= 2 and workers > 1:
+            new_workers = max(1, workers - 1)
+            self.state.max_workers_runtime = new_workers
+            self.state.max_workers_pending = new_workers
             st.info(
-                f"Transient errors detected ({batch_transient}); reducing max workers to {self.state.max_workers} for next batch.",
+                f"Transient errors detected ({batch_transient}); reducing max workers to {new_workers} for next batch.",
                 icon="⚠️",
             )
 
@@ -213,7 +217,10 @@ class BatchRunner:
                 preserve_flagged_fields=True,
             )
 
-        with ThreadPoolExecutor(max_workers=int(self.state.get("max_workers", 3))) as ex:
+        workers_setting = self.state.get("max_workers_runtime", self.state.get("max_workers", 3))
+        workers = max(1, int(workers_setting or 1))
+        self.state.max_workers_runtime = workers
+        with ThreadPoolExecutor(max_workers=workers) as ex:
             futures = {ex.submit(_worker, idx, self.state.input_data[idx]): idx for idx in err_indices}
             completed = 0
             for future in as_completed(futures):

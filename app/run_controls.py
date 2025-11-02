@@ -65,6 +65,7 @@ class RunController:
         self.state.current_index = 0
         reset_run_stats(self.state)
         reset_run_report(self.state)
+        self.state.pop("max_workers_runtime", None)
         self.state.run_active = True
         client = self._ensure_client()
         if client is not None:
