@@ -11,6 +11,7 @@ Streamlit app that turns Dutch vocabulary into ready-to-import Anki decks with h
 - **Smart model selection** with automatic fallback when `response_format` is not supported
 - **CSV and .apkg export** with optional Basic / Type In subdecks that share the same styling and audio attachments
 - **Optional TTS** — synthesize MP3 for both the word and the sentence (OpenAI TTS and ElevenLabs) with caching, retries, and per-card voice mapping
+- **Run report 2.0** — per-model token usage, repair/fallback share, and cost estimates (text + TTS) with downloadable JSON
 
 ## UI flow
 
@@ -175,3 +176,7 @@ See `notes/status.md` for the full status log. Recent updates:
 - Audio panel rebuilt with OpenAI + ElevenLabs support, presets, and detailed run summaries.
 - Anki templates moved to `config/templates/*` and loaded lazily during export.
 - `.apkg` export now bundles Cloze, Basic (reversed), and Type In subdecks with shared styling and audio hooks.
+- **Update pricing tables** if OpenAI releases new models or adjusts rates:
+  - Text generation: `config/pricing.py::MODEL_PRICING_USD_PER_1K`
+  - TTS: `config/pricing.py::AUDIO_MODEL_PRICING_USD_PER_1K_CHAR`
+  The run report uses these tables to compute cost estimates; when a model is missing, the UI shows a warning with the model name.

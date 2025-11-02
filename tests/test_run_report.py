@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.run_report import build_run_report, reset_run_report
 
 
@@ -69,6 +71,20 @@ def test_build_run_report_aggregates_metrics() -> None:
         "sentence_skipped": 1,
         "errors": [],
         "provider": "openai",
+        "voice": "alloy",
+        "total_characters": 1000,
+        "total_requests_billed": 2,
+        "model_usage": {
+            "gpt-4o-mini-tts": {
+                "chars": 1000,
+                "requests": 2,
+                "fallback_requests": 0,
+                "word_chars": 400,
+                "sentence_chars": 600,
+                "word_requests": 1,
+                "sentence_requests": 1,
+            }
+        },
     }
     state.run_stats = {
         "batches": 2,
@@ -95,6 +111,11 @@ def test_build_run_report_aggregates_metrics() -> None:
     assert tokens["prompt"] == 900
     assert tokens["completion"] == 270
     assert tokens["total"] == 1170
+    assert report["audio"]["total_characters"] == 1000
+    assert report["cost"]["text"]["estimated_usd"] == pytest.approx(0.0513, rel=1e-6)
+    assert report["cost"]["audio"]["estimated_usd"] == pytest.approx(0.015, rel=1e-6)
+    assert report["cost"]["estimated_usd"] == pytest.approx(0.0663, rel=1e-6)
+    assert report["cost"]["notes"] is None
     assert report["signalwords"]["total_found"] == 3
     assert report["signalwords"]["last"] == "maar"
     assert report["timing"]["batches"] == 2

@@ -10,6 +10,8 @@ from openai import OpenAI
 
 from core.audio import ensure_audio_for_cards, sentence_for_tts
 
+from config.pricing import AUDIO_MODEL_PRICING_USD_PER_1K_CHAR
+
 from . import audio_catalog, ui_helpers
 from .audio_state import AudioPanelState
 from .run_report import build_run_report
@@ -60,6 +62,16 @@ def _compute_unique_texts(cards: Sequence[Dict[str, Any]], include_word: bool, i
         "requests": (len(unique_words) if include_word else 0)
         + (len(unique_sentences) if include_sentence else 0),
     }
+
+
+def _resolve_audio_price(model_id: Optional[str]) -> Optional[float]:
+    if not model_id:
+        return None
+    model_id = str(model_id)
+    for key in sorted(AUDIO_MODEL_PRICING_USD_PER_1K_CHAR.keys(), key=len, reverse=True):
+        if model_id.startswith(key):
+            return AUDIO_MODEL_PRICING_USD_PER_1K_CHAR[key]
+    return None
 
 
 def render_audio_panel(
@@ -616,6 +628,34 @@ def _render_summary(
         st.caption(f"Provider → {provider_label}")
     if audio_summary.get("voice"):
         st.caption(f"Voice → {audio_summary['voice']}")
+
+    total_chars = int(audio_summary.get("total_characters", 0) or 0)
+    billed_requests = int(audio_summary.get("total_requests_billed", 0) or 0)
+    if billed_requests:
+        st.caption(f"Billed audio requests → {billed_requests} • characters → {total_chars}")
+    model_usage = audio_summary.get("model_usage") if isinstance(audio_summary, dict) else {}
+    if isinstance(model_usage, dict) and model_usage:
+        total_cost = 0.0
+        cost_available = False
+        missing: List[str] = []
+        for model_name, usage in model_usage.items():
+            if not isinstance(usage, dict):
+                continue
+            chars = int(usage.get("chars", 0) or 0)
+            price = _resolve_audio_price(model_name)
+            if price is None:
+                missing.append(model_name)
+                continue
+            if chars:
+                total_cost += (chars / 1000.0) * price
+                cost_available = True
+        if cost_available:
+            st.caption(f"Estimated TTS cost → ${total_cost:.4f} USD (OpenAI pricing).")
+        if missing:
+            st.caption(
+                "No pricing configured for: " + ", ".join(sorted(set(missing))) + ". "
+                "Update `AUDIO_MODEL_PRICING_USD_PER_1K_CHAR` if needed."
+            )
 
 
 def _render_generate_button(

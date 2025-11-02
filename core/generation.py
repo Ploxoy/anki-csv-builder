@@ -540,6 +540,14 @@ def generate_card(
         except Exception:
             parsed_repair = {}
 
+        if repair_meta:
+            request_info["repair_usage"] = {
+                "prompt_tokens": int(repair_meta.get("prompt_tokens", 0) or 0),
+                "completion_tokens": int(repair_meta.get("completion_tokens", 0) or 0),
+                "total_tokens": int(repair_meta.get("total_tokens", 0) or 0),
+                "cached_tokens": int(repair_meta.get("cached_tokens", 0) or 0),
+                "retries": int(repair_meta.get("retries", 0) or 0),
+            }
         if parsed_repair:
             for key in [
                 "L2_word",
