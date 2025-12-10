@@ -10,7 +10,7 @@ from openai import OpenAI
 
 from core.audio import ensure_audio_for_cards, sentence_for_tts
 
-from config.pricing import AUDIO_MODEL_PRICING_USD_PER_1K_CHAR
+from config.pricing import AUDIO_MODEL_PRICING_USD_PER_1M_CHAR
 
 from . import audio_catalog, ui_helpers
 from .audio_state import AudioPanelState
@@ -68,9 +68,9 @@ def _resolve_audio_price(model_id: Optional[str]) -> Optional[float]:
     if not model_id:
         return None
     model_id = str(model_id)
-    for key in sorted(AUDIO_MODEL_PRICING_USD_PER_1K_CHAR.keys(), key=len, reverse=True):
+    for key in sorted(AUDIO_MODEL_PRICING_USD_PER_1M_CHAR.keys(), key=len, reverse=True):
         if model_id.startswith(key):
-            return AUDIO_MODEL_PRICING_USD_PER_1K_CHAR[key]
+            return AUDIO_MODEL_PRICING_USD_PER_1M_CHAR[key]
     return None
 
 
@@ -647,14 +647,14 @@ def _render_summary(
                 missing.append(model_name)
                 continue
             if chars:
-                total_cost += (chars / 1000.0) * price
+                total_cost += (chars / 1_000_000.0) * price
                 cost_available = True
         if cost_available:
             st.caption(f"Estimated TTS cost → ${total_cost:.4f} USD (OpenAI pricing).")
         if missing:
             st.caption(
                 "No pricing configured for: " + ", ".join(sorted(set(missing))) + ". "
-                "Update `AUDIO_MODEL_PRICING_USD_PER_1K_CHAR` if needed."
+                "Update `AUDIO_MODEL_PRICING_USD_PER_1M_CHAR` if needed."
             )
 
 

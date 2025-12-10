@@ -193,6 +193,6 @@ See `notes/status.md` for the full status log. Recent updates:
 - Anki templates moved to `config/templates/*` and loaded lazily during export.
 - `.apkg` export now bundles Cloze, Basic (reversed), and Type In subdecks with shared styling and audio hooks.
 - **Update pricing tables** if OpenAI releases new models or adjusts rates:
-  - Text generation: `config/pricing.py::MODEL_PRICING_USD_PER_1K`
-  - TTS: `config/pricing.py::AUDIO_MODEL_PRICING_USD_PER_1K_CHAR`
+  - Text generation: `config/pricing.py::MODEL_PRICING_USD_PER_1M`
+  - TTS: `config/pricing.py::AUDIO_MODEL_PRICING_USD_PER_1M_CHAR`
   The run report uses these tables to compute cost estimates; when a model is missing, the UI shows a warning with the model name.

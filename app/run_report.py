@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Mapping, MutableMapping, Optional
 import pandas as pd
 import streamlit as st
 
-from config.pricing import AUDIO_MODEL_PRICING_USD_PER_1K_CHAR, MODEL_PRICING_USD_PER_1K
+from config.pricing import AUDIO_MODEL_PRICING_USD_PER_1M_CHAR, MODEL_PRICING_USD_PER_1M
 
 from .run_status import ensure_run_stats
 
@@ -45,9 +45,9 @@ def _resolve_pricing(model_id: Optional[str]) -> Optional[Dict[str, float]]:
     if not model_id:
         return None
     model_id = str(model_id)
-    for key in sorted(MODEL_PRICING_USD_PER_1K.keys(), key=len, reverse=True):
+    for key in sorted(MODEL_PRICING_USD_PER_1M.keys(), key=len, reverse=True):
         if model_id.startswith(key):
-            return MODEL_PRICING_USD_PER_1K[key]
+            return MODEL_PRICING_USD_PER_1M[key]
     return None
 
 
@@ -55,9 +55,9 @@ def _resolve_audio_pricing(model_id: Optional[str]) -> Optional[float]:
     if not model_id:
         return None
     model_id = str(model_id)
-    for key in sorted(AUDIO_MODEL_PRICING_USD_PER_1K_CHAR.keys(), key=len, reverse=True):
+    for key in sorted(AUDIO_MODEL_PRICING_USD_PER_1M_CHAR.keys(), key=len, reverse=True):
         if model_id.startswith(key):
-            return AUDIO_MODEL_PRICING_USD_PER_1K_CHAR[key]
+            return AUDIO_MODEL_PRICING_USD_PER_1M_CHAR[key]
     return None
 
 
@@ -287,8 +287,8 @@ def build_run_report(state: Any) -> RunReport:
         estimated = None
         if pricing and (prompt_all or completion_all):
             estimated = (
-                (prompt_all / 1000.0) * pricing["input"]
-                + (completion_all / 1000.0) * pricing["output"]
+                (prompt_all / 1_000_000.0) * pricing["input"]
+                + (completion_all / 1_000_000.0) * pricing["output"]
             )
             text_total_cost += estimated
             text_cost_available = True
@@ -326,7 +326,7 @@ def build_run_report(state: Any) -> RunReport:
                 pricing = _resolve_audio_pricing(model_name)
                 estimated_audio = None
                 if pricing and chars:
-                    estimated_audio = (chars / 1000.0) * pricing
+                    estimated_audio = (chars / 1_000_000.0) * pricing
                     audio_total_cost += estimated_audio
                     audio_cost_available = True
                 else:
@@ -645,8 +645,8 @@ def render_run_report_section(state: Any) -> None:
         st.write(f"**Cost estimate:** ${est_cost:.4f} USD{details}.")
     else:
         st.write(
-            "Cost estimate unavailable: configure pricing in `config.settings.MODEL_PRICING_USD_PER_1K` "
-            "and `AUDIO_MODEL_PRICING_USD_PER_1K_CHAR`."
+            "Cost estimate unavailable: configure pricing in `config.pricing.MODEL_PRICING_USD_PER_1M` "
+            "and `AUDIO_MODEL_PRICING_USD_PER_1M_CHAR`."
         )
     notes = cost_section.get("notes") if isinstance(cost_section, dict) else None
     if notes:

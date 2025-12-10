@@ -7,7 +7,7 @@ from pathlib import Path
 
 from typing import Any, Dict, List, Tuple
 
-from .pricing import AUDIO_MODEL_PRICING_USD_PER_1K_CHAR, MODEL_PRICING_USD_PER_1K
+from .pricing import AUDIO_MODEL_PRICING_USD_PER_1M_CHAR, MODEL_PRICING_USD_PER_1M
 
 # ==========================
 # Models: default list + dynamic loading from API
