@@ -76,8 +76,8 @@ PROMPT_PROFILES: Dict[str, str] = {
 LEVEL_RULES_EN: Dict[str, str] = {
     "A1": "6–9 words; no subclauses; no passive; no perfect.",
     "A2": "8–12 words; may use modal verbs; simple past allowed; no complex clauses.",
-    "B1": "10–14 words; simple subclause allowed (omdat/als/terwijl); ~50% with one signal word.",
-    "B2": "12–16 words; complex allowed; passive allowed; ~50% with one signal word (extended list).",
+    "B1": "10–14 words; simple subclause allowed (omdat/als/terwijl); ~50% with one signal word. If the target is a separable verb and grammar allows, prefer separated stem+particle in a main clause.",
+    "B2": "12–16 words; complex allowed; passive allowed; ~50% with one signal word (extended list). If the target is a separable verb and grammar allows, prefer separated stem+particle in a main clause.",
     "C1": "14–18 words; advanced structures; neutral‑formal.",
     "C2": "No length limit; native‑like precision.",
 }
@@ -109,12 +109,33 @@ CSV_HEADERS_FIXED: Dict[str, str] = {
 # ==========================
 
 DEMO_WORDS: List[Dict[str, str]] = [
-    {"woord": "aanraken", "def_nl": "iets met je hand of een ander deel van je lichaam voelen"},
+    # Simple lemma with dictionary-style definition
     {"woord": "begrijpen", "def_nl": "snappen wat iets betekent of inhoudt"},
-    {"woord": "gillen", "def_nl": "hard en hoog schreeuwen"},
-    #{"woord": "kloppen", "def_nl": "met regelmaat bonzen of tikken"},
-    #{"woord": "toestaan", "def_nl": "goedkeuren of laten gebeuren"},
-    #{"woord": "opruimen", "def_nl": "iets netjes maken door het op zijn plaats te leggen"},
+    # Lemma where def_nl is a full NL context sentence (not a bare definition)
+    {
+        "woord": "gillen",
+        "def_nl": "Toen ze het nieuws hoorde, begon ze zo hard te gillen dat de buren kwamen kijken.",
+    },
+    # Multi-word expression / collocation as target
+    {
+        "woord": "naar bed gaan",
+        "def_nl": "naar bed gaan op tijd is belangrijk als je morgen vroeg moet opstaan",
+    },
+    # Noun example: input in plural without article, def_nl is a sentence with it
+    {
+        "woord": "boeken",
+        "def_nl": "In de vakantie lees ik veel boeken in het Nederlands.",
+    },
+    # Verb example: input in past tense, def_nl is a sentence with it
+    {
+        "woord": "werkte",
+        "def_nl": "Vorige week werkte hij elke dag tot laat in de avond.",
+    },
+    # Separable verb given as finite+particle; cloze should cover both parts in context
+    {
+        "woord": "kwam erachter",
+        "def_nl": "Hij kwam erachter dat hij een fout had gemaakt.",
+    },
 ]
 
 # ==========================
@@ -373,7 +394,7 @@ CSV_HEADERS: List[str] = [
 
 MESSAGES = {
     # General hints
-    "demo_loaded": "🔁 Demo set of 6 words loaded",
+    "demo_loaded": "🔁 Demo set of example items loaded",
     "no_api_key": "Please provide OPENAI_API_KEY in Secrets or in the field on the left.",
     "temperature_unavailable": "Temperature unavailable for this model; it will be ignored.",
     "help_temperature": "Best quality — gpt-5 (if available); balanced — gpt-4.1; faster/cheaper — gpt-4o / gpt-5-mini.",

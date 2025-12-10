@@ -31,6 +31,7 @@ from core.sanitize_validate import (
     normalize_cloze_braces,
     force_wrap_first_match,
     try_separable_verb_wrap,
+    detect_separable_particle,
     validate_card,
 )
 from core.prompts import compose_instructions_en
@@ -46,6 +47,23 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 RAW_RESPONSE_MAX_LEN = 1500
+_CARD_TEXT_FIELDS = [
+    "L2_cloze",
+    "L1_sentence",
+    "L2_collocations",
+    "L2_definition",
+    "L1_gloss",
+    "L1_hint",
+]
+
+
+def _card_text_length(card: Dict[str, Any]) -> int:
+    total = 0
+    for field in _CARD_TEXT_FIELDS:
+        value = card.get(field, "")
+        if isinstance(value, str):
+            total += len(value)
+    return total
 ERROR_MESSAGE_MAX_LEN = 200
 
 
@@ -308,6 +326,7 @@ def generate_card(
         or ""
     )
 
+    sep_particle = detect_separable_particle(row.get("woord", ""))
     payload = {
         "L2_word": row.get("woord", "").strip(),
         "given_L2_definition": row.get("def_nl", "").strip(),
@@ -316,12 +335,14 @@ def generate_card(
         "CEFR": settings.level,
         "INCLUDE_SIGNALWORD": bool(include_sig and allowed_signalwords),
         "ALLOWED_SIGNALWORDS": allowed_signalwords,
+        "TARGET_IS_SEPARABLE": bool(sep_particle),
+        "SEPARABLE_PARTICLE": sep_particle,
     }
 
     json_template = (
         '{'
         '"L2_word": "<Dutch lemma>", '
-        '"L2_cloze": "ONE Dutch sentence with {{c1::...}} (and {{c2::...}} only if separable)", '
+        '"L2_cloze": "ONE Dutch sentence with {{c1::...}}; if separable, use two {{c1::...}} spans (stem and particle)", '
         f'"L1_sentence": "<exact translation into {settings.L1_name}>", '
         '"L2_collocations": "colloc1; colloc2; colloc3", '
         '"L2_definition": "<short Dutch definition>", '
@@ -411,7 +432,7 @@ def generate_card(
         )
 
     # Collect request info for debugging (trim long fields for meta)
-    _instr_short, _instr_trim = _trim_text(instructions)
+    _instr_short, _instr_trim = _trim_text(instructions, limit=5000)
     _input_short, _input_trim = _trim_text(input_text)
     request_info: Dict[str, Any] = {
         "model": settings.model,
@@ -468,6 +489,7 @@ def generate_card(
 
     try:
         raw_text_full = get_response_text(response)
+        raw_response_length = len(raw_text_full or "")
         raw_text, raw_trimmed = _trim_text(raw_text_full)
         parsed = get_response_parsed(response) or extract_json_block(raw_text_full)
     except Exception as exc:  # noqa: BLE001
@@ -519,6 +541,7 @@ def generate_card(
         )
         repair_input = "Previous JSON:\n" + json.dumps(card, ensure_ascii=False)
         repair_meta: Dict[str, Any] = {}
+        repair_length = 0
         try:
             rf_repair = json_schema if allow_schema_next else None
             repair_resp, repair_meta = send_responses_request(
@@ -535,6 +558,7 @@ def generate_card(
                 extra={"woord": row.get("woord", ""), "model": settings.model},
             )
             repair_full = get_response_text(repair_resp)
+            repair_length = len(repair_full or "")
             repair_raw, repair_trimmed = _trim_text(repair_full)
             parsed_repair = get_response_parsed(repair_resp) or extract_json_block(repair_full)
         except Exception:
@@ -593,6 +617,8 @@ def generate_card(
         last=signal_last,
     )
 
+    card_text_length = _card_text_length(card)
+
     # post-call: note if schema was removed by SDK
     request_info["response_format_removed"] = send_meta.get("response_format_removed", False)
     request_info["temperature_removed"] = send_meta.get("temperature_removed", False)
@@ -627,16 +653,19 @@ def generate_card(
         "repair_attempted": repair_attempted,
         "raw_response": raw_text,
         "raw_response_truncated": raw_trimmed,
+        "raw_response_length": raw_response_length,
         "response_format_removed": send_meta.get("response_format_removed", False),
         "response_format_error": send_meta.get("response_format_error"),
         "temperature_removed": send_meta.get("temperature_removed", False),
         "error": card.get("error", ""),
         "error_stage": "validation" if card.get("error") else None,
+        "card_text_length": card_text_length,
         "request": request_info,
     }
     if repair_raw:
         meta["repair_response"] = repair_raw
         meta["repair_response_truncated"] = repair_trimmed
+        meta["repair_response_length"] = repair_length
         meta["repair_response_format_removed"] = repair_meta.get("response_format_removed", False)
         meta["repair_response_format_error"] = repair_meta.get("response_format_error")
         meta["repair_temperature_removed"] = repair_meta.get("temperature_removed", False)

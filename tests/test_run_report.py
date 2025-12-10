@@ -22,35 +22,42 @@ def test_build_run_report_aggregates_metrics() -> None:
     state = SimpleNamespace()
     state.results = [
         _card(
-                {
-                    "repair_attempted": False,
-                    "response_format_removed": False,
-                    "temperature_removed": False,
-                    "model": "gpt-5",
-                    "level": "B1",
-                    "request": {
-                        "response_format_used": True,
-                        "retries": 0,
-                        "cached_tokens": 400,
-                        "prompt_tokens": 400,
-                        "completion_tokens": 120,
-                        "total_tokens": 520,
-                    },
-                }
-            ),
-            _card(
-                {
-                    "repair_attempted": True,
+            {
+                "repair_attempted": False,
+                "response_format_removed": False,
+                "temperature_removed": False,
+                "model": "gpt-5",
+                "level": "B1",
+                "raw_response_length": 1000,
+                "card_text_length": 620,
+                "raw_response_truncated": False,
+                "request": {
+                    "response_format_used": True,
+                    "retries": 0,
+                    "cached_tokens": 400,
+                    "prompt_tokens": 400,
+                    "completion_tokens": 120,
+                    "total_tokens": 520,
+                },
+            }
+        ),
+        _card(
+            {
+                "repair_attempted": True,
                 "response_format_removed": True,
                 "temperature_removed": True,
                 "repair_response_format_removed": True,
                 "model": "gpt-5",
                 "level": "B2",
-                    "request": {
-                        "response_format_used": True,
-                        "retries": 1,
-                        "response_format_error": "unexpected keyword argument 'text'",
-                        "cached_tokens": 1100,
+                "raw_response_length": 1200,
+                "card_text_length": 640,
+                "raw_response_truncated": True,
+                "repair_response_length": 800,
+                "request": {
+                    "response_format_used": True,
+                    "retries": 1,
+                    "response_format_error": "unexpected keyword argument 'text'",
+                    "cached_tokens": 1100,
                         "prompt_tokens": 500,
                         "completion_tokens": 150,
                         "total_tokens": 650,
@@ -111,6 +118,10 @@ def test_build_run_report_aggregates_metrics() -> None:
     assert tokens["prompt"] == 900
     assert tokens["completion"] == 270
     assert tokens["total"] == 1170
+    chars = tokens["chars"]
+    assert chars["raw"] == 2200
+    assert chars["final"] == 1260
+    assert chars["raw_trimmed_count"] == 1
     assert report["audio"]["total_characters"] == 1000
     assert report["cost"]["text"]["estimated_usd"] == pytest.approx(0.0513, rel=1e-6)
     assert report["cost"]["audio"]["estimated_usd"] == pytest.approx(0.015, rel=1e-6)

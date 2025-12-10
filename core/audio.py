@@ -29,6 +29,37 @@ __all__ = [
 _CLOZE_RE = re.compile(r"\{\{c[12]::(.*?)(?:::[^}]*)?\}\}")
 _WHITESPACE_RE = re.compile(r"\s+")
 
+AUDIO_CACHE_DIR = Path("cache") / "audio"
+AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _disk_cache_path(key: str) -> Path:
+    return AUDIO_CACHE_DIR / f"{key}.bin"
+
+
+def _load_disk_cache(key: str) -> Optional[bytes]:
+    path = _disk_cache_path(key)
+    if not path.exists():
+        return None
+    try:
+        return path.read_bytes()
+    except Exception:
+        return None
+
+
+def _store_disk_cache(key: str, data: bytes) -> None:
+    path = _disk_cache_path(key)
+    tmp_path = path.with_suffix(".tmp")
+    try:
+        tmp_path.write_bytes(data)
+        tmp_path.replace(path)
+    except Exception:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
 
 @dataclass
 class AudioSynthesisSummary:
@@ -739,21 +770,43 @@ def ensure_audio_for_cards(
         max_workers = min(max_workers, 2)
 
     per_run_cache: Dict[str, Tuple[str, bytes]] = {}
+    inflight: Dict[str, threading.Event] = {}
     cache_lock = threading.Lock()
     media_lock = threading.Lock()
 
-    def _load_from_cache(key: str) -> Optional[Tuple[str, bytes]]:
+    def _load_from_cache(key: str, filename_hint: Optional[str] = None) -> Optional[Tuple[str, bytes]]:
         with cache_lock:
             if key in per_run_cache:
                 return per_run_cache[key]
             if key in cache:
                 return cache[key]
+        disk_bytes = _load_disk_cache(key)
+        if disk_bytes is not None and filename_hint:
+            value = (filename_hint, disk_bytes)
+            with cache_lock:
+                per_run_cache[key] = value
+                cache[key] = value
+            return value
         return None
 
     def _store_in_cache(key: str, value: Tuple[str, bytes]) -> None:
         with cache_lock:
             per_run_cache[key] = value
             cache[key] = value
+        _store_disk_cache(key, value[1])
+
+    def _claim_or_wait(key: str, filename_hint: str) -> Tuple[Optional[Tuple[str, bytes]], Optional[threading.Event], bool]:
+        while True:
+            cached = _load_from_cache(key, filename_hint)
+            if cached is not None:
+                return cached, None, False
+            with cache_lock:
+                event = inflight.get(key)
+                if event is None:
+                    event = threading.Event()
+                    inflight[key] = event
+                    return None, event, True
+            event.wait()
 
     def _store_media(filename: str, data: bytes) -> None:
         with media_lock:
@@ -775,7 +828,8 @@ def ensure_audio_for_cards(
                     instruction_text = instruction_payload.strip() or None
                 cache_token = _payload_token(instruction_text)
                 cache_key = _cache_key(f"openai:{model_id}", voice, text, cache_token)
-                cached = _load_from_cache(cache_key)
+                filename_hint = _filename(kind, voice, text)
+                cached, inflight_event, owns_event = _claim_or_wait(cache_key, filename_hint)
                 cache_hit = False
                 if cached is not None:
                     filename, data = cached
@@ -791,6 +845,10 @@ def ensure_audio_for_cards(
                         instructions=instruction_text,
                     )
                 except Exception as err:  # pragma: no cover - network dependent
+                    if owns_event and inflight_event is not None:
+                        with cache_lock:
+                            inflight.pop(cache_key, None)
+                        inflight_event.set()
                     last_error = err
                     if idx < len(models_order) - 1 and _is_model_not_found(err):
                         fallback_flag = True
@@ -815,7 +873,8 @@ def ensure_audio_for_cards(
                 }
                 cache_token = _payload_token(token_source)
                 cache_key = _cache_key(f"elevenlabs:{model_id}", voice, text, cache_token)
-                cached = _load_from_cache(cache_key)
+                filename_hint = _filename(kind, voice, text)
+                cached = _load_from_cache(cache_key, filename_hint)
                 cache_hit = False
                 if cached is not None:
                     filename, data = cached
@@ -832,11 +891,19 @@ def ensure_audio_for_cards(
                         spoken_language=spoken_language,
                     )
                 except Exception as err:  # pragma: no cover - network dependent
+                    if owns_event and inflight_event is not None:
+                        with cache_lock:
+                            inflight.pop(cache_key, None)
+                        inflight_event.set()
                     last_error = err
                     raise
             filename = _filename(kind, voice, text)
             _store_in_cache(cache_key, (filename, data))
             _store_media(filename, data)
+            if owns_event and inflight_event is not None:
+                with cache_lock:
+                    inflight.pop(cache_key, None)
+                inflight_event.set()
             return filename, (fallback_flag or idx > 0), False, model_id
 
         if last_error:

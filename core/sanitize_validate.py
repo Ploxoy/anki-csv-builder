@@ -14,6 +14,7 @@ __all__ = [
     "normalize_cloze_braces",
     "force_wrap_first_match",
     "try_separable_verb_wrap",
+    "detect_separable_particle",
     "validate_card",
     "is_probably_dutch_word",
 ]
@@ -101,6 +102,20 @@ def try_separable_verb_wrap(lemma: str, sentence: str) -> str:
         if tok in allowed:
             return sentence[:m.start()] + "{{c2::" + m.group(1) + "}}" + sentence[m.end():]
     return sentence
+
+
+def detect_separable_particle(lemma: str) -> str:
+    """Return separable particle prefix if lemma likely separable, else ''.
+
+    Simple heuristic: if lemma starts with a known particle, return it.
+    """
+    if not isinstance(lemma, str) or not lemma:
+        return ""
+    lemma_lc = lemma.lower()
+    for p in _SEP_PARTICLES:
+        if lemma_lc.startswith(p):
+            return p
+    return ""
 
 
 # -----------------

@@ -152,7 +152,7 @@ with st.expander("▸ Опции (по желанию)"):
 st.markdown('</div>', unsafe_allow_html=True)  # /panel
 
 # ---------- Generate action ----------
-start = st.button("Сгенерировать колоду", use_container_width=True)
+start = st.button("Сгенерировать колоду", width="stretch")
 
 if start:
     if uploaded is None:
@@ -196,11 +196,11 @@ if ss.results_ready and ss.status == "Completed":
     st.success(f"✓ Обработано: {ss.processed}/{ss.total} • Ошибок: {ss.errors} • Время: {ss.elapsed:.1f}s • {ss.last_run_at}")
     d1, d2, d3 = st.columns([1,1,1])
     with d1:
-        st.download_button("⬇️ Скачать CSV", data=ss.csv_bytes, file_name="deck.csv", mime="text/csv", use_container_width=True)
+        st.download_button("⬇️ Скачать CSV", data=ss.csv_bytes, file_name="deck.csv", mime="text/csv", width="stretch")
     with d2:
-        st.download_button("⬇️ Скачать ZIP (аудио)", data=ss.zip_bytes, file_name="audio.zip", mime="application/zip", use_container_width=True)
+        st.download_button("⬇️ Скачать ZIP (аудио)", data=ss.zip_bytes, file_name="audio.zip", mime="application/zip", width="stretch")
     with d3:
-        st.button("→ Открыть Review", use_container_width=True, help="Переход на страницу проверки (заглушка)")
+        st.button("→ Открыть Review", width="stretch", help="Переход на страницу проверки (заглушка)")
     st.caption("Подсказка: для настоящих озвучек и тонкой настройки — откройте Settings.")
     st.markdown('</div>', unsafe_allow_html=True)
 

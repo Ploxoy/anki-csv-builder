@@ -105,6 +105,10 @@ def build_run_report(state: Any) -> RunReport:
     levels_counter: Counter[str] = Counter()
     fallback_per_model: Counter[str] = Counter()
     per_model_usage: Dict[str, Dict[str, int]] = {}
+    completion_chars_raw_total = 0
+    completion_chars_final_total = 0
+    raw_trimmed_total = 0
+    instructions_truncated = 0
 
     def _model_usage(model_name: str) -> Dict[str, int]:
         if not model_name:
@@ -123,6 +127,11 @@ def build_run_report(state: Any) -> RunReport:
                 "total_repair": 0,
                 "cached_repair": 0,
                 "fallbacks": 0,
+                "completion_chars_raw": 0,
+                "completion_chars_final": 0,
+                "completion_chars_raw_max": 0,
+                "completion_chars_final_max": 0,
+                "raw_trimmed": 0,
             }
             per_model_usage[model_name] = entry
         return entry
@@ -144,6 +153,24 @@ def build_run_report(state: Any) -> RunReport:
             levels_counter[level] += 1
         model_usage = _model_usage(model)
         model_usage["calls"] += 1
+
+        raw_len = int(meta.get("raw_response_length", 0) or 0)
+        final_len = int(meta.get("card_text_length", 0) or 0)
+        if raw_len > 0:
+            completion_chars_raw_total += raw_len
+            model_usage["completion_chars_raw"] += raw_len
+            model_usage["completion_chars_raw_max"] = max(
+                model_usage["completion_chars_raw_max"], raw_len
+            )
+        if final_len > 0:
+            completion_chars_final_total += final_len
+            model_usage["completion_chars_final"] += final_len
+            model_usage["completion_chars_final_max"] = max(
+                model_usage["completion_chars_final_max"], final_len
+            )
+        if bool(meta.get("raw_response_truncated")):
+            raw_trimmed_total += 1
+            model_usage["raw_trimmed"] += 1
 
         if err:
             if err == "flagged_precheck":
@@ -175,6 +202,8 @@ def build_run_report(state: Any) -> RunReport:
                 schema_attempted += 1
             if int(req.get("retries", 0) or 0) > 0:
                 retries += 1
+            if bool(req.get("instructions_truncated")):
+                instructions_truncated += 1
             cached_primary = int(req.get("cached_tokens", 0) or 0)
             prompt_primary = int(req.get("prompt_tokens", 0) or 0)
             completion_primary = int(req.get("completion_tokens", 0) or 0)
@@ -239,6 +268,11 @@ def build_run_report(state: Any) -> RunReport:
             "cached": usage["cached"],
             "cached_repair": usage["cached_repair"],
             "fallbacks": usage["fallbacks"],
+            "completion_chars_raw": usage["completion_chars_raw"],
+            "completion_chars_final": usage["completion_chars_final"],
+            "completion_chars_raw_max": usage["completion_chars_raw_max"],
+            "completion_chars_final_max": usage["completion_chars_final_max"],
+            "raw_trimmed": usage["raw_trimmed"],
         }
 
     text_cost_by_model: Dict[str, Dict[str, Optional[float]]] = {}
@@ -353,11 +387,19 @@ def build_run_report(state: Any) -> RunReport:
             "fallback_rate": fallback_rate,
             "fallback_by_model": dict(fallback_per_model),
         },
+        "prompting": {
+            "instructions_truncated": instructions_truncated,
+        },
         "tokens": {
             "prompt": prompt_total,
             "completion": completion_total,
             "total": tokens_total,
             "cached": cached_tokens_total,
+            "chars": {
+                "raw": completion_chars_raw_total,
+                "final": completion_chars_final_total,
+                "raw_trimmed_count": raw_trimmed_total,
+            },
             "primary": {
                 "prompt": prompt_tokens_primary_total,
                 "completion": completion_tokens_primary_total,
@@ -463,8 +505,15 @@ def render_run_report_section(state: Any) -> None:
     if rf_errors:
         st.write("Schema issues:", rf_errors)
 
+    prompting = report.get("prompting", {})
+    if prompting and prompting.get("instructions_truncated", 0):
+        st.warning(
+            f"Instructions were truncated for {prompting.get('instructions_truncated', 0)} request(s) in this run (UI log view only; full prompt was sent to the API)."
+        )
+
     token_stats = report.get("tokens", {})
     repair_tokens = token_stats.get("repair", {})
+    char_stats = token_stats.get("chars", {})
     st.write(
         "**Tokens:** "
         f"prompt {token_stats.get('prompt', 0)} "
@@ -475,6 +524,14 @@ def render_run_report_section(state: Any) -> None:
         f"(repair {repair_tokens.get('total', 0)}), "
         f"cached {token_stats.get('cached', 0)}."
     )
+    if isinstance(char_stats, dict) and char_stats:
+        st.caption(
+            "Completion chars: raw {raw} • final (sanitized fields) {final} • truncated responses {trimmed}.".format(
+                raw=char_stats.get("raw", 0),
+                final=char_stats.get("final", 0),
+                trimmed=char_stats.get("raw_trimmed_count", 0),
+            )
+        )
     tokens_by_model = token_stats.get("by_model", {})
     cost_section = report.get("cost", {})
     text_cost_section = cost_section.get("text", {}) if isinstance(cost_section, dict) else {}
@@ -494,6 +551,9 @@ def render_run_report_section(state: Any) -> None:
                     "Completion tokens": completion_all,
                     "Total tokens": total_all,
                     "Fallback cards": data.get("fallbacks", 0),
+                    "Raw chars": data.get("completion_chars_raw", 0),
+                    "Final chars": data.get("completion_chars_final", 0),
+                    "Max raw chars": data.get("completion_chars_raw_max", 0),
                     "Cost (USD)": (
                         text_cost_by_model.get(model_name, {}).get("estimated_usd")
                         if text_cost_by_model
@@ -504,7 +564,7 @@ def render_run_report_section(state: Any) -> None:
         df = pd.DataFrame(rows).set_index("Model")
         st.dataframe(
             df.style.format({"Cost (USD)": lambda v: "" if pd.isna(v) else f"{v:.6f}"}),
-            use_container_width=True,
+            width="stretch",
         )
 
     signal = report.get("signalwords", {})
@@ -566,7 +626,7 @@ def render_run_report_section(state: Any) -> None:
                 df_audio = pd.DataFrame(audio_rows).set_index("Model")
                 st.dataframe(
                     df_audio.style.format({"Cost (USD)": lambda v: "" if pd.isna(v) else f"{v:.6f}"}),
-                    use_container_width=True,
+                    width="stretch",
                 )
     else:
         st.write("Audio: not synthesized yet.")
@@ -592,10 +652,24 @@ def render_run_report_section(state: Any) -> None:
     if notes:
         st.write(notes)
 
+    def _with_ext(name: str, ext: str) -> str:
+        n = (name or "").strip()
+        if not n:
+            return f"run_report{ext}"
+        if not n.lower().endswith(ext):
+            return n + ext
+        return n
+
+    report_name = st.text_input(
+        "Report file name",
+        value="run_report.json",
+        key="run_report_name",
+        help="The suggested download name. Your browser decides the folder.",
+    )
     payload = json.dumps(report, ensure_ascii=False, indent=2)
     st.download_button(
-        "⬇️ Download run report (JSON)",
+        f"⬇️ Download {report_name or 'run_report.json'}",
         data=payload.encode("utf-8"),
-        file_name="run_report.json",
+        file_name=_with_ext(report_name, ".json"),
         mime="application/json",
     )
