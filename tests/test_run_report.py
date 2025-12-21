@@ -82,7 +82,7 @@ def test_build_run_report_aggregates_metrics() -> None:
         "total_characters": 1000,
         "total_requests_billed": 2,
         "model_usage": {
-            "gpt-4o-mini-tts": {
+            "gpt-4o-mini-tts-2025-12-15": {
                 "chars": 1000,
                 "requests": 2,
                 "fallback_requests": 0,

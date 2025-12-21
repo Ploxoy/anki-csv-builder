@@ -51,6 +51,7 @@ MODEL_PRICING_USD_PER_1M: Dict[str, Dict[str, float]] = {
 # Approximate TTS pricing (USD per 1M characters generated), aligned with
 # https://platform.openai.com/docs/pricing?latest-pricing=standard#transcription-and-speech
 AUDIO_MODEL_PRICING_USD_PER_1M_CHAR: Dict[str, float] = {
+    "gpt-4o-mini-tts-2025-12-15": 0.15,
     "gpt-4o-mini-tts": 0.15,
     "gpt-4o-tts": 2.5,
     "gpt-audio": 2.5,

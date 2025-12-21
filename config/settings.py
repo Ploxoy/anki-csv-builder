@@ -165,7 +165,7 @@ API_REQUEST_DELAY: float = 0.1
 # Audio / TTS settings
 # ==========================
 
-AUDIO_TTS_MODEL: str = "gpt-4o-mini-tts"
+AUDIO_TTS_MODEL: str = "gpt-4o-mini-tts-2025-12-15"
 AUDIO_TTS_FALLBACK: str | None = "gpt-4o-tts"
 AUDIO_VOICES: List[Dict[str, str]] = [
     {"id": "ash", "label": "Ash — NL male (neutral)"},
