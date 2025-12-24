@@ -72,6 +72,7 @@ def test_generate_card_with_parsed_response(monkeypatch, dummy_row, settings):
             "response_format_removed": False,
             "temperature_removed": False,
             "retries": 0,
+            "cached_tokens": 900,
         }
 
     call_log = []
@@ -99,6 +100,10 @@ def test_generate_card_with_parsed_response(monkeypatch, dummy_row, settings):
     assert result.card["error"] == ""
     assert not result.card["meta"]["raw_response_truncated"], "усечение не требуется"
     assert call_log == [("B1", settings.signalword_count, settings.signalword_seed)]
+    req_meta = result.card["meta"]["request"]
+    assert req_meta["cached_tokens"] == 900
+    assert req_meta["prompt_tokens"] == 0
+    assert req_meta["completion_tokens"] == 0
 
 
 def test_generate_card_repair_from_text(monkeypatch, dummy_row, settings):

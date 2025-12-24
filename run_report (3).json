@@ -1,0 +1,52 @@
+{
+  "generation": {
+    "total": 3,
+    "valid": 3,
+    "errored": 0,
+    "flagged_precheck": 0,
+    "repair_attempted": 1,
+    "retries": 0,
+    "models": {
+      "gpt-5-mini": 3
+    },
+    "levels": {
+      "B1": 3
+    }
+  },
+  "response_format": {
+    "schema_attempted": 3,
+    "schema_removed": 0,
+    "repair_schema_removed": 0,
+    "temperature_removed": 0,
+    "errors": {}
+  },
+  "tokens": {
+    "prompt": 3789,
+    "completion": 6796,
+    "total": 10585,
+    "cached": 0
+  },
+  "signalwords": {
+    "usage": {
+      "tenzij": 1
+    },
+    "total_found": 1,
+    "last": "tenzij"
+  },
+  "timing": {
+    "batches": 1,
+    "elapsed_seconds": 90.29683423042297,
+    "avg_seconds_per_batch": 90.29683423042297,
+    "items_per_second": 0.033223756132407516,
+    "start_timestamp": 1761971842.2049131,
+    "transient_errors": 0
+  },
+  "audio": {},
+  "cost": {
+    "estimated_usd": null,
+    "notes": "Token usage tracked; cost estimation coming later."
+  },
+  "metadata": {
+    "generated_at": "2025-11-01T04:38:52.502097+00:00"
+  }
+}

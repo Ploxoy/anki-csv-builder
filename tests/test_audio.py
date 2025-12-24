@@ -76,7 +76,14 @@ def test_fetch_elevenlabs_voices_filters_and_deduplicates(monkeypatch: pytest.Mo
     ]
 
 
-def test_ensure_audio_for_cards_reuses_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+def _set_temp_audio_cache(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    cache_dir = tmp_path / "audio-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(audio, "AUDIO_CACHE_DIR", cache_dir, raising=False)
+
+
+def test_ensure_audio_for_cards_reuses_cache(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _set_temp_audio_cache(monkeypatch, tmp_path)
     cards = [
         {"L2_word": "fiets", "L2_cloze": "{{c1::fiets}} is nieuw"},
         {"L2_word": "fiets", "L2_cloze": "{{c1::fiets}} is nieuw"},
@@ -122,3 +129,140 @@ def test_ensure_audio_for_cards_reuses_cache(monkeypatch: pytest.MonkeyPatch) ->
     assert cards[0]["AudioSentence"].startswith("[sound:")
     assert media_map
     assert progress_steps[-1] == (4, 4)
+
+
+def test_ensure_audio_for_cards_uses_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _set_temp_audio_cache(monkeypatch, tmp_path)
+    cards = [{"L2_word": "woord", "L2_cloze": "Dit {{c1::woord}}."}]
+
+    calls: list[str] = []
+
+    def fake_synthesize(*_, model: str, **__):
+        calls.append(model)
+        if model == "primary-tts":
+            raise RuntimeError("model_not_found: primary")
+        return b"audio-data"
+
+    monkeypatch.setattr(audio, "_synthesize", fake_synthesize)
+
+    media_map, summary = audio.ensure_audio_for_cards(
+        cards,
+        provider="openai",
+        voice="test-voice",
+        include_word=True,
+        include_sentence=False,
+        cache={},
+        progress_cb=None,
+        instruction_payloads=None,
+        instruction_keys=None,
+        max_workers=1,
+        openai_client=object(),
+        openai_model="primary-tts",
+        openai_fallback_model="fallback-tts",
+    )
+
+    assert summary.word_success == 1
+    assert summary.fallback_switches == 1
+    assert summary.cache_hits == 0
+    assert calls == ["primary-tts", "fallback-tts"]
+    assert cards[0]["AudioWord"].startswith("[sound:")
+    assert media_map
+
+
+def test_ensure_audio_cache_hits_across_runs(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _set_temp_audio_cache(monkeypatch, tmp_path)
+    cache: dict[str, tuple[str, bytes]] = {}
+    cards = [{"L2_word": "woord", "L2_cloze": "Dit {{c1::woord}}."}]
+
+    monkeypatch.setattr(audio, "_synthesize", lambda *_, **__: b"audio-data")
+
+    audio.ensure_audio_for_cards(
+        cards,
+        provider="openai",
+        voice="test-voice",
+        include_word=True,
+        include_sentence=False,
+        cache=cache,
+        progress_cb=None,
+        instruction_payloads=None,
+        instruction_keys=None,
+        max_workers=1,
+        openai_client=object(),
+        openai_model="gpt-tts",
+        openai_fallback_model=None,
+    )
+
+    cards_again = [{"L2_word": "woord", "L2_cloze": "Dit {{c1::woord}}."}]
+    _, summary_second = audio.ensure_audio_for_cards(
+        cards_again,
+        provider="openai",
+        voice="test-voice",
+        include_word=True,
+        include_sentence=False,
+        cache=cache,
+        progress_cb=None,
+        instruction_payloads=None,
+        instruction_keys=None,
+        max_workers=1,
+        openai_client=object(),
+        openai_model="gpt-tts",
+        openai_fallback_model=None,
+    )
+
+    assert summary_second.cache_hits == 1
+    assert summary_second.word_success == 1
+
+
+def test_disk_cache_survives_session(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _set_temp_audio_cache(monkeypatch, tmp_path)
+
+    cards = [{"L2_word": "woord", "L2_cloze": "Dit {{c1::woord}}."}]
+
+    synth_calls: list[str] = []
+
+    def fake_synthesize(*_, **__):
+        synth_calls.append("call")
+        return b"audio-data"
+
+    monkeypatch.setattr(audio, "_synthesize", fake_synthesize)
+
+    audio.ensure_audio_for_cards(
+        cards,
+        provider="openai",
+        voice="test-voice",
+        include_word=True,
+        include_sentence=False,
+        cache={},
+        progress_cb=None,
+        instruction_payloads=None,
+        instruction_keys=None,
+        max_workers=1,
+        openai_client=object(),
+        openai_model="gpt-tts",
+        openai_fallback_model=None,
+    )
+
+    # Second run should hit disk cache even with a fresh in-memory cache
+    def fail_synthesize(*_, **__):  # pragma: no cover - ensures we don't call synth again
+        raise AssertionError("synthesize should not be called when disk cache is used")
+
+    monkeypatch.setattr(audio, "_synthesize", fail_synthesize)
+
+    _, summary_second = audio.ensure_audio_for_cards(
+        [{"L2_word": "woord", "L2_cloze": "Dit {{c1::woord}}."}],
+        provider="openai",
+        voice="test-voice",
+        include_word=True,
+        include_sentence=False,
+        cache={},
+        progress_cb=None,
+        instruction_payloads=None,
+        instruction_keys=None,
+        max_workers=1,
+        openai_client=object(),
+        openai_model="gpt-tts",
+        openai_fallback_model=None,
+    )
+
+    assert summary_second.cache_hits == 1
+    assert synth_calls  # initial run executed

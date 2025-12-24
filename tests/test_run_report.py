@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.run_report import build_run_report, reset_run_report
 
 
@@ -26,7 +28,17 @@ def test_build_run_report_aggregates_metrics() -> None:
                 "temperature_removed": False,
                 "model": "gpt-5",
                 "level": "B1",
-                "request": {"response_format_used": True, "retries": 0},
+                "raw_response_length": 1000,
+                "card_text_length": 620,
+                "raw_response_truncated": False,
+                "request": {
+                    "response_format_used": True,
+                    "retries": 0,
+                    "cached_tokens": 400,
+                    "prompt_tokens": 400,
+                    "completion_tokens": 120,
+                    "total_tokens": 520,
+                },
             }
         ),
         _card(
@@ -37,14 +49,22 @@ def test_build_run_report_aggregates_metrics() -> None:
                 "repair_response_format_removed": True,
                 "model": "gpt-5",
                 "level": "B2",
+                "raw_response_length": 1200,
+                "card_text_length": 640,
+                "raw_response_truncated": True,
+                "repair_response_length": 800,
                 "request": {
                     "response_format_used": True,
                     "retries": 1,
                     "response_format_error": "unexpected keyword argument 'text'",
+                    "cached_tokens": 1100,
+                        "prompt_tokens": 500,
+                        "completion_tokens": 150,
+                        "total_tokens": 650,
+                    },
                 },
-            },
-            error="validation_failed: missing collocations",
-        ),
+                error="validation_failed: missing collocations",
+            ),
         _card({"repair_attempted": False}, error="flagged_precheck"),
     ]
     state.sig_usage = {"omdat": 2, "maar": 1}
@@ -58,6 +78,20 @@ def test_build_run_report_aggregates_metrics() -> None:
         "sentence_skipped": 1,
         "errors": [],
         "provider": "openai",
+        "voice": "alloy",
+        "total_characters": 1000,
+        "total_requests_billed": 2,
+        "model_usage": {
+            "gpt-4o-mini-tts": {
+                "chars": 1000,
+                "requests": 2,
+                "fallback_requests": 0,
+                "word_chars": 400,
+                "sentence_chars": 600,
+                "word_requests": 1,
+                "sentence_requests": 1,
+            }
+        },
     }
     state.run_stats = {
         "batches": 2,
@@ -79,6 +113,20 @@ def test_build_run_report_aggregates_metrics() -> None:
     assert report["response_format"]["schema_removed"] == 1
     assert report["response_format"]["temperature_removed"] == 1
     assert report["response_format"]["repair_schema_removed"] == 1
+    tokens = report["tokens"]
+    assert tokens["cached"] == 1500
+    assert tokens["prompt"] == 900
+    assert tokens["completion"] == 270
+    assert tokens["total"] == 1170
+    chars = tokens["chars"]
+    assert chars["raw"] == 2200
+    assert chars["final"] == 1260
+    assert chars["raw_trimmed_count"] == 1
+    assert report["audio"]["total_characters"] == 1000
+    assert report["cost"]["text"]["estimated_usd"] == pytest.approx(0.0513, rel=1e-6)
+    assert report["cost"]["audio"]["estimated_usd"] == pytest.approx(0.015, rel=1e-6)
+    assert report["cost"]["estimated_usd"] == pytest.approx(0.0663, rel=1e-6)
+    assert report["cost"]["notes"] is None
     assert report["signalwords"]["total_found"] == 3
     assert report["signalwords"]["last"] == "maar"
     assert report["timing"]["batches"] == 2

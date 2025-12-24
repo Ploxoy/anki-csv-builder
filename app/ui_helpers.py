@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import streamlit as st
@@ -13,6 +14,7 @@ from core.llm_clients import (
     responses_accepts_param,
     send_responses_request,
 )
+from .response_cache import load_response_format_cache, save_response_format_cache, update_probe_cache
 
 
 def get_secret(name: str) -> Optional[str]:
@@ -110,7 +112,11 @@ def init_response_format_cache() -> None:
     """Ensure schema support caches exist in session."""
 
     state = st.session_state
-    state.setdefault("no_response_format_models", set())
+    disk_cache = load_response_format_cache()
+    probe_map = {model: record.to_dict() for model, record in disk_cache.items()}
+    default_unsupported = {model for model, record in probe_map.items() if not record.get("supported", True)}
+    state.setdefault("response_format_probe", probe_map)
+    state.setdefault("no_response_format_models", set(default_unsupported))
     state.setdefault("no_response_format_notified", set())
 
 
@@ -121,8 +127,24 @@ def probe_response_format_support(client: object, model: str) -> None:
         return
     state = st.session_state
     cache: set[str] = set(state.get("no_response_format_models", set()))
-    if model in cache:
-        return
+    probe_state: Dict[str, Dict[str, object]] = dict(state.get("response_format_probe", {}))
+    existing = probe_state.get(model)
+    if existing:
+        updated_at_str = str(existing.get("updated_at", ""))
+        should_probe = True
+        try:
+            updated_at = datetime.fromisoformat(updated_at_str)
+        except ValueError:
+            updated_at = None
+        if updated_at:
+            age = datetime.now(timezone.utc) - updated_at
+            if age < timedelta(hours=12):
+                should_probe = False
+        if not should_probe:
+            if not existing.get("supported", True):
+                cache.add(model)
+                state["no_response_format_models"] = cache
+            return
     if not responses_accepts_param(client, "text"):
         cache.add(model)
         state["no_response_format_models"] = cache
@@ -164,6 +186,28 @@ def probe_response_format_support(client: object, model: str) -> None:
                 if detail:
                     message += f"\nReason: {detail}"
                 st.info(message, icon="ℹ️")
+            disk_cache = update_probe_cache(
+                load_response_format_cache(),
+                model=model,
+                supported=False,
+                reason=meta.get("response_format_error"),
+            )
+            save_response_format_cache(disk_cache)
+            probe_state[model] = disk_cache[model].to_dict()
+            state["response_format_probe"] = probe_state
+        else:
+            if model in cache:
+                cache.discard(model)
+                state["no_response_format_models"] = cache
+            disk_cache = update_probe_cache(
+                load_response_format_cache(),
+                model=model,
+                supported=True,
+                reason=None,
+            )
+            save_response_format_cache(disk_cache)
+            probe_state[model] = disk_cache[model].to_dict()
+            state["response_format_probe"] = probe_state
     except Exception:
         pass
 

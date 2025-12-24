@@ -264,11 +264,18 @@ def render_sidebar(
     st.session_state["L1_code"] = L1_code
 
     st.sidebar.subheader("Batch processing")
+    batch_default = int(st.session_state.get("batch_size", 5) or 5)
+    if batch_default > 50:
+        batch_default = 50
+        st.session_state["batch_size"] = batch_default
+    if batch_default < 1:
+        batch_default = 1
+        st.session_state["batch_size"] = batch_default
     st.sidebar.number_input(
         "Batch size",
         min_value=1,
         max_value=50,
-        value=st.session_state.get("batch_size", 5),
+        value=batch_default,
         step=1,
         help="How many rows to process per batch.",
         key="batch_size",
@@ -279,11 +286,18 @@ def render_sidebar(
         help="Continue to the next batch automatically until finished.",
         key="auto_advance",
     )
+    workers_default = int(st.session_state.get("max_workers", 3) or 3)
+    if workers_default > 8:
+        workers_default = 8
+        st.session_state["max_workers"] = workers_default
+    if workers_default < 1:
+        workers_default = 1
+        st.session_state["max_workers"] = workers_default
     st.sidebar.slider(
         "Max workers per batch",
         min_value=1,
         max_value=8,
-        value=st.session_state.get("max_workers", 3),
+        value=workers_default,
         step=1,
         help="Parallel requests inside a batch. Keep modest (3–4) to avoid rate limits.",
         key="max_workers",

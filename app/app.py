@@ -6,6 +6,24 @@ import sys
 
 import streamlit as st
 
+import logging
+from pathlib import Path
+
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
+
+gen_logger = logging.getLogger("core.generation")
+gen_logger.setLevel(logging.DEBUG)
+gen_logger.propagate = False  # чтобы не дублировать в общий поток
+
+handler = logging.FileHandler(log_dir / "generation.debug.log", mode="w", encoding="utf-8")
+handler.setLevel(logging.DEBUG)
+handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+
+gen_logger.handlers.clear()
+gen_logger.addHandler(handler)
+
+
 if __package__ is None or __package__ == "":
     package_root = Path(__file__).resolve().parent
     sys.path.insert(0, str(package_root.parent))

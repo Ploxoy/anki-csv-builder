@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, MutableMapping, Optional, Sequence, Set, Tuple
 
@@ -29,6 +29,37 @@ __all__ = [
 _CLOZE_RE = re.compile(r"\{\{c[12]::(.*?)(?:::[^}]*)?\}\}")
 _WHITESPACE_RE = re.compile(r"\s+")
 
+AUDIO_CACHE_DIR = Path("cache") / "audio"
+AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _disk_cache_path(key: str) -> Path:
+    return AUDIO_CACHE_DIR / f"{key}.bin"
+
+
+def _load_disk_cache(key: str) -> Optional[bytes]:
+    path = _disk_cache_path(key)
+    if not path.exists():
+        return None
+    try:
+        return path.read_bytes()
+    except Exception:
+        return None
+
+
+def _store_disk_cache(key: str, data: bytes) -> None:
+    path = _disk_cache_path(key)
+    tmp_path = path.with_suffix(".tmp")
+    try:
+        tmp_path.write_bytes(data)
+        tmp_path.replace(path)
+    except Exception:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
 
 @dataclass
 class AudioSynthesisSummary:
@@ -40,16 +71,45 @@ class AudioSynthesisSummary:
     sentence_success: int = 0
     word_skipped: int = 0
     sentence_skipped: int = 0
-    errors: List[str] = None  # type: ignore[assignment]
+    errors: List[str] = field(default_factory=list)
     fallback_switches: int = 0
     sentence_instruction_key: str = ""
     word_instruction_key: str = ""
     provider: str = ""
     voice: str = ""
+    model_usage: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    total_characters: int = 0
+    total_requests_billed: int = 0
 
-    def __post_init__(self) -> None:
-        if self.errors is None:
-            self.errors = []
+    def register_usage(self, model: str, kind: str, char_count: int, *, fallback_used: bool) -> None:
+        """Track billed usage for model/voice combination."""
+        if char_count <= 0:
+            return
+        model_key = model or "unknown"
+        entry = self.model_usage.setdefault(
+            model_key,
+            {
+                "chars": 0,
+                "requests": 0,
+                "fallback_requests": 0,
+                "word_chars": 0,
+                "sentence_chars": 0,
+                "word_requests": 0,
+                "sentence_requests": 0,
+            },
+        )
+        entry["chars"] += char_count
+        entry["requests"] += 1
+        if fallback_used:
+            entry["fallback_requests"] += 1
+        if kind == "word":
+            entry["word_chars"] += char_count
+            entry["word_requests"] += 1
+        else:
+            entry["sentence_chars"] += char_count
+            entry["sentence_requests"] += 1
+        self.total_characters += char_count
+        self.total_requests_billed += 1
 
 
 def sentence_for_tts(cloze_text: str) -> str:
@@ -710,27 +770,51 @@ def ensure_audio_for_cards(
         max_workers = min(max_workers, 2)
 
     per_run_cache: Dict[str, Tuple[str, bytes]] = {}
+    inflight: Dict[str, threading.Event] = {}
     cache_lock = threading.Lock()
     media_lock = threading.Lock()
 
-    def _load_from_cache(key: str) -> Optional[Tuple[str, bytes]]:
+    def _load_from_cache(key: str, filename_hint: Optional[str] = None) -> Optional[Tuple[str, bytes]]:
         with cache_lock:
             if key in per_run_cache:
                 return per_run_cache[key]
             if key in cache:
                 return cache[key]
+        disk_bytes = _load_disk_cache(key)
+        if disk_bytes is not None and filename_hint:
+            value = (filename_hint, disk_bytes)
+            with cache_lock:
+                per_run_cache[key] = value
+                cache[key] = value
+            return value
         return None
 
     def _store_in_cache(key: str, value: Tuple[str, bytes]) -> None:
         with cache_lock:
             per_run_cache[key] = value
             cache[key] = value
+        _store_disk_cache(key, value[1])
+
+    def _claim_or_wait(key: str, filename_hint: str) -> Tuple[Optional[Tuple[str, bytes]], Optional[threading.Event], bool]:
+        while True:
+            cached = _load_from_cache(key, filename_hint)
+            if cached is not None:
+                return cached, None, False
+            with cache_lock:
+                event = inflight.get(key)
+                if event is None:
+                    event = threading.Event()
+                    inflight[key] = event
+                    return None, event, True
+            event.wait()
 
     def _store_media(filename: str, data: bytes) -> None:
         with media_lock:
             media[filename] = data
 
-    def _generate_single(kind: str, text: str, instruction_payload: Optional[Any]) -> Tuple[str, bool, bool]:
+    def _generate_single(
+        kind: str, text: str, instruction_payload: Optional[Any]
+    ) -> Tuple[str, bool, bool, Optional[str]]:
         last_error: Optional[Exception] = None
         fallback_flag = False
         for idx, model_id in enumerate(models_order):
@@ -744,13 +828,14 @@ def ensure_audio_for_cards(
                     instruction_text = instruction_payload.strip() or None
                 cache_token = _payload_token(instruction_text)
                 cache_key = _cache_key(f"openai:{model_id}", voice, text, cache_token)
-                cached = _load_from_cache(cache_key)
+                filename_hint = _filename(kind, voice, text)
+                cached, inflight_event, owns_event = _claim_or_wait(cache_key, filename_hint)
                 cache_hit = False
                 if cached is not None:
                     filename, data = cached
                     _store_media(filename, data)
                     cache_hit = True
-                    return filename, (fallback_flag or idx > 0), cache_hit
+                    return filename, (fallback_flag or idx > 0), cache_hit, model_id
                 try:
                     data = _synthesize(
                         openai_client,
@@ -760,6 +845,10 @@ def ensure_audio_for_cards(
                         instructions=instruction_text,
                     )
                 except Exception as err:  # pragma: no cover - network dependent
+                    if owns_event and inflight_event is not None:
+                        with cache_lock:
+                            inflight.pop(cache_key, None)
+                        inflight_event.set()
                     last_error = err
                     if idx < len(models_order) - 1 and _is_model_not_found(err):
                         fallback_flag = True
@@ -784,7 +873,8 @@ def ensure_audio_for_cards(
                 }
                 cache_token = _payload_token(token_source)
                 cache_key = _cache_key(f"elevenlabs:{model_id}", voice, text, cache_token)
-                cached = _load_from_cache(cache_key)
+                filename_hint = _filename(kind, voice, text)
+                cached = _load_from_cache(cache_key, filename_hint)
                 cache_hit = False
                 if cached is not None:
                     filename, data = cached
@@ -801,12 +891,20 @@ def ensure_audio_for_cards(
                         spoken_language=spoken_language,
                     )
                 except Exception as err:  # pragma: no cover - network dependent
+                    if owns_event and inflight_event is not None:
+                        with cache_lock:
+                            inflight.pop(cache_key, None)
+                        inflight_event.set()
                     last_error = err
                     raise
             filename = _filename(kind, voice, text)
             _store_in_cache(cache_key, (filename, data))
             _store_media(filename, data)
-            return filename, (fallback_flag or idx > 0), False
+            if owns_event and inflight_event is not None:
+                with cache_lock:
+                    inflight.pop(cache_key, None)
+                inflight_event.set()
+            return filename, (fallback_flag or idx > 0), False, model_id
 
         if last_error:
             raise last_error
@@ -814,13 +912,15 @@ def ensure_audio_for_cards(
 
     processed = 0
 
-    def _worker(task: Tuple[int, str, str, Optional[Any]]) -> Tuple[int, str, Optional[str], bool, bool, Optional[Exception]]:
+    def _worker(
+        task: Tuple[int, str, str, Optional[Any]]
+    ) -> Tuple[int, str, Optional[str], bool, bool, Optional[Exception], Optional[str]]:
         card_idx, kind, text, instruction_payload = task
         try:
-            filename, used_fallback, cache_hit = _generate_single(kind, text, instruction_payload)
-            return card_idx, kind, filename, used_fallback, cache_hit, None
+            filename, used_fallback, cache_hit, model_used = _generate_single(kind, text, instruction_payload)
+            return card_idx, kind, filename, used_fallback, cache_hit, None, model_used
         except Exception as err:  # pragma: no cover - network dependent
-            return card_idx, kind, None, False, False, err
+            return card_idx, kind, None, False, False, err, None
 
     if progress_cb:
         progress_cb(0, total_tasks)
@@ -828,7 +928,12 @@ def ensure_audio_for_cards(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_worker, task): task for task in tasks}
         for future in as_completed(futures):
-            card_idx, kind, filename, used_fallback, cache_hit, error = future.result()
+            task = futures[future]
+            card_idx, kind, text, _payload = task
+            card_idx_res, kind_res, filename, used_fallback, cache_hit, error, model_used = future.result()
+            # Sanity: ensure indices align
+            card_idx = card_idx_res
+            kind = kind_res
             card = cards_list[card_idx]
             if error or not filename:
                 if kind == "word":
@@ -852,6 +957,13 @@ def ensure_audio_for_cards(
                     summary.cache_hits += 1
                 if used_fallback:
                     summary.fallback_switches += 1
+                if not cache_hit and model_used:
+                    summary.register_usage(
+                        model=model_used,
+                        kind=kind,
+                        char_count=len(text),
+                        fallback_used=used_fallback,
+                    )
 
             processed += 1
             if progress_cb:

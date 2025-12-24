@@ -42,10 +42,24 @@ def render_export_section(state: Any, settings: SidebarConfig, export_config: Ex
     )
 
     state.last_csv_data = csv_data
+    def _with_ext(name: str, ext: str) -> str:
+        n = (name or "").strip()
+        if not n:
+            return f"anki_cards{ext}"
+        if not n.lower().endswith(ext):
+            return n + ext
+        return n
+
+    csv_name = st.text_input(
+        "CSV file name",
+        value="anki_cards.csv",
+        key="export_csv_name",
+        help="The suggested download name. Your browser decides the folder.",
+    )
     st.download_button(
-        label="📥 Download anki_cards.csv",
+        label=f"📥 Download {csv_name or 'anki_cards.csv'}",
         data=csv_data,
-        file_name="anki_cards.csv",
+        file_name=_with_ext(csv_name, ".csv"),
         mime="text/csv",
         key="download_csv",
     )
@@ -107,10 +121,16 @@ def render_export_section(state: Any, settings: SidebarConfig, export_config: Ex
                 typein_templates=typein_templates,
             )
             state.last_anki_package = anki_bytes
+            apkg_name = st.text_input(
+                "APKG file name",
+                value="dutch_cloze.apkg",
+                key="export_apkg_name",
+                help="The suggested download name. Your browser decides the folder.",
+            )
             st.download_button(
-                label="🧩 Download Anki deck (.apkg)",
+                label=f"🧩 Download {apkg_name or 'dutch_cloze.apkg'}",
                 data=anki_bytes,
-                file_name="dutch_cloze.apkg",
+                file_name=_with_ext(apkg_name, ".apkg"),
                 mime="application/octet-stream",
                 key="download_apkg",
             )

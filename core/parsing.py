@@ -113,6 +113,16 @@ def parse_input(text: str) -> List[Dict]:
             if parsed:
                 rows.append(normalize_row(parsed))
                 continue
+        if ";;" in line:
+            parts = [p.strip() for p in line.split(";;")]
+            if parts and parts[0]:
+                row = {"woord": parts[0]}
+                if len(parts) >= 2:
+                    row["def_nl"] = parts[1]
+                if len(parts) >= 3:
+                    row["ru_short"] = parts[2]
+                rows.append(normalize_row(row))
+                continue
         # Fallback: treat entire line as a single 'woord'
         rows.append(normalize_row({"woord": line}))
 

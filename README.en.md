@@ -11,6 +11,10 @@ Streamlit app that turns Dutch vocabulary into ready-to-import Anki decks with h
 - **Smart model selection** with automatic fallback when `response_format` is not supported
 - **CSV and .apkg export** with optional Basic / Type In subdecks that share the same styling and audio attachments
 - **Optional TTS** — synthesize MP3 for both the word and the sentence (OpenAI TTS and ElevenLabs) with caching, retries, and per-card voice mapping
+- **Persistent TTS cache** — every synthesized MP3 is stored under `cache/audio/`, so already-paid audio survives reruns and quotas; reruns reuse the cached files automatically
+- **Schema-aware generation** — probes model `response_format` support once, caches the result, and falls back to text parsing only when required
+- **Completion diagnostics** — Run report now includes raw-vs-final character counts per model so runaway outputs (e.g., overly verbose GPT-5 runs) stand out immediately
+- **Run report 2.0** — per-model token usage, repair/fallback share, and cost estimates (text + TTS) with downloadable JSON
 
 ## UI flow
 
@@ -147,6 +151,19 @@ ELEVENLABS_API_KEY = "your-elevenlabs-key"
 - **Schema errors** — the app retries without `response_format`; if issues persist, re-run the item or choose a different model.
 - **No ElevenLabs voices** — use the refresh button in the audio panel or fall back to curated presets.
 
+### Model selection notes
+
+- `gpt-4.1-mini` keeps completion usage low (~300 tokens per card) and is the recommended economy default.
+- `gpt-5-mini` often returns the same-length JSON but is billed for hidden reasoning tokens; expect ~4–5× higher completion token cost unless you specifically need its premium quality.
+
+### Cache housekeeping
+
+- Schema probe results persist in `cache/response_format.json`. Delete that file if you want to force the app to re-test `response_format` support for every model.
+
+### Saving location
+
+- The app suggests file names for CSV/APKG/JSON, but the browser decides the folder. To be prompted for a path on every download, enable “Ask where to save each file” in your browser settings (Downloads preferences).
+
 ## Performance notes
 
 - Default request spacing: 100 ms between API calls (configurable in `config/settings.py`).
@@ -175,3 +192,7 @@ See `notes/status.md` for the full status log. Recent updates:
 - Audio panel rebuilt with OpenAI + ElevenLabs support, presets, and detailed run summaries.
 - Anki templates moved to `config/templates/*` and loaded lazily during export.
 - `.apkg` export now bundles Cloze, Basic (reversed), and Type In subdecks with shared styling and audio hooks.
+- **Update pricing tables** if OpenAI releases new models or adjusts rates:
+  - Text generation: `config/pricing.py::MODEL_PRICING_USD_PER_1M`
+  - TTS: `config/pricing.py::AUDIO_MODEL_PRICING_USD_PER_1M_CHAR`
+  The run report uses these tables to compute cost estimates; when a model is missing, the UI shows a warning with the model name.

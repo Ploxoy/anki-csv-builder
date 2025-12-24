@@ -50,7 +50,7 @@ def render_input_section(demo_words: List[dict]) -> None:
                 len(st.session_state.input_data),
                 token=ui_helpers.compute_list_token(st.session_state.input_data),
             )
-            ui_helpers.toast("Demo set (6 words) loaded", icon="✅", variant="success")
+            ui_helpers.toast("Demo set (6 items) loaded", icon="✅", variant="success")
 
     with col_clear:
         if st.button("Clear", type="secondary"):
@@ -112,133 +112,130 @@ def render_input_section(demo_words: List[dict]) -> None:
                 ui_helpers.toast("Input replaced with uploaded file", icon="📄")
     else:
         manual_cols = st.columns([1, 1, 1])
-        with manual_cols[0]:
-            if st.button("Reset list", key="manual_reset"):
-                st.session_state.manual_rows = [{"woord": "", "def_nl": "", "translation": ""}]
-                st.session_state.manual_override_token = None
-                st.session_state.input_mode_override = "manual"
-        with manual_cols[1]:
-            if st.button("Load demo", key="manual_seed_demo"):
-                st.session_state.manual_rows = [
-                    {
-                        "woord": row.get("woord", ""),
-                        "def_nl": row.get("def_nl", ""),
-                        "translation": row.get("translation", "") or "",
-                    }
-                    for row in demo_words
-                ]
-                st.session_state.manual_override_token = None
-        with manual_cols[2]:
-            st.caption(
-                "Add words, definitions, translations — mark rows as Delete to remove them."
-            )
 
-        def _normalize_row(row: dict) -> dict:
+        def _rows_to_text(rows: list[dict]) -> str:
+            lines: list[str] = []
+            for row in rows:
+                woord = str(row.get("woord", "") or "").strip()
+                if not woord:
+                    continue
+                def_nl = str(row.get("def_nl", "") or "").strip()
+                translation = str(
+                    row.get("translation")
+                    or row.get("ru_short")
+                    or row.get("L1_gloss")
+                    or ""
+                ).strip()
+                parts = [woord]
+                if def_nl:
+                    parts.append(def_nl)
+                if translation:
+                    parts.append(translation)
+                lines.append(" — ".join(parts))
+            return "\n".join(lines)
+
+        def _normalize_manual_row(row: dict) -> dict:
             return {
-                "woord": str(row.get("woord", "") or ""),
-                "def_nl": str(row.get("def_nl", "") or ""),
-                "translation": str(row.get("translation", "") or ""),
+                "woord": str(row.get("woord", "") or "").strip(),
+                "def_nl": str(row.get("def_nl", "") or "").strip(),
+                "translation": str(
+                    row.get("translation")
+                    or row.get("ru_short")
+                    or row.get("L1_gloss")
+                    or ""
+                ).strip(),
             }
 
-        manual_rows = [_normalize_row(row) for row in (st.session_state.manual_rows or [])]
+        existing_rows = [
+            _normalize_manual_row(row) for row in st.session_state.get("manual_rows", [])
+        ]
+        existing_text = _rows_to_text(existing_rows)
+        if "manual_text_buffer" not in st.session_state:
+            st.session_state.manual_text_buffer = existing_text
 
-        def _is_empty(row: dict) -> bool:
-            return not (
-                (row.get("woord") or "").strip()
-                or (row.get("def_nl") or "").strip()
-                or (row.get("translation") or "").strip()
+        with manual_cols[0]:
+            if st.button("Reset text", key="manual_reset"):
+                st.session_state.manual_text_buffer = ""
+                st.session_state.manual_override_token = None
+                st.session_state.input_mode_override = "manual"
+
+        with manual_cols[1]:
+            if st.button("Load demo text", key="manual_seed_demo"):
+                st.session_state.manual_text_buffer = _rows_to_text(demo_words)
+                st.session_state.manual_override_token = None
+
+        with manual_cols[2]:
+            st.caption(
+                "Paste text in formats like `woord — definitie — vertaling`, Markdown table rows, or TSV."
             )
 
-        def _ensure_trailing_blank(rows: list[dict]) -> list[dict]:
-            rows_clean = rows[:]
-            if not rows_clean or not _is_empty(rows_clean[-1]):
-                rows_clean.append({"woord": "", "def_nl": "", "translation": ""})
-            return rows_clean
-
-        base_rows = _ensure_trailing_blank(manual_rows)
-
-        editor_rows = []
-        initial_state: list[bool] = st.session_state.get("_manual_delete_state", [])
-        for idx, row in enumerate(base_rows):
-            row_copy = dict(row)
-            row_copy["_delete"] = bool(initial_state[idx]) if idx < len(initial_state) else False
-            editor_rows.append(row_copy)
-
-        manual_df = (
-            pd.DataFrame(editor_rows)
-            .fillna({"woord": "", "def_nl": "", "translation": "", "_delete": False})
-            .reindex(columns=["woord", "def_nl", "translation", "_delete"])
-        )
-        delete_col_help = (
-            "Mark rows you no longer need and press the delete button below to remove them."
-        )
-        edited_df = st.data_editor(
-            manual_df,
-            key="manual_editor",
-            num_rows="dynamic",
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "woord": st.column_config.TextColumn("woord", help="Target Dutch lemma (required)"),
-                "def_nl": st.column_config.TextColumn("def_nl", help="Optional: Dutch definition or context"),
-                "translation": st.column_config.TextColumn("translation", help="Optional: translation in your L1"),
-                "_delete": st.column_config.CheckboxColumn("Delete", help=delete_col_help),
-            },
+        st.markdown(
+            "Enter one entry per line. Supported examples:\n"
+            "- `woord`\n"
+            "- `woord — definitie`\n"
+            "- `woord — definitie — vertaling`\n"
+            "- `woord ;; definitie ;; vertaling` (double semicolon)\n"
+            "- `woord<TAB>definitie` (paste real tabs or type `\\t`)\n"
+            "- `| woord | definitie | vertaling |`"
         )
 
-        edited_records = (
-            edited_df.fillna({"woord": "", "def_nl": "", "translation": "", "_delete": False}).to_dict("records")
+        st.text_area(
+            "Manual text input",
+            key="manual_text_buffer",
+            height=220,
+            placeholder="bijvoorbeeld — ter illustratie — например",
         )
-        st.session_state["_manual_delete_state"] = [bool(rec.get("_delete")) for rec in edited_records]
 
-        if st.button("🗑️ Remove marked rows", key="manual_remove_marked"):
-            edited_records = [row for row in edited_records if not row.get("_delete")]
-            st.session_state["_manual_delete_state"] = []
-
-        kept_records = []
-        for record in edited_records:
-            if record.get("_delete"):
-                continue
-            kept_records.append(
-                {
-                    "woord": str(record.get("woord", "") or ""),
-                    "def_nl": str(record.get("def_nl", "") or ""),
-                    "translation": str(record.get("translation", "") or ""),
-                }
+        action_cols = st.columns([1, 1])
+        with action_cols[0]:
+            append_mode = st.checkbox(
+                "Append to existing parsed rows",
+                key="manual_append_mode",
+                help="If enabled, new rows from the text area are appended instead of replacing the current parsed list.",
             )
+        with action_cols[1]:
+            if st.button("Clear parsed rows", key="manual_clear_rows"):
+                st.session_state.manual_rows = []
+                st.session_state.input_data = []
+                st.session_state.results = []
+                existing_rows = []
+                ui_helpers.toast("Manual rows cleared", icon="🧹")
 
-        st.session_state.manual_rows = [row for row in kept_records if not _is_empty(row)]
-        manual_clean = ui_helpers.clean_manual_rows(st.session_state.manual_rows)
+        def _parse_manual_text(raw_text: str) -> list[dict]:
+            normalized_text = (raw_text or "").replace("\\t", "\t")
+            rows = parse_input(normalized_text)
+            normalized = []
+            for row in rows:
+                norm = _normalize_manual_row(row)
+                if norm["woord"]:
+                    normalized.append(norm)
+            return normalized
 
-        apply_col, info_col = st.columns([1, 1])
-        with apply_col:
-            if st.button("Use manual list", type="primary", key="manual_apply"):
-                if manual_clean:
-                    current_upload_token = st.session_state.get("upload_token")
-                    if current_upload_token:
-                        st.session_state.manual_override_token = current_upload_token
-                        st.session_state.input_mode_override = "manual"
-                    st.session_state.manual_rows = manual_clean
-                    st.session_state.input_data = manual_clean
-                    st.session_state.results = []
-                    # Keep upload_token untouched so the uploaded file is not reloaded immediately.
-                    if current_upload_token:
-                        st.session_state.upload_token = current_upload_token
-                    else:
-                        st.session_state.upload_token = None
-                    ui_helpers.apply_recommended_batch_params(
-                        len(manual_clean),
-                        token=ui_helpers.compute_list_token(manual_clean),
-                    )
-                    ui_helpers.toast(
-                        f"Loaded {len(manual_clean)} manual rows",
-                        icon="✍️",
-                        variant="success",
-                    )
-                else:
-                    st.warning("Please fill at least one row with the `woord` column.")
-        with info_col:
-            st.caption(f"Active rows: {len(manual_clean)}")
+        if st.button("Parse & load text", type="primary", key="manual_apply_text"):
+            parsed_rows = _parse_manual_text(st.session_state.get("manual_text_buffer", ""))
+            if not parsed_rows:
+                st.warning("No valid rows detected. Provide at least one word.")
+            else:
+                current_upload_token = st.session_state.get("upload_token")
+                if current_upload_token:
+                    st.session_state.manual_override_token = current_upload_token
+                    st.session_state.input_mode_override = "manual"
+                combined_rows = (existing_rows + parsed_rows) if append_mode else parsed_rows
+                st.session_state.manual_rows = combined_rows
+                st.session_state.input_data = combined_rows
+                st.session_state.results = []
+                ui_helpers.apply_recommended_batch_params(
+                    len(combined_rows),
+                    token=ui_helpers.compute_list_token(combined_rows),
+                )
+                ui_helpers.toast(
+                    f"Loaded {len(parsed_rows)} new rows • total now {len(combined_rows)}",
+                    icon="✍️",
+                    variant="success",
+                )
+                existing_rows = combined_rows
+        active_rows = [row for row in existing_rows if row.get("woord")]
+        st.caption(f"Current manual rows ready to run: {len(active_rows)}")
 
     if st.session_state.input_data:
         for row in st.session_state.input_data:

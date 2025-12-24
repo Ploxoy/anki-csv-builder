@@ -4,9 +4,12 @@ from __future__ import annotations
 import json
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Dict, Mapping, MutableMapping, Optional
+from typing import Any, Dict, List, Mapping, MutableMapping, Optional
 
+import pandas as pd
 import streamlit as st
+
+from config.pricing import AUDIO_MODEL_PRICING_USD_PER_1M_CHAR, MODEL_PRICING_USD_PER_1M
 
 from .run_status import ensure_run_stats
 
@@ -36,6 +39,26 @@ def _state_set(state: Any, key: str, value: Any) -> None:
                 state[key] = value  # type: ignore[index]
             except Exception:
                 pass
+
+
+def _resolve_pricing(model_id: Optional[str]) -> Optional[Dict[str, float]]:
+    if not model_id:
+        return None
+    model_id = str(model_id)
+    for key in sorted(MODEL_PRICING_USD_PER_1M.keys(), key=len, reverse=True):
+        if model_id.startswith(key):
+            return MODEL_PRICING_USD_PER_1M[key]
+    return None
+
+
+def _resolve_audio_pricing(model_id: Optional[str]) -> Optional[float]:
+    if not model_id:
+        return None
+    model_id = str(model_id)
+    for key in sorted(AUDIO_MODEL_PRICING_USD_PER_1M_CHAR.keys(), key=len, reverse=True):
+        if model_id.startswith(key):
+            return AUDIO_MODEL_PRICING_USD_PER_1M_CHAR[key]
+    return None
 
 
 def reset_run_report(state: Any) -> None:
@@ -68,9 +91,50 @@ def build_run_report(state: Any) -> RunReport:
     temp_removed = 0
     schema_attempted = 0
     retries = 0
+    fallback_cards = 0
+    prompt_tokens_primary_total = 0
+    completion_tokens_primary_total = 0
+    total_tokens_primary_total = 0
+    cached_tokens_primary_total = 0
+    prompt_tokens_repair_total = 0
+    completion_tokens_repair_total = 0
+    total_tokens_repair_total = 0
+    cached_tokens_repair_total = 0
     response_format_errors: Counter[str] = Counter()
     models_counter: Counter[str] = Counter()
     levels_counter: Counter[str] = Counter()
+    fallback_per_model: Counter[str] = Counter()
+    per_model_usage: Dict[str, Dict[str, int]] = {}
+    completion_chars_raw_total = 0
+    completion_chars_final_total = 0
+    raw_trimmed_total = 0
+    instructions_truncated = 0
+
+    def _model_usage(model_name: str) -> Dict[str, int]:
+        if not model_name:
+            model_name = "unknown"
+        entry = per_model_usage.get(model_name)
+        if entry is None:
+            entry = {
+                "calls": 0,
+                "repair_calls": 0,
+                "prompt": 0,
+                "completion": 0,
+                "total": 0,
+                "cached": 0,
+                "prompt_repair": 0,
+                "completion_repair": 0,
+                "total_repair": 0,
+                "cached_repair": 0,
+                "fallbacks": 0,
+                "completion_chars_raw": 0,
+                "completion_chars_final": 0,
+                "completion_chars_raw_max": 0,
+                "completion_chars_final_max": 0,
+                "raw_trimmed": 0,
+            }
+            per_model_usage[model_name] = entry
+        return entry
 
     for card in results:
         if not isinstance(card, dict):
@@ -79,6 +143,35 @@ def build_run_report(state: Any) -> RunReport:
         if not isinstance(meta, dict):
             meta = {}
         err = str(card.get("error") or "").strip()
+        model = meta.get("model")
+        if isinstance(model, str) and model:
+            models_counter[model] += 1
+        else:
+            model = "unknown"
+        level = meta.get("level")
+        if isinstance(level, str) and level:
+            levels_counter[level] += 1
+        model_usage = _model_usage(model)
+        model_usage["calls"] += 1
+
+        raw_len = int(meta.get("raw_response_length", 0) or 0)
+        final_len = int(meta.get("card_text_length", 0) or 0)
+        if raw_len > 0:
+            completion_chars_raw_total += raw_len
+            model_usage["completion_chars_raw"] += raw_len
+            model_usage["completion_chars_raw_max"] = max(
+                model_usage["completion_chars_raw_max"], raw_len
+            )
+        if final_len > 0:
+            completion_chars_final_total += final_len
+            model_usage["completion_chars_final"] += final_len
+            model_usage["completion_chars_final_max"] = max(
+                model_usage["completion_chars_final_max"], final_len
+            )
+        if bool(meta.get("raw_response_truncated")):
+            raw_trimmed_total += 1
+            model_usage["raw_trimmed"] += 1
+
         if err:
             if err == "flagged_precheck":
                 flagged += 1
@@ -89,10 +182,17 @@ def build_run_report(state: Any) -> RunReport:
 
         if meta.get("repair_attempted"):
             repairs += 1
+            model_usage["repair_calls"] += 1
         if meta.get("response_format_removed"):
             schema_removed += 1
+            fallback_cards += 1
+            model_usage["fallbacks"] += 1
+            fallback_per_model[model] += 1
         if meta.get("temperature_removed"):
             temp_removed += 1
+            fallback_cards += 1
+            model_usage["fallbacks"] += 1
+            fallback_per_model[model] += 1
         if meta.get("repair_response_format_removed"):
             repair_schema_removed += 1
 
@@ -102,20 +202,44 @@ def build_run_report(state: Any) -> RunReport:
                 schema_attempted += 1
             if int(req.get("retries", 0) or 0) > 0:
                 retries += 1
+            if bool(req.get("instructions_truncated")):
+                instructions_truncated += 1
+            cached_primary = int(req.get("cached_tokens", 0) or 0)
+            prompt_primary = int(req.get("prompt_tokens", 0) or 0)
+            completion_primary = int(req.get("completion_tokens", 0) or 0)
+            total_primary = int(req.get("total_tokens", 0) or 0)
+            cached_tokens_primary_total += cached_primary
+            prompt_tokens_primary_total += prompt_primary
+            completion_tokens_primary_total += completion_primary
+            total_tokens_primary_total += total_primary
+            model_usage["cached"] += cached_primary
+            model_usage["prompt"] += prompt_primary
+            model_usage["completion"] += completion_primary
+            model_usage["total"] += total_primary
             err_reason = req.get("response_format_error") or meta.get("response_format_error")
             if isinstance(err_reason, str) and err_reason:
                 response_format_errors[err_reason] += 1
+            repair_info = req.get("repair_usage") or {}
+            if isinstance(repair_info, dict):
+                repair_prompt = int(repair_info.get("prompt_tokens", 0) or 0)
+                repair_completion = int(repair_info.get("completion_tokens", 0) or 0)
+                repair_total = int(repair_info.get("total_tokens", 0) or 0)
+                repair_cached = int(repair_info.get("cached_tokens", 0) or 0)
+                if repair_prompt or repair_completion or repair_total or repair_cached:
+                    prompt_tokens_repair_total += repair_prompt
+                    completion_tokens_repair_total += repair_completion
+                    total_tokens_repair_total += repair_total
+                    cached_tokens_repair_total += repair_cached
+                    model_usage["prompt_repair"] += repair_prompt
+                    model_usage["completion_repair"] += repair_completion
+                    model_usage["total_repair"] += repair_total
+                    model_usage["cached_repair"] += repair_cached
+                if int(repair_info.get("retries", 0) or 0) > 0:
+                    retries += 1
         else:
             err_reason = meta.get("response_format_error")
             if isinstance(err_reason, str) and err_reason:
                 response_format_errors[err_reason] += 1
-
-        model = meta.get("model")
-        if isinstance(model, str) and model:
-            models_counter[model] += 1
-        level = meta.get("level")
-        if isinstance(level, str) and level:
-            levels_counter[level] += 1
 
     elapsed = float(stats.get("elapsed", 0.0) or 0.0)
     batches = int(stats.get("batches", 0) or 0)
@@ -125,6 +249,118 @@ def build_run_report(state: Any) -> RunReport:
     avg_batch = elapsed / batches if batches else 0.0
     per_second = items_done / elapsed if elapsed else 0.0
 
+    prompt_total = prompt_tokens_primary_total + prompt_tokens_repair_total
+    completion_total = completion_tokens_primary_total + completion_tokens_repair_total
+    tokens_total = total_tokens_primary_total + total_tokens_repair_total
+    cached_tokens_total = cached_tokens_primary_total + cached_tokens_repair_total
+
+    tokens_by_model: Dict[str, Dict[str, int]] = {}
+    for model_name, usage in per_model_usage.items():
+        tokens_by_model[model_name] = {
+            "calls": usage["calls"],
+            "repair_calls": usage["repair_calls"],
+            "prompt": usage["prompt"],
+            "prompt_repair": usage["prompt_repair"],
+            "completion": usage["completion"],
+            "completion_repair": usage["completion_repair"],
+            "total": usage["total"],
+            "total_repair": usage["total_repair"],
+            "cached": usage["cached"],
+            "cached_repair": usage["cached_repair"],
+            "fallbacks": usage["fallbacks"],
+            "completion_chars_raw": usage["completion_chars_raw"],
+            "completion_chars_final": usage["completion_chars_final"],
+            "completion_chars_raw_max": usage["completion_chars_raw_max"],
+            "completion_chars_final_max": usage["completion_chars_final_max"],
+            "raw_trimmed": usage["raw_trimmed"],
+        }
+
+    text_cost_by_model: Dict[str, Dict[str, Optional[float]]] = {}
+    text_total_cost = 0.0
+    text_cost_available = False
+    text_missing_pricing: list[str] = []
+    for model_name, usage in per_model_usage.items():
+        prompt_all = usage["prompt"] + usage["prompt_repair"]
+        completion_all = usage["completion"] + usage["completion_repair"]
+        total_all = usage["total"] + usage["total_repair"]
+        pricing = _resolve_pricing(model_name if model_name != "unknown" else None)
+        estimated = None
+        if pricing and (prompt_all or completion_all):
+            estimated = (
+                (prompt_all / 1_000_000.0) * pricing["input"]
+                + (completion_all / 1_000_000.0) * pricing["output"]
+            )
+            text_total_cost += estimated
+            text_cost_available = True
+        else:
+            if model_name not in ("unknown",):
+                text_missing_pricing.append(model_name)
+        text_cost_by_model[model_name] = {
+            "prompt_tokens": prompt_all,
+            "completion_tokens": completion_all,
+            "total_tokens": total_all,
+            "estimated_usd": estimated,
+        }
+
+    if text_cost_available:
+        text_total_cost = round(text_total_cost, 6)
+
+    fallback_rate = fallback_cards / total if total else 0.0
+    schema_removed_rate = schema_removed / schema_attempted if schema_attempted else 0.0
+    repair_schema_removed_rate = repair_schema_removed / repairs if repairs else 0.0
+    repair_rate_value = repairs / total if total else 0.0
+    errored_rate = errored / total if total else 0.0
+    flagged_rate = flagged / total if total else 0.0
+
+    audio_cost_by_model: Dict[str, Dict[str, Optional[float]]] = {}
+    audio_total_cost = 0.0
+    audio_cost_available = False
+    audio_missing_pricing: list[str] = []
+    if audio_summary:
+        model_usage_audio = audio_summary.get("model_usage") or {}
+        if isinstance(model_usage_audio, dict):
+            for model_name, usage in model_usage_audio.items():
+                if not isinstance(usage, dict):
+                    continue
+                chars = int(usage.get("chars", 0) or 0)
+                pricing = _resolve_audio_pricing(model_name)
+                estimated_audio = None
+                if pricing and chars:
+                    estimated_audio = (chars / 1_000_000.0) * pricing
+                    audio_total_cost += estimated_audio
+                    audio_cost_available = True
+                else:
+                    if pricing is None and model_name not in ("unknown",):
+                        audio_missing_pricing.append(model_name)
+                audio_cost_by_model[model_name] = {
+                    "characters": chars,
+                    "estimated_usd": estimated_audio,
+                    "requests": int(usage.get("requests", 0) or 0),
+                }
+    if audio_cost_available:
+        audio_total_cost = round(audio_total_cost, 6)
+
+    combined_cost = 0.0
+    combined_cost_available = False
+    if text_cost_available:
+        combined_cost += text_total_cost
+        combined_cost_available = True
+    if audio_cost_available:
+        combined_cost += audio_total_cost
+        combined_cost_available = True
+    if combined_cost_available:
+        combined_cost = round(combined_cost, 6)
+
+    cost_notes_parts: List[str] = []
+    if text_missing_pricing:
+        cost_notes_parts.append(
+            "No text pricing configured for: " + ", ".join(sorted(set(text_missing_pricing)))
+        )
+    if audio_missing_pricing:
+        cost_notes_parts.append(
+            "No audio pricing configured for: " + ", ".join(sorted(set(audio_missing_pricing)))
+        )
+
     report: RunReport = {
         "generation": {
             "total": total,
@@ -132,6 +368,9 @@ def build_run_report(state: Any) -> RunReport:
             "errored": errored,
             "flagged_precheck": flagged,
             "repair_attempted": repairs,
+            "repair_rate": repair_rate_value,
+            "errored_rate": errored_rate,
+            "flagged_rate": flagged_rate,
             "retries": retries,
             "models": dict(models_counter),
             "levels": dict(levels_counter),
@@ -139,9 +378,41 @@ def build_run_report(state: Any) -> RunReport:
         "response_format": {
             "schema_attempted": schema_attempted,
             "schema_removed": schema_removed,
+            "schema_removed_rate": schema_removed_rate,
             "repair_schema_removed": repair_schema_removed,
+            "repair_schema_removed_rate": repair_schema_removed_rate,
             "temperature_removed": temp_removed,
             "errors": dict(response_format_errors),
+            "fallback_cards": fallback_cards,
+            "fallback_rate": fallback_rate,
+            "fallback_by_model": dict(fallback_per_model),
+        },
+        "prompting": {
+            "instructions_truncated": instructions_truncated,
+        },
+        "tokens": {
+            "prompt": prompt_total,
+            "completion": completion_total,
+            "total": tokens_total,
+            "cached": cached_tokens_total,
+            "chars": {
+                "raw": completion_chars_raw_total,
+                "final": completion_chars_final_total,
+                "raw_trimmed_count": raw_trimmed_total,
+            },
+            "primary": {
+                "prompt": prompt_tokens_primary_total,
+                "completion": completion_tokens_primary_total,
+                "total": total_tokens_primary_total,
+                "cached": cached_tokens_primary_total,
+            },
+            "repair": {
+                "prompt": prompt_tokens_repair_total,
+                "completion": completion_tokens_repair_total,
+                "total": total_tokens_repair_total,
+                "cached": cached_tokens_repair_total,
+            },
+            "by_model": tokens_by_model,
         },
         "signalwords": {
             "usage": dict(sig_usage),
@@ -158,8 +429,16 @@ def build_run_report(state: Any) -> RunReport:
         },
         "audio": audio_summary,
         "cost": {
-            "estimated_usd": None,
-            "notes": "Token usage not yet tracked; costs unavailable.",
+            "estimated_usd": combined_cost if combined_cost_available else None,
+            "text": {
+                "estimated_usd": text_total_cost if text_cost_available else None,
+                "by_model": text_cost_by_model,
+            },
+            "audio": {
+                "estimated_usd": audio_total_cost if audio_cost_available else None,
+                "by_model": audio_cost_by_model,
+            },
+            "notes": " | ".join(cost_notes_parts) if cost_notes_parts else None,
         },
         "metadata": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -191,23 +470,102 @@ def render_run_report_section(state: Any) -> None:
     valid = int(generation.get("valid", 0) or 0)
     errored = int(generation.get("errored", 0) or 0)
     flagged = int(generation.get("flagged_precheck", 0) or 0)
+    repair_attempted = int(generation.get("repair_attempted", 0) or 0)
+    repair_rate = float(generation.get("repair_rate", 0) or 0.0)
+    flagged_rate = float(generation.get("flagged_rate", 0) or 0.0)
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Cards total", total)
     col2.metric("Valid cards", valid)
     col3.metric("Errored cards", errored)
-    st.caption(f"Flagged pre-check: {flagged} • Repairs attempted: {generation.get('repair_attempted', 0)} • Retries: {generation.get('retries', 0)}")
+    st.caption(
+        f"Flagged pre-check: {flagged} ({flagged_rate:.1%}) • "
+        f"Repairs attempted: {repair_attempted} ({repair_rate:.1%}) • "
+        f"Retries (any stage): {generation.get('retries', 0)}"
+    )
 
     rf = report.get("response_format", {})
+    fallback_rate = float(rf.get("fallback_rate", 0) or 0.0)
+    schema_attempted = int(rf.get("schema_attempted", 0) or 0)
+    schema_removed = int(rf.get("schema_removed", 0) or 0)
+    schema_removed_rate = float(rf.get("schema_removed_rate", 0) or 0.0)
+    repair_schema_removed = int(rf.get("repair_schema_removed", 0) or 0)
+    repair_schema_removed_rate = float(rf.get("repair_schema_removed_rate", 0) or 0.0)
+    temp_removed = int(rf.get("temperature_removed", 0) or 0)
+    fallback_cards = int(rf.get("fallback_cards", 0) or 0)
     st.write(
-        f"**Response format:** attempted {rf.get('schema_attempted', 0)}, "
-        f"removed {rf.get('schema_removed', 0)}, "
-        f"repair removed {rf.get('repair_schema_removed', 0)}, "
-        f"temperature removed {rf.get('temperature_removed', 0)}."
+        "**Response format:** "
+        f"attempted {schema_attempted}, "
+        f"removed {schema_removed} ({schema_removed_rate:.1%}), "
+        f"repair removed {repair_schema_removed} ({repair_schema_removed_rate:.1%}), "
+        f"temperature removed {temp_removed}. "
+        f"Fallback cards (schema or temp): {fallback_cards} ({fallback_rate:.1%})."
     )
     rf_errors = rf.get("errors", {})
     if rf_errors:
         st.write("Schema issues:", rf_errors)
+
+    prompting = report.get("prompting", {})
+    if prompting and prompting.get("instructions_truncated", 0):
+        st.warning(
+            f"Instructions were truncated for {prompting.get('instructions_truncated', 0)} request(s) in this run (UI log view only; full prompt was sent to the API)."
+        )
+
+    token_stats = report.get("tokens", {})
+    repair_tokens = token_stats.get("repair", {})
+    char_stats = token_stats.get("chars", {})
+    st.write(
+        "**Tokens:** "
+        f"prompt {token_stats.get('prompt', 0)} "
+        f"(repair {repair_tokens.get('prompt', 0)}), "
+        f"completion {token_stats.get('completion', 0)} "
+        f"(repair {repair_tokens.get('completion', 0)}), "
+        f"total {token_stats.get('total', 0)} "
+        f"(repair {repair_tokens.get('total', 0)}), "
+        f"cached {token_stats.get('cached', 0)}."
+    )
+    if isinstance(char_stats, dict) and char_stats:
+        st.caption(
+            "Completion chars: raw {raw} • final (sanitized fields) {final} • truncated responses {trimmed}.".format(
+                raw=char_stats.get("raw", 0),
+                final=char_stats.get("final", 0),
+                trimmed=char_stats.get("raw_trimmed_count", 0),
+            )
+        )
+    tokens_by_model = token_stats.get("by_model", {})
+    cost_section = report.get("cost", {})
+    text_cost_section = cost_section.get("text", {}) if isinstance(cost_section, dict) else {}
+    text_cost_by_model = text_cost_section.get("by_model", {}) if isinstance(text_cost_section, dict) else {}
+    if tokens_by_model:
+        rows = []
+        for model_name, data in tokens_by_model.items():
+            prompt_all = (data.get("prompt", 0) or 0) + (data.get("prompt_repair", 0) or 0)
+            completion_all = (data.get("completion", 0) or 0) + (data.get("completion_repair", 0) or 0)
+            total_all = (data.get("total", 0) or 0) + (data.get("total_repair", 0) or 0)
+            rows.append(
+                {
+                    "Model": model_name,
+                    "Calls": data.get("calls", 0),
+                    "Repair calls": data.get("repair_calls", 0),
+                    "Prompt tokens": prompt_all,
+                    "Completion tokens": completion_all,
+                    "Total tokens": total_all,
+                    "Fallback cards": data.get("fallbacks", 0),
+                    "Raw chars": data.get("completion_chars_raw", 0),
+                    "Final chars": data.get("completion_chars_final", 0),
+                    "Max raw chars": data.get("completion_chars_raw_max", 0),
+                    "Cost (USD)": (
+                        text_cost_by_model.get(model_name, {}).get("estimated_usd")
+                        if text_cost_by_model
+                        else None
+                    ),
+                }
+            )
+        df = pd.DataFrame(rows).set_index("Model")
+        st.dataframe(
+            df.style.format({"Cost (USD)": lambda v: "" if pd.isna(v) else f"{v:.6f}"}),
+            width="stretch",
+        )
 
     signal = report.get("signalwords", {})
     usage = signal.get("usage", {})
@@ -237,17 +595,81 @@ def render_run_report_section(state: Any) -> None:
                 "word_skipped": audio.get("word_skipped"),
                 "sentence_skipped": audio.get("sentence_skipped"),
                 "provider": audio.get("provider"),
+                "voice": audio.get("voice"),
+                "characters_billed": audio.get("total_characters"),
+                "requests_billed": audio.get("total_requests_billed"),
             },
         )
+        audio_usage = audio.get("model_usage") if isinstance(audio, dict) else None
+        audio_cost_by_model = cost_section.get("audio", {}).get("by_model", {}) if isinstance(cost_section, dict) else {}
+        if isinstance(audio_usage, dict) and audio_usage:
+            audio_rows = []
+            for model_name, data in audio_usage.items():
+                if not isinstance(data, dict):
+                    continue
+                audio_rows.append(
+                    {
+                        "Model": model_name,
+                        "Requests billed": data.get("requests", 0),
+                        "Fallback requests": data.get("fallback_requests", 0),
+                        "Characters": data.get("chars", 0),
+                        "Word chars": data.get("word_chars", 0),
+                        "Sentence chars": data.get("sentence_chars", 0),
+                        "Cost (USD)": (
+                            audio_cost_by_model.get(model_name, {}).get("estimated_usd")
+                            if audio_cost_by_model
+                            else None
+                        ),
+                    }
+                )
+            if audio_rows:
+                df_audio = pd.DataFrame(audio_rows).set_index("Model")
+                st.dataframe(
+                    df_audio.style.format({"Cost (USD)": lambda v: "" if pd.isna(v) else f"{v:.6f}"}),
+                    width="stretch",
+                )
     else:
         st.write("Audio: not synthesized yet.")
 
-    st.write("Cost estimate: token usage not tracked yet.")
+    est_cost = cost_section.get("estimated_usd") if isinstance(cost_section, dict) else None
+    text_cost_est = text_cost_section.get("estimated_usd") if isinstance(text_cost_section, dict) else None
+    audio_cost_section = cost_section.get("audio", {}) if isinstance(cost_section, dict) else {}
+    audio_cost_est = audio_cost_section.get("estimated_usd") if isinstance(audio_cost_section, dict) else None
+    if est_cost is not None:
+        cost_parts = []
+        if text_cost_est is not None:
+            cost_parts.append(f"text ${text_cost_est:.4f}")
+        if audio_cost_est is not None:
+            cost_parts.append(f"audio ${audio_cost_est:.4f}")
+        details = f" ({', '.join(cost_parts)})" if cost_parts else ""
+        st.write(f"**Cost estimate:** ${est_cost:.4f} USD{details}.")
+    else:
+        st.write(
+            "Cost estimate unavailable: configure pricing in `config.pricing.MODEL_PRICING_USD_PER_1M` "
+            "and `AUDIO_MODEL_PRICING_USD_PER_1M_CHAR`."
+        )
+    notes = cost_section.get("notes") if isinstance(cost_section, dict) else None
+    if notes:
+        st.write(notes)
 
+    def _with_ext(name: str, ext: str) -> str:
+        n = (name or "").strip()
+        if not n:
+            return f"run_report{ext}"
+        if not n.lower().endswith(ext):
+            return n + ext
+        return n
+
+    report_name = st.text_input(
+        "Report file name",
+        value="run_report.json",
+        key="run_report_name",
+        help="The suggested download name. Your browser decides the folder.",
+    )
     payload = json.dumps(report, ensure_ascii=False, indent=2)
     st.download_button(
-        "⬇️ Download run report (JSON)",
+        f"⬇️ Download {report_name or 'run_report.json'}",
         data=payload.encode("utf-8"),
-        file_name="run_report.json",
+        file_name=_with_ext(report_name, ".json"),
         mime="application/json",
     )
