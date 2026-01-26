@@ -1,0 +1,7 @@
+# Minimal dependencies for the FastAPI service (no Streamlit UI).
+fastapi
+uvicorn[standard]
+openai>=1.99.0
+requests>=2.31.0
+wordfreq
+psycopg[binary]

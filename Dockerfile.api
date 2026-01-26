@@ -1,0 +1,12 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Keep image small but still able to install wheels.
+RUN pip install -U pip
+
+COPY requirements.api.txt ./
+RUN pip install -r requirements.api.txt
+
+COPY . .
+

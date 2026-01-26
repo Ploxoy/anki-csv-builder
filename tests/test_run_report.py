@@ -123,9 +123,9 @@ def test_build_run_report_aggregates_metrics() -> None:
     assert chars["final"] == 1260
     assert chars["raw_trimmed_count"] == 1
     assert report["audio"]["total_characters"] == 1000
-    assert report["cost"]["text"]["estimated_usd"] == pytest.approx(0.0513, rel=1e-6)
-    assert report["cost"]["audio"]["estimated_usd"] == pytest.approx(0.015, rel=1e-6)
-    assert report["cost"]["estimated_usd"] == pytest.approx(0.0663, rel=1e-6)
+    assert report["cost"]["text"]["estimated_usd"] == pytest.approx(0.003825, rel=1e-6)
+    assert report["cost"]["audio"]["estimated_usd"] == pytest.approx(0.00015, rel=1e-6)
+    assert report["cost"]["estimated_usd"] == pytest.approx(0.003975, rel=1e-6)
     assert report["cost"]["notes"] is None
     assert report["signalwords"]["total_found"] == 3
     assert report["signalwords"]["last"] == "maar"

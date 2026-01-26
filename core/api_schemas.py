@@ -1,0 +1,235 @@
+"""
+Draft Pydantic schemas for the public API (generate / tts).
+
+These are not wired yet; intended for Phase 0 to stabilize request/response
+contracts while the UI is still Streamlit-based.
+"""
+
+from typing import List, Optional, Literal, Dict, Any
+from pydantic import BaseModel, Field
+
+
+# ---------- Shared ----------
+
+class UsageEvent(BaseModel):
+    provider: str
+    model: str
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cached_tokens: Optional[int] = None
+    audio_chars: Optional[int] = None
+    audio_tokens: Optional[int] = None
+    seconds: Optional[float] = None
+    raw_cost_usd: Optional[float] = None
+    raw_cost_eur: Optional[float] = None
+    charged_cost_eur: Optional[float] = None
+    markup_tier: Optional[str] = None
+    markup_multiplier: Optional[float] = None
+    request_id: Optional[str] = None
+    elapsed_ms: Optional[int] = None
+
+
+class ErrorEnvelope(BaseModel):
+    error: Dict[str, Any]
+
+class UserSettings(BaseModel):
+    """Persisted (non-secret) per-user defaults.
+
+    Intentionally excludes any API keys. Provider keys must live on the server.
+    """
+
+    prompt_version: str = "p0"
+    provider: str = "openai"
+    model: str = "gpt-4.1-mini"
+    cefr: str = "B1"
+    profile: str = "balanced"
+    l1: str = "EN"
+    temperature: Optional[float] = None
+    max_output_tokens: Optional[int] = None
+    audio_provider: str = "openai"
+    audio_model: Optional[str] = None
+    audio_voice: Optional[str] = None
+    force_generate_flagged: bool = False
+    generate_audio: bool = False
+    include_audio_word: bool = True
+    include_audio_sentence: bool = True
+    include_basic_reversed: bool = False
+    include_basic_typein: bool = False
+    default_deck_name: str = "Dutch"
+
+
+class UserSettingsUpsertRequest(BaseModel):
+    settings: UserSettings
+
+
+class UserSettingsResponse(BaseModel):
+    user_id: str
+    settings: UserSettings
+    updated_at: Optional[str] = None
+
+
+class UsageEventRecord(BaseModel):
+    created_at: str
+    run_id: Optional[str] = None
+    kind: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cached_tokens: Optional[int] = None
+    audio_chars: Optional[int] = None
+    audio_tokens: Optional[int] = None
+    seconds: Optional[float] = None
+    raw_cost_usd: Optional[float] = None
+    raw_cost_eur: Optional[float] = None
+    charged_cost_eur: Optional[float] = None
+    markup_tier: Optional[str] = None
+    markup_multiplier: Optional[float] = None
+    request_id: Optional[str] = None
+
+
+class UsageSummary(BaseModel):
+    events: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    audio_chars: int = 0
+    raw_cost_usd: Optional[float] = None
+
+
+class UsageListResponse(BaseModel):
+    user_id: str
+    items: List[UsageEventRecord]
+    summary: UsageSummary
+
+
+# ---------- Beta auth (Phase 0.5) ----------
+
+class InviteCreateRequest(BaseModel):
+    label: Optional[str] = None
+
+
+class InviteCreateResponse(BaseModel):
+    user_id: str
+    token: str
+
+
+class WhoAmIResponse(BaseModel):
+    user_id: str
+
+
+class UserRecord(BaseModel):
+    id: str
+    label: Optional[str] = None
+    status: str
+    created_at: str
+    last_used_at: Optional[str] = None
+
+
+class UserListResponse(BaseModel):
+    items: List[UserRecord]
+
+
+class UserStatusRequest(BaseModel):
+    status: Literal["active", "blocked"]
+
+
+class UserRotateResponse(BaseModel):
+    user_id: str
+    token: str
+
+
+# ---------- Generate ----------
+
+class GenerateItem(BaseModel):
+    id: str
+    woord: str
+    def_nl: Optional[str] = ""
+    translation: Optional[str] = ""
+
+
+class GenerateFlags(BaseModel):
+    force_schema: bool = True
+    allow_repair: bool = True
+
+
+class GenerateRequest(BaseModel):
+    run_id: Optional[str] = None
+    prompt_version: str
+    provider: str
+    model: str
+    cefr: str
+    profile: str
+    l1: str
+    temperature: Optional[float] = None
+    max_output_tokens: Optional[int] = None
+    guid_policy: Literal["stable", "unique"] = "stable"
+    flags: GenerateFlags = Field(default_factory=GenerateFlags)
+    items: List[GenerateItem]
+
+
+class Card(BaseModel):
+    L2_word: str
+    L2_cloze: str
+    L1_sentence: str
+    L2_collocations: str
+    L2_definition: str
+    L1_gloss: str
+
+
+class GenerateItemResult(BaseModel):
+    id: str
+    status: Literal["ok", "repaired", "failed", "flagged"]
+    card: Optional[Card] = None
+    error: Optional[str] = None
+    usage: Optional[UsageEvent] = None
+
+
+class GenerateResponse(BaseModel):
+    run_id: str
+    prompt_version: str
+    provider: str
+    model: str
+    items: List[GenerateItemResult]
+    run_report: Dict[str, Any]
+    timing: Dict[str, Any]
+
+
+# ---------- TTS ----------
+
+class TTSItem(BaseModel):
+    card_id: str
+    type: Literal["word", "sentence"]
+    text: str
+
+
+class TTSRequest(BaseModel):
+    run_id: Optional[str] = None
+    provider: str
+    model: str
+    voice: Optional[str] = None
+    items: List[TTSItem]
+
+
+class TTSAudio(BaseModel):
+    card_id: str
+    type: Literal["word", "sentence"]
+    filename: str
+    audio_b64: Optional[str] = None
+    usage: Optional[UsageEvent] = None
+
+
+class TTSSummary(BaseModel):
+    ok: int
+    failed: int
+    cached: int
+    usage: Dict[str, Any]
+    cost: Dict[str, Any]
+
+
+class TTSResponse(BaseModel):
+    run_id: str
+    provider: str
+    model: str
+    audios: List[TTSAudio]
+    summary: TTSSummary

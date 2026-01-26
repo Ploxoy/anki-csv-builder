@@ -117,7 +117,11 @@ OUTPUT VALIDATION YOU MUST PASS
 
 def compose_instructions_en(L1_code: str, level: str, profile: str) -> str:
     """Return strict English instructions for the Responses API."""
-    l1_meta = L1_LANGS[L1_code]
+    key = (L1_code or "").strip().upper()
+    l1_meta = L1_LANGS.get(key)
+    if not l1_meta:
+        supported = ", ".join(sorted(L1_LANGS.keys()))
+        raise ValueError(f"Unsupported L1 code: {L1_code!r}. Supported: {supported}")
     level_rule = LEVEL_RULES_EN.get(level, "")
     profile_rule = PROMPT_PROFILES.get(profile, "")
     return PROMPT_TEMPLATE.substitute(

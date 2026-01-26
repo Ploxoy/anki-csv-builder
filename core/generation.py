@@ -76,6 +76,7 @@ class GenerationSettings:
     L1_name: str
     level: str
     profile: str
+    provider: str = "openai"
     temperature: Optional[float] = None
     max_output_tokens: Optional[int] = None
     include_signalword: Optional[bool] = None  # None => авто-решение по уровню
@@ -420,6 +421,7 @@ def generate_card(
         meta_full = {
             **meta,
             "model": settings.model,
+            "provider": getattr(settings, "provider", "openai"),
             "level": settings.level,
             "profile": settings.profile,
         }
@@ -673,6 +675,7 @@ def generate_card(
     meta_full = {
         **meta,
         "model": settings.model,
+        "provider": getattr(settings, "provider", "openai"),
         "level": settings.level,
         "profile": settings.profile,
         "error": card.get("error", ""),

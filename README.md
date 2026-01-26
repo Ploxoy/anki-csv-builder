@@ -1,6 +1,8 @@
 # 📘 Anki CSV Builder
 
-Streamlit-приложение, которое превращает списки голландских слов в готовые для импорта колоды Anki с помощью OpenAI Responses API.
+FastAPI-сервис для генерации голландских карточек Anki (генерация + TTS) на базе OpenAI Responses API.
+
+Streamlit UI считается legacy и постепенно выводится из эксплуатации.
 
 ## 🚀 Возможности
 
@@ -38,7 +40,7 @@ cd anki-csv-builder
 pip install -r requirements.txt
 ```
 
-## ▶️ Запуск приложения
+## ▶️ Запуск приложения (legacy Streamlit UI)
 
 Предпочтительный вход:
 
@@ -52,10 +54,130 @@ streamlit run app/app.py
 streamlit run anki_csv_builder.py
 ```
 
+## ▶️ Запуск API (FastAPI)
+
+Локально (из корня репозитория):
+
+```bash
+export API_SHARED_SECRET="change-me"
+export OPENAI_API_KEY="..."
+# (опционально, если используете ElevenLabs для TTS)
+export ELEVENLABS_API_KEY="..."
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
+
+Или через модуль:
+
+```bash
+python -m api
+```
+
+Для локальной разработки можно временно отключить проверку `X-API-Key`:
+
+```bash
+export API_REQUIRE_SHARED_SECRET=0
+```
+
+Проверка:
+
+```bash
+curl http://localhost:8000/health
+curl -H "X-API-Key: $API_SHARED_SECRET" http://localhost:8000/docs >/dev/null
+```
+
+### Phase 0.5: user settings + usage (beta)
+
+Для multi-user beta используются **инвайт‑токены**:
+- Админ создаёт инвайт через `/api/admin/invite` (нужен `X-API-Key: API_SHARED_SECRET`) и получает `token`.
+- Пользователь вставляет `token` в web UI (`web/`) и дальше запросы идут с `Authorization: Bearer <token>`.
+
+Пример (создать инвайт):
+```bash
+export API_SHARED_SECRET="change-me"
+curl -sS -X POST http://localhost:8000/api/admin/invite \
+  -H "X-API-Key: $API_SHARED_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"alice"}'
+```
+
+Если `Load/Save settings` “не сохраняет”, почти всегда причина одна из двух:
+- `api` контейнер собран без `psycopg` (нужно пересобрать образ после обновления зависимостей)
+- `db` контейнер не запущен/недоступен
+
+Быстрый фикс:
+```bash
+docker compose build api
+docker compose up -d db api
+```
+
+> В Phase 1 (Vision 2.0) ключи провайдеров не передаются от клиента:
+> `OPENAI_API_KEY`/`ELEVENLABS_API_KEY` должны быть только в env сервера.
+> Для beta пользователь аутентифицируется токеном (`Authorization: Bearer ...`), а `X-API-Key` нужен только админу (и для legacy/dev режима).
+
+## 🐳 Docker Compose (API + Postgres)
+
+```bash
+docker compose build api
+docker compose up -d db api
+```
+
+Порты можно переопределить через переменные окружения:
+- `API_PORT` (по умолчанию `8000`)
+- `DB_PORT` (по умолчанию `5432`)
+- `WEB_PORT` (по умолчанию `5173`)
+
+Примечание про `DATABASE_URL`:
+- Для Docker Compose используется внутренняя строка подключения к Postgres: `postgresql://...@db:5432/...`
+- Если у вас в `.env` есть `DATABASE_URL=...@localhost:5432/...` (для локального запуска без Docker), это **не должно** ломать Compose: в compose-файле используется `DATABASE_URL_DOCKER` (опционально) вместо `DATABASE_URL`.
+
+### Админ-операции (beta)
+- Создать инвайт: `POST /api/admin/invite` (`X-API-Key` обязателен) → `{ user_id, token }`.
+- Список пользователей: `GET /api/admin/users` (`X-API-Key`).
+- Блокировка/разблокировка: `POST /api/admin/users/{user_id}/status` с `{ "status": "blocked|active" }`.
+- Ротация токена: `POST /api/admin/users/{user_id}/rotate` → новый `token`.
+
+### Docker secrets (рекомендуется)
+
+1) Создайте локально (не коммитьте) файлы:
+
+- `secrets/API_SHARED_SECRET`
+- `secrets/OPENAI_API_KEY`
+- `secrets/ELEVENLABS_API_KEY`
+
+2) Запустите Compose с overlay-файлом:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build db api
+```
+
+## 🌐 Минимальный веб-интерфейс (React + Vite)
+
+Минимальный UI лежит в `web/` и ходит в FastAPI.
+
+### Вариант A: локально (нужен Node.js)
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+### Вариант B: через Docker (без Node.js на хосте)
+
+```bash
+docker compose up -d db api
+docker compose up web
+```
+
+Откройте UI: `http://localhost:5173`.
+
+По умолчанию Vite проксирует `/api` на `http://localhost:8000` (см. `web/vite.config.ts`). В Docker Compose для `web` автоматически выставляется `VITE_API_TARGET=http://api:8000`, поэтому CORS не требуется.
+
 ## 🗂 Структура проекта
 
 ```
 anki-csv-builder/
+├── api/                 # FastAPI сервис
 ├── app/                 # Модули Streamlit UI
 ├── core/                # Парсинг, генерация, санитайзинг, экспорт
 ├── config/              # Настройки, шаблоны, группы сигнал-слов, i18n
@@ -71,6 +193,14 @@ anki-csv-builder/
 - `config/settings.py` — доступные модели, UI-дефолты, задержки, пути к шаблонам
 - `config/templates/` — HTML/CSS-шаблоны для колод Cloze, Basic и Type In
 - `config/signalword_groups.py` — группы сигнал-слов по уровням CEFR
+
+## 🩺 Диагностика запуска (если “сервисы не стартуют”)
+
+Быстрый чек окружения без внешних запросов:
+
+```bash
+python scripts/doctor.py
+```
 
 ## 📥 Форматы ввода
 

@@ -322,6 +322,7 @@ def _build_generation_settings(
 
     return GenerationSettings(
         model=settings.model,
+        provider="openai",
         L1_code=settings.L1_code,
         L1_name=settings.L1_meta["name"],
         level=settings.level,

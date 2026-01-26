@@ -1,6 +1,8 @@
 # 📘 Anki CSV Builder
 
-Streamlit app that turns Dutch vocabulary into ready-to-import Anki decks with help from the OpenAI Responses API.
+FastAPI service for generating Dutch Anki cards (generation + TTS) powered by the OpenAI Responses API.
+
+The Streamlit UI is considered legacy and is being phased out.
 
 ## Features
 
@@ -42,7 +44,7 @@ cd anki-csv-builder
 pip install -r requirements.txt
 ```
 
-## Running the app
+## Running the app (legacy Streamlit UI)
 
 Preferred entrypoint:
 
@@ -56,10 +58,118 @@ Legacy shim (kept for compatibility):
 streamlit run anki_csv_builder.py
 ```
 
+## Running the API (FastAPI)
+
+Locally (from repo root):
+
+```bash
+export API_SHARED_SECRET="change-me"
+export OPENAI_API_KEY="..."
+# Optional (only if you use ElevenLabs TTS)
+export ELEVENLABS_API_KEY="..."
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
+
+Health check:
+
+```bash
+curl http://localhost:8000/health
+```
+
+For local development you can temporarily disable the `X-API-Key` check:
+
+```bash
+export API_REQUIRE_SHARED_SECRET=0
+```
+
+### Phase 0.5: user settings + usage (beta)
+
+Multi-user beta uses **invite tokens**:
+- Admin creates an invite via `/api/admin/invite` (requires `X-API-Key: API_SHARED_SECRET`) and receives a `token`.
+- User pastes the `token` into the web UI (`web/`); requests are sent with `Authorization: Bearer <token>`.
+
+Example (create invite):
+```bash
+export API_SHARED_SECRET="change-me"
+curl -sS -X POST http://localhost:8000/api/admin/invite \
+  -H "X-API-Key: $API_SHARED_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"alice"}'
+```
+
+Admin endpoints (beta):
+- List users: `GET /api/admin/users`
+- Block/unblock: `POST /api/admin/users/{user_id}/status` with `{ "status": "blocked|active" }`
+- Rotate token: `POST /api/admin/users/{user_id}/rotate` → returns new token
+
+If `Load/Save settings` “does not persist”, it's usually one of:
+- your `api` container image was built without `psycopg` (rebuild after dependency changes)
+- the `db` container is not running / not reachable
+
+Quick fix:
+```bash
+docker compose build api
+docker compose up -d db api
+```
+
+## Docker Compose (API + Postgres)
+
+```bash
+docker compose build api
+docker compose up -d db api
+```
+
+Ports can be overridden via environment variables:
+- `API_PORT` (default: `8000`)
+- `DB_PORT` (default: `5432`)
+- `WEB_PORT` (default: `5173`)
+
+Note about `DATABASE_URL`:
+- Docker Compose uses an internal Postgres URL: `postgresql://...@db:5432/...`
+- If your local `.env` contains `DATABASE_URL=...@localhost:5432/...` (for running without Docker), it should **not** break Compose: the compose file uses `DATABASE_URL_DOCKER` (optional) instead of `DATABASE_URL`.
+
+### Docker secrets (recommended)
+
+1) Create local (uncommitted) files:
+
+- `secrets/API_SHARED_SECRET`
+- `secrets/OPENAI_API_KEY`
+- `secrets/ELEVENLABS_API_KEY`
+
+2) Start Compose with the overlay file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build db api
+```
+
+## Minimal Web UI (React + Vite)
+
+The minimal UI lives in `web/` and calls the FastAPI service.
+
+### Option A: local (requires Node.js)
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+### Option B: Docker (no Node.js on the host)
+
+```bash
+docker compose up -d db api
+docker compose up web
+```
+
+Open the UI: `http://localhost:5173`.
+
+By default, Vite proxies `/api` to `http://localhost:8000` (see `web/vite.config.ts`). In Docker Compose, the `web` service sets `VITE_API_TARGET=http://api:8000`, so you don't need CORS.
+
 ## Project layout
 
 ```
 anki-csv-builder/
+├── api/                 # FastAPI service
 ├── app/                 # Streamlit UI modules
 ├── core/                # Parsing, generation, sanitisation, export helpers
 ├── config/              # Settings, templates, signal-word groups, i18n

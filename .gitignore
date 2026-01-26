@@ -75,8 +75,15 @@ anki_cards.csv
 # --- Среда ---
 .env
 .env.*
+secrets/
+
+# --- Node / web UI ---
+web/node_modules/
+web/dist/
+web/.vite/
 
 # Local notes and ideas (private)
 idea.md
-notes/
+notes/private/
 .continue/
+
