@@ -9,6 +9,7 @@ import base64
 import hmac
 import logging
 import os
+import re
 import time
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -34,7 +35,12 @@ from core.api_schemas import (
     UserRecord,
     UserStatusRequest,
     UserRotateResponse,
+    ExportDeckRequest,
+    ExportFileResponse,
     TTSRequest,
+    TTSOptionsResponse,
+    TTSProviderOptions,
+    TTSOption,
     TTSResponse,
     TTSAudio,
     TTSSummary,
@@ -54,8 +60,29 @@ from config.settings import (
     AUDIO_ELEVEN_STYLES,
     AUDIO_ELEVEN_VOICES,
     L1_LANGS,
+    DEFAULT_MODELS,
+    CSV_DELIMITER,
+    CSV_LINETERMINATOR,
+    ANKI_MODEL_ID,
+    ANKI_DECK_ID,
+    ANKI_MODEL_NAME,
+    ANKI_DECK_NAME,
+    CLOZE_FRONT_TEMPLATE_PATH,
+    CLOZE_BACK_TEMPLATE_PATH,
+    CLOZE_CSS_PATH,
+    BASIC_CARD1_FRONT_TEMPLATE_PATH,
+    BASIC_CARD1_BACK_TEMPLATE_PATH,
+    BASIC_CARD2_FRONT_TEMPLATE_PATH,
+    BASIC_CARD2_BACK_TEMPLATE_PATH,
+    TYPEIN_FRONT_TEMPLATE_PATH,
+    TYPEIN_BACK_TEMPLATE_PATH,
+    get_preferred_order,
+    get_allowed_prefixes,
+    get_block_substrings,
 )
 from core.audio import ensure_audio_for_cards
+from core.export_csv import generate_csv
+from core.export_anki import HAS_GENANKI, build_anki_package
 from core.run_report import build_run_report, resolve_audio_pricing
 from openai import AuthenticationError
 from core.db import (
@@ -216,6 +243,136 @@ def _usage_from_meta(meta: Dict[str, Any]) -> UsageEvent:
         request_id=None,
         elapsed_ms=None,
     )
+
+
+def _safe_export_basename(raw: str | None, fallback: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return fallback
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value)
+    cleaned = cleaned.strip("._-")
+    return cleaned or fallback
+
+
+def _safe_media_filename(raw: str) -> str:
+    name = (raw or "").strip().replace("\\", "/")
+    name = name.split("/")[-1]
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._-")
+    if not cleaned:
+        raise ValueError("Invalid media filename")
+    return cleaned
+
+
+def _export_cards_to_dict(cards: List[Any]) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    for card in cards:
+        if hasattr(card, "model_dump"):
+            data = card.model_dump()
+        else:
+            data = dict(card)
+        out.append(
+            {
+                "L2_word": str(data.get("L2_word", "") or ""),
+                "L2_cloze": str(data.get("L2_cloze", "") or ""),
+                "L1_sentence": str(data.get("L1_sentence", "") or ""),
+                "L2_collocations": str(data.get("L2_collocations", "") or ""),
+                "L2_definition": str(data.get("L2_definition", "") or ""),
+                "L1_gloss": str(data.get("L1_gloss", "") or ""),
+                "L1_hint": str(data.get("L1_hint", "") or ""),
+                "AudioSentence": str(data.get("AudioSentence", "") or ""),
+                "AudioWord": str(data.get("AudioWord", "") or ""),
+            }
+        )
+    return out
+
+
+def _sort_model_id(model_id: str, preferred_order: Dict[str, int]) -> tuple[int, str]:
+    for prefix, rank in preferred_order.items():
+        if model_id.startswith(prefix):
+            return (rank, model_id)
+    return (999, model_id)
+
+
+def _list_openai_model_ids() -> List[str]:
+    api_key = read_secret("OPENAI_API_KEY", required=False)
+    if not api_key:
+        return []
+    client = create_client(api_key)
+    if client is None:
+        return []
+    try:
+        models = client.models.list()
+    except Exception:
+        return []
+
+    ids: set[str] = set()
+
+    iterator = getattr(models, "auto_paging_iter", None)
+    if callable(iterator):
+        try:
+            for model in iterator():
+                mid = str(getattr(model, "id", "") or "").strip()
+                if mid:
+                    ids.add(mid)
+            return sorted(ids)
+        except Exception:
+            pass
+
+    page = models
+    hops = 0
+    while page is not None and hops < 30:
+        for model in getattr(page, "data", []) or []:
+            mid = str(getattr(model, "id", "") or "").strip()
+            if mid:
+                ids.add(mid)
+        has_next = getattr(page, "has_next_page", None)
+        get_next = getattr(page, "get_next_page", None)
+        if not callable(has_next) or not callable(get_next):
+            break
+        try:
+            if not has_next():
+                break
+            page = get_next()
+        except Exception:
+            break
+        hops += 1
+
+    return sorted(ids)
+
+
+def _filter_text_models(model_ids: List[str]) -> List[str]:
+    preferred_order = get_preferred_order()
+    allowed_prefixes = get_allowed_prefixes()
+    block_substrings = get_block_substrings()
+    ids = [
+        mid
+        for mid in model_ids
+        if any(mid.startswith(p) for p in allowed_prefixes) and not any(b in mid for b in block_substrings)
+    ]
+    if not ids:
+        return list(DEFAULT_MODELS)
+    return sorted(set(ids), key=lambda mid: _sort_model_id(mid, preferred_order))
+
+
+def _filter_openai_tts_models(model_ids: List[str]) -> List[str]:
+    ids: List[str] = []
+    for mid in model_ids:
+        low = mid.lower()
+        if "tts" not in low:
+            continue
+        if any(blocked in low for blocked in ("transcribe", "whisper", "realtime", "asr")):
+            continue
+        ids.append(mid)
+
+    ordered: List[str] = []
+    for value in [AUDIO_TTS_MODEL, AUDIO_TTS_FALLBACK, "gpt-4o-mini-tts", "gpt-4o-tts", "tts-1", "tts-1-hd"]:
+        clean = (value or "").strip()
+        if clean and clean not in ordered:
+            ordered.append(clean)
+    for mid in sorted(set(ids)):
+        if mid not in ordered:
+            ordered.append(mid)
+    return ordered
 
 
 @app.get("/health")
@@ -481,6 +638,184 @@ def api_generate(
     )
 
 
+@app.post("/api/export/csv", response_model=ExportFileResponse)
+def api_export_csv(
+    payload: ExportDeckRequest,
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> ExportFileResponse:
+    _require_user(request, x_api_key)
+
+    if not payload.cards:
+        raise HTTPException(status_code=400, detail="No cards to export")
+
+    l1_code = (payload.l1 or "").strip().upper()
+    l1_meta = L1_LANGS.get(l1_code)
+    if not l1_meta:
+        supported = ", ".join(sorted(L1_LANGS.keys()))
+        raise HTTPException(status_code=400, detail=f"Unsupported l1={payload.l1!r}. Supported: {supported}")
+
+    cards = _export_cards_to_dict(payload.cards)
+    csv_data = generate_csv(
+        cards,
+        l1_meta,
+        delimiter=CSV_DELIMITER,
+        line_terminator=CSV_LINETERMINATOR,
+        include_header=True,
+        include_extras=True,
+        anki_field_header=True,
+        extras_meta={
+            "level": payload.cefr,
+            "profile": payload.profile,
+            "model": payload.model,
+            "L1": l1_code,
+        },
+    )
+    base = _safe_export_basename(payload.deck_name, ANKI_DECK_NAME)
+    return ExportFileResponse(
+        file_name=f"{base}.csv",
+        mime_type="text/csv",
+        content_b64=base64.b64encode(csv_data.encode("utf-8")).decode("ascii"),
+        card_count=len(cards),
+    )
+
+
+@app.post("/api/export/apkg", response_model=ExportFileResponse)
+def api_export_apkg(
+    payload: ExportDeckRequest,
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> ExportFileResponse:
+    _require_user(request, x_api_key)
+
+    if not payload.cards:
+        raise HTTPException(status_code=400, detail="No cards to export")
+    if not HAS_GENANKI:
+        raise HTTPException(status_code=501, detail="APKG export is disabled: genanki is not installed on the API server.")
+
+    l1_code = (payload.l1 or "").strip().upper()
+    l1_meta = L1_LANGS.get(l1_code)
+    if not l1_meta:
+        supported = ", ".join(sorted(L1_LANGS.keys()))
+        raise HTTPException(status_code=400, detail=f"Unsupported l1={payload.l1!r}. Supported: {supported}")
+
+    cards = _export_cards_to_dict(payload.cards)
+    run_id = (payload.run_id or "").strip() or str(int(time.time()))
+    deck_name = (payload.deck_name or "").strip() or ANKI_DECK_NAME
+    media_files: Dict[str, bytes] | None = None
+    if payload.media_map:
+        media_files = {}
+        for raw_name, content_b64 in payload.media_map.items():
+            if not content_b64:
+                continue
+            safe_name = _safe_media_filename(raw_name)
+            try:
+                media_files[safe_name] = base64.b64decode(content_b64)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid media payload for {safe_name}") from exc
+
+    try:
+        front_template_raw = CLOZE_FRONT_TEMPLATE_PATH.read_text(encoding="utf-8")
+        front_html = front_template_raw.replace("{L1_LABEL}", l1_meta.get("label", l1_code))
+        back_html = CLOZE_BACK_TEMPLATE_PATH.read_text(encoding="utf-8")
+        css_content = CLOZE_CSS_PATH.read_text(encoding="utf-8")
+        basic_templates = None
+        if payload.include_basic_reversed:
+            basic_templates = {
+                "card1_front": BASIC_CARD1_FRONT_TEMPLATE_PATH.read_text(encoding="utf-8"),
+                "card1_back": BASIC_CARD1_BACK_TEMPLATE_PATH.read_text(encoding="utf-8"),
+                "card2_front": BASIC_CARD2_FRONT_TEMPLATE_PATH.read_text(encoding="utf-8"),
+                "card2_back": BASIC_CARD2_BACK_TEMPLATE_PATH.read_text(encoding="utf-8"),
+            }
+        typein_templates = None
+        if payload.include_basic_typein:
+            typein_templates = {
+                "front": TYPEIN_FRONT_TEMPLATE_PATH.read_text(encoding="utf-8"),
+                "back": TYPEIN_BACK_TEMPLATE_PATH.read_text(encoding="utf-8"),
+            }
+        anki_bytes = build_anki_package(
+            cards,
+            l1_label=l1_meta.get("label", l1_code),
+            guid_policy=payload.guid_policy,
+            run_id=run_id,
+            model_id=ANKI_MODEL_ID,
+            model_name=ANKI_MODEL_NAME,
+            deck_id=ANKI_DECK_ID,
+            deck_name=deck_name,
+            front_template=front_html,
+            back_template=back_html,
+            css=css_content,
+            tags_meta={
+                "level": payload.cefr,
+                "profile": payload.profile,
+                "model": payload.model,
+                "L1": l1_code,
+            },
+            media_files=media_files,
+            include_basic_reversed=payload.include_basic_reversed,
+            include_basic_typein=payload.include_basic_typein,
+            basic_templates=basic_templates,
+            typein_templates=typein_templates,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to build .apkg: {exc}") from exc
+
+    base = _safe_export_basename(deck_name, ANKI_DECK_NAME)
+    return ExportFileResponse(
+        file_name=f"{base}.apkg",
+        mime_type="application/octet-stream",
+        content_b64=base64.b64encode(anki_bytes).decode("ascii"),
+        card_count=len(cards),
+    )
+
+
+@app.get("/api/tts/options", response_model=TTSOptionsResponse)
+def api_tts_options(
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> TTSOptionsResponse:
+    _require_user(request, x_api_key)
+
+    all_openai_models = _list_openai_model_ids()
+    text_models = _filter_text_models(all_openai_models)
+    openai_models = _filter_openai_tts_models(all_openai_models)
+
+    openai_voices = [
+        TTSOption(id=(voice.get("id") or "").strip(), label=(voice.get("label") or voice.get("id") or "").strip())
+        for voice in AUDIO_VOICES
+        if (voice.get("id") or "").strip()
+    ]
+    eleven_voices = [
+        TTSOption(id=(voice.get("id") or "").strip(), label=(voice.get("label") or voice.get("id") or "").strip())
+        for voice in AUDIO_ELEVEN_VOICES
+        if (voice.get("id") or "").strip()
+    ]
+    eleven_models = ["eleven_multilingual_v2"]
+
+    return TTSOptionsResponse(
+        text_models=text_models,
+        providers=["openai", "elevenlabs"],
+        by_provider={
+            "openai": TTSProviderOptions(
+                models=openai_models,
+                voices=openai_voices,
+                default_model=openai_models[0] if openai_models else None,
+                default_voice=openai_voices[0].id if openai_voices else None,
+            ),
+            "elevenlabs": TTSProviderOptions(
+                models=eleven_models,
+                voices=eleven_voices,
+                default_model=eleven_models[0],
+                default_voice=eleven_voices[0].id if eleven_voices else None,
+            ),
+        },
+    )
+
+
 def _extract_sound_filename(sound_field: str) -> str:
     if not sound_field:
         return ""
@@ -614,6 +949,7 @@ def api_tts(
         ok=summary.word_success + summary.sentence_success,
         failed=len(summary.errors or []),
         cached=summary.cache_hits,
+        errors=list(summary.errors or []),
         usage={"audio_chars": summary.total_characters},
         cost={"estimated_usd": round(audio_cost_total, 6) if audio_cost_total else None, "by_model": cost_by_model},
     )

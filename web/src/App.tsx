@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { parseItems } from "./lib/parse";
 import { loadJson, saveJson } from "./lib/storage";
 import {
+  Card,
   GenerateRequest,
   GenerateResponse,
+  ExportDeckRequest,
+  ExportFileResponse,
+  TTSRequest,
+  TTSOptionsResponse,
+  TTSResponse,
   UsageListResponse,
   UserSettingsResponse,
   UserSettingsUpsertRequest,
@@ -13,6 +19,7 @@ import {
 
 type TabId = "generate" | "settings" | "admin";
 type ResultFilter = "all" | "errors" | "repaired";
+type ExportFormat = "csv" | "apkg";
 type TemperatureParseResult = {
   ratio: number | null;
   percent: number | null;
@@ -88,6 +95,13 @@ function shortJson(obj: unknown): string {
   }
 }
 
+function apiErrorText(data: any, status: number): string {
+  const candidate = data?.detail ?? data?.error?.message ?? data;
+  if (typeof candidate === "string" && candidate.trim()) return candidate;
+  if (candidate != null) return shortJson(candidate);
+  return `HTTP ${status}`;
+}
+
 function formatPercent(value: number): string {
   const rounded = Math.round(value * 10) / 10;
   return Number.isInteger(rounded) ? String(Math.round(rounded)) : String(rounded);
@@ -130,6 +144,78 @@ function parseTemperatureValue(raw: string): TemperatureParseResult {
   };
 }
 
+function normalizeImportedText(raw: string): string {
+  return raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+}
+
+function decodeBase64ToBytes(contentB64: string): Uint8Array {
+  const binary = atob(contentB64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function downloadBlobFile(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function normalizedDeckName(rawName: string): string {
+  const safe = rawName.trim().replace(/[^\w.-]+/g, "_").replace(/^[_\-.]+|[_\-.]+$/g, "");
+  return safe || "deck";
+}
+
+function buildTtsItems(
+  generated: GenerateResponse,
+  opts: { includeWord: boolean; includeSentence: boolean }
+): TTSRequest["items"] {
+  const items: TTSRequest["items"] = [];
+  for (const row of generated.items) {
+    if (!row.card) continue;
+    if (row.status !== "ok" && row.status !== "repaired") continue;
+    if (opts.includeWord) {
+      const word = (row.card.L2_word || "").trim();
+      if (word) items.push({ card_id: row.id, type: "word", text: word });
+    }
+    if (opts.includeSentence) {
+      const sentence = (row.card.L2_cloze || "").trim();
+      if (sentence) items.push({ card_id: row.id, type: "sentence", text: sentence });
+    }
+  }
+  return items;
+}
+
+function mergeTtsIntoResponse(generated: GenerateResponse, tts: TTSResponse): GenerateResponse {
+  const byCard = new Map<string, { word?: string; sentence?: string }>();
+  for (const audio of tts.audios) {
+    if (!audio.filename) continue;
+    const current = byCard.get(audio.card_id) || {};
+    if (audio.type === "word") current.word = audio.filename;
+    if (audio.type === "sentence") current.sentence = audio.filename;
+    byCard.set(audio.card_id, current);
+  }
+  return {
+    ...generated,
+    items: generated.items.map((item) => {
+      if (!item.card) return item;
+      const entry = byCard.get(item.id);
+      if (!entry) return item;
+      const card = { ...item.card };
+      if (entry.word) card.AudioWord = `[sound:${entry.word}]`;
+      if (entry.sentence) card.AudioSentence = `[sound:${entry.sentence}]`;
+      return { ...item, card };
+    }),
+  };
+}
+
 export default function App() {
   const [settings, setSettings] = useState<Settings>(() => ({
     ...DEFAULT_SETTINGS,
@@ -152,6 +238,15 @@ export default function App() {
   const [showUserToken, setShowUserToken] = useState(false);
   const [showXApiKey, setShowXApiKey] = useState(false);
   const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
+  const [fileMsg, setFileMsg] = useState("");
+  const [generateProgress, setGenerateProgress] = useState(0);
+  const [generateProgressLabel, setGenerateProgressLabel] = useState("");
+  const [exportBusy, setExportBusy] = useState<ExportFormat | null>(null);
+  const [audioMediaMap, setAudioMediaMap] = useState<Record<string, string>>({});
+  const [ttsOptions, setTtsOptions] = useState<TTSOptionsResponse | null>(null);
+  const [ttsOptionsBusy, setTtsOptionsBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fileImportModeRef = useRef<"replace" | "append">("replace");
 
   const deckPreview = useMemo(() => {
     const base = settings.defaultDeck?.trim() || "Deck";
@@ -162,6 +257,42 @@ export default function App() {
   const canGenerateByInput = parsed.items.length > 0;
   const temperatureState = useMemo(() => parseTemperatureValue(settings.temperature), [settings.temperature]);
   const canGenerate = canGenerateByInput && !temperatureState.error;
+  const audioClipCount = useMemo(() => Object.keys(audioMediaMap).length, [audioMediaMap]);
+  const audioProviderKey = (settings.audioProvider || "openai").trim().toLowerCase();
+  const availableAudioProviders = useMemo(() => {
+    const fromApi = ttsOptions?.providers || [];
+    const fromState = settings.audioProvider ? [audioProviderKey] : [];
+    return Array.from(new Set([...fromApi, ...fromState].filter(Boolean)));
+  }, [ttsOptions, settings.audioProvider, audioProviderKey]);
+  const textModelOptions = useMemo(() => {
+    const fromApi = ttsOptions?.text_models || [];
+    const fallback = settings.model ? [settings.model] : [];
+    const merged = Array.from(new Set([...fromApi, ...fallback].filter(Boolean)));
+    return merged.length > 0 ? merged : ["gpt-4.1-mini"];
+  }, [ttsOptions, settings.model]);
+  const activeAudioProviderOptions = ttsOptions?.by_provider?.[audioProviderKey];
+  const audioModelOptions = activeAudioProviderOptions?.models || [];
+  const audioVoiceOptions = activeAudioProviderOptions?.voices || [];
+  const availableAudioModelOptions = useMemo(() => {
+    const fromApi = audioModelOptions;
+    const fromCurrent = settings.audioModel ? [settings.audioModel] : [];
+    return Array.from(new Set([...fromApi, ...fromCurrent].filter(Boolean)));
+  }, [audioModelOptions, settings.audioModel]);
+  const availableAudioVoiceOptions = useMemo(() => {
+    const fromApi = audioVoiceOptions.map((voice) => voice.id);
+    const fromCurrent = settings.audioVoice ? [settings.audioVoice] : [];
+    return Array.from(new Set([...fromApi, ...fromCurrent].filter(Boolean)));
+  }, [audioVoiceOptions, settings.audioVoice]);
+  const audioVoiceLabels = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const voice of audioVoiceOptions) {
+      if (voice.id) map[voice.id] = voice.label || voice.id;
+    }
+    if (settings.audioVoice && !map[settings.audioVoice]) {
+      map[settings.audioVoice] = settings.audioVoice;
+    }
+    return map;
+  }, [audioVoiceOptions, settings.audioVoice]);
 
   useEffect(() => {
     saveJson(SETTINGS_KEY, settings);
@@ -185,12 +316,37 @@ export default function App() {
     }
   }, [activeTab, adminEnabled]);
 
+  useEffect(() => {
+    if (!settings.userToken.trim()) return;
+    void onLoadTtsOptions(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.userToken, settings.apiBase]);
+
   const filteredItems = useMemo(() => {
     const items = response?.items || [];
     if (resultFilter === "all") return items;
     if (resultFilter === "repaired") return items.filter((it) => it.status === "repaired");
     return items.filter((it) => it.status === "failed" || it.status === "flagged" || !!it.error);
   }, [response, resultFilter]);
+  const exportCards = useMemo(() => {
+    const items = response?.items || [];
+    return items
+      .filter((it) => !!it.card && (it.status === "ok" || it.status === "repaired"))
+      .map((it) => {
+        const card = it.card as Card;
+        return {
+          L2_word: card.L2_word || "",
+          L2_cloze: card.L2_cloze || "",
+          L1_sentence: card.L1_sentence || "",
+          L2_collocations: card.L2_collocations || "",
+          L2_definition: card.L2_definition || "",
+          L1_gloss: card.L1_gloss || "",
+          L1_hint: card.L1_hint || "",
+          AudioSentence: card.AudioSentence || "",
+          AudioWord: card.AudioWord || "",
+        } as Card;
+      });
+  }, [response]);
 
   function apiHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -208,8 +364,7 @@ export default function App() {
       const res = await fetch(url, { method: "GET", headers });
       const data = (await res.json().catch(() => null)) as any;
       if (!res.ok) {
-        const detail = data?.detail || data?.error?.message || shortJson(data) || `HTTP ${res.status}`;
-        throw new Error(detail);
+        throw new Error(apiErrorText(data, res.status));
       }
       const payload = data as UserSettingsResponse;
       setSettings((s) => ({
@@ -274,8 +429,7 @@ export default function App() {
       const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
       const data = (await res.json().catch(() => null)) as any;
       if (!res.ok) {
-        const detail = data?.detail || data?.error?.message || shortJson(data) || `HTTP ${res.status}`;
-        throw new Error(detail);
+        throw new Error(apiErrorText(data, res.status));
       }
       const payload = data as UserSettingsResponse;
       setServerMsg(`Saved settings for ${payload.user_id} (${payload.updated_at || "no timestamp"}).`);
@@ -293,8 +447,7 @@ export default function App() {
       const res = await fetch(url, { method: "GET", headers });
       const data = (await res.json().catch(() => null)) as any;
       if (!res.ok) {
-        const detail = data?.detail || data?.error?.message || shortJson(data) || `HTTP ${res.status}`;
-        throw new Error(detail);
+        throw new Error(apiErrorText(data, res.status));
       }
       setUsage(data as UsageListResponse);
       setServerMsg("Loaded usage events.");
@@ -403,16 +556,79 @@ export default function App() {
     }
   }
 
+  async function onLoadTtsOptions(silent = false) {
+    if (!settings.userToken.trim()) {
+      if (!silent) setError("Invite token is required to load TTS options.");
+      return;
+    }
+    if (!silent) {
+      setError("");
+      setServerMsg("");
+    }
+    setTtsOptionsBusy(true);
+    try {
+      const url = (settings.apiBase || "") + "/api/tts/options";
+      const headers = apiHeaders();
+      const res = await fetch(url, { method: "GET", headers });
+      const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(apiErrorText(data, res.status));
+      }
+      const payload = data as TTSOptionsResponse;
+      setTtsOptions(payload);
+      setSettings((current) => {
+        const currentProvider = (current.audioProvider || "").trim().toLowerCase();
+        const textModels = payload.text_models || [];
+        const providerFromApi = payload.providers[0] || "openai";
+        const provider = payload.by_provider[currentProvider] ? currentProvider : providerFromApi;
+        const selected = payload.by_provider[provider];
+        const currentTextModel = (current.model || "").trim();
+        const currentModel = (current.audioModel || "").trim();
+        const currentVoice = (current.audioVoice || "").trim();
+        const textModelInList = !!currentTextModel && textModels.includes(currentTextModel);
+        const modelInList = !!currentModel && (selected?.models || []).includes(currentModel);
+        const voiceInList = !!currentVoice && (selected?.voices || []).some((v) => v.id === currentVoice);
+        return {
+          ...current,
+          model: currentTextModel && textModelInList ? currentTextModel : textModels[0] || currentTextModel || "gpt-4.1-mini",
+          audioProvider: provider,
+          audioModel: currentModel && modelInList ? currentModel : selected?.default_model || currentModel,
+          audioVoice: currentVoice && voiceInList ? currentVoice : selected?.default_voice || currentVoice,
+        };
+      });
+      if (!silent) setServerMsg("Loaded TTS models and voices.");
+    } catch (e: any) {
+      if (!silent) setError(e?.message || String(e));
+    } finally {
+      setTtsOptionsBusy(false);
+    }
+  }
+
   async function onGenerate() {
     const tempParsed = parseTemperatureValue(settings.temperature);
     if (tempParsed.error) {
       setError(tempParsed.error);
       return;
     }
+    const totalRows = parsed.items.length;
+    const audioRequested = settings.generateAudio;
+    const textProgressCap = audioRequested ? 72 : 94;
+    const expectedMs = Math.max(3000, totalRows * 1300);
+    const startedAt = Date.now();
+    let progressTimer: number | null = null;
     setBusy(true);
     setError("");
     setResponse(null);
     setServerMsg("");
+    setAudioMediaMap({});
+    setGenerateProgress(3);
+    setGenerateProgressLabel(`Queued ${totalRows} row(s) for generation.`);
+    progressTimer = window.setInterval(() => {
+      const elapsedMs = Date.now() - startedAt;
+      const predicted = Math.min(textProgressCap, 6 + (elapsedMs / expectedMs) * Math.max(1, textProgressCap - 6));
+      setGenerateProgress((prev) => (predicted > prev ? predicted : prev));
+      setGenerateProgressLabel(`Generating cards... ${Math.round(predicted)}%`);
+    }, 220);
     try {
       const runId = generateRunId();
       const req: GenerateRequest = {
@@ -433,14 +649,238 @@ export default function App() {
       const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
       const data = (await res.json().catch(() => null)) as any;
       if (!res.ok) {
-        const detail = data?.detail || data?.error?.message || shortJson(data) || `HTTP ${res.status}`;
-        throw new Error(detail);
+        throw new Error(apiErrorText(data, res.status));
       }
-      setResponse(data as GenerateResponse);
+      let payload = data as GenerateResponse;
+      setResponse(payload);
+      if (progressTimer != null) {
+        window.clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      setGenerateProgress(textProgressCap);
+      setGenerateProgressLabel(`Text ready: ${payload.items.length}/${totalRows}.`);
+
+      if (settings.generateAudio) {
+        setGenerateProgressLabel("Preparing audio synthesis...");
+        const ttsItems = buildTtsItems(payload, {
+          includeWord: settings.includeAudioWord,
+          includeSentence: settings.includeAudioSentence,
+        });
+        if (ttsItems.length > 0) {
+          const totalClips = ttsItems.length;
+          const ttsBatchSize = 8;
+          const totalBatches = Math.ceil(totalClips / ttsBatchSize);
+          let doneClips = 0;
+          let okCount = 0;
+          let failedCount = 0;
+          const errorSamples: string[] = [];
+          const mediaMap: Record<string, string> = {};
+          const audioProgressStart = Math.min(94, textProgressCap + 4);
+          const audioProgressSpan = Math.max(1, 99 - audioProgressStart);
+          const updateAudioProgress = (done: number, suffix = "") => {
+            const ratio = totalClips > 0 ? done / totalClips : 1;
+            const next = Math.min(99, audioProgressStart + ratio * audioProgressSpan);
+            setGenerateProgress((prev) => (next > prev ? next : prev));
+            const tail = suffix ? ` ${suffix}` : "";
+            setGenerateProgressLabel(`Generating audio: ${done}/${totalClips} clips.${tail}`);
+          };
+          updateAudioProgress(0, "Batch 1 in queue.");
+          try {
+            const ttsUrl = (settings.apiBase || "") + "/api/tts";
+            for (let offset = 0; offset < totalClips; offset += ttsBatchSize) {
+              const batchIndex = Math.floor(offset / ttsBatchSize) + 1;
+              const batch = ttsItems.slice(offset, offset + ttsBatchSize);
+              const doneTarget = Math.min(totalClips, doneClips + batch.length);
+              const baseRatio = totalClips > 0 ? doneClips / totalClips : 1;
+              const doneRatio = totalClips > 0 ? doneTarget / totalClips : 1;
+              const baseProgress = Math.min(99, audioProgressStart + baseRatio * audioProgressSpan);
+              const waitingCap = Math.min(
+                99,
+                audioProgressStart + (baseRatio + (doneRatio - baseRatio) * 0.85) * audioProgressSpan
+              );
+              let waitingProgress = baseProgress;
+              updateAudioProgress(doneClips, `Batch ${batchIndex}/${totalBatches} in progress...`);
+              let waitTimer: number | null = window.setInterval(() => {
+                const step = Math.max(0.08, (waitingCap - baseProgress) / 16);
+                waitingProgress = Math.min(waitingCap, waitingProgress + step);
+                setGenerateProgress((prev) => (waitingProgress > prev ? waitingProgress : prev));
+                setGenerateProgressLabel(
+                  `Generating audio: ${doneClips}/${totalClips} clips. Batch ${batchIndex}/${totalBatches} in progress...`
+                );
+              }, 350);
+              const ttsReq: TTSRequest = {
+                run_id: payload.run_id || runId,
+                provider: settings.audioProvider || "openai",
+                model: settings.audioModel || undefined,
+                voice: settings.audioVoice || undefined,
+                items: batch,
+              };
+              try {
+                const ttsRes = await fetch(ttsUrl, { method: "POST", headers, body: JSON.stringify(ttsReq) });
+                const ttsData = (await ttsRes.json().catch(() => null)) as any;
+                if (!ttsRes.ok) {
+                  const detail = apiErrorText(ttsData, ttsRes.status);
+                  errorSamples.push(detail);
+                  failedCount += totalClips - doneClips;
+                  doneClips = totalClips;
+                  updateAudioProgress(doneClips, "Stopped after API error.");
+                  break;
+                }
+                const ttsPayload = ttsData as TTSResponse;
+                payload = mergeTtsIntoResponse(payload, ttsPayload);
+                for (const audio of ttsPayload.audios) {
+                  if (audio.filename && audio.audio_b64) {
+                    mediaMap[audio.filename] = audio.audio_b64;
+                  }
+                }
+                okCount += Number(ttsPayload.summary?.ok || 0);
+                failedCount += Number(ttsPayload.summary?.failed || 0);
+                for (const err of ttsPayload.summary?.errors || []) {
+                  if (typeof err === "string" && err.trim()) errorSamples.push(err);
+                }
+                doneClips = doneTarget;
+                setResponse(payload);
+                updateAudioProgress(doneClips, `Batch ${batchIndex}/${totalBatches} complete.`);
+              } finally {
+                if (waitTimer != null) {
+                  window.clearInterval(waitTimer);
+                  waitTimer = null;
+                }
+              }
+            }
+            setAudioMediaMap(mediaMap);
+            setResponse(payload);
+            if (failedCount > 0) {
+              const firstErr = errorSamples.find((err) => typeof err === "string" && err.trim().length > 0);
+              const details = firstErr ? ` First error: ${firstErr}` : "";
+              if (okCount > 0) {
+                setError(`Audio partial: ${okCount} succeeded, ${failedCount} failed.${details}`);
+                setServerMsg(`Generated ${payload.items.length} cards with partial audio (${okCount}/${okCount + failedCount}).`);
+              } else {
+                setError(`Audio generation failed for all clips (${failedCount}).${details}`);
+                setServerMsg("Cards were generated, but audio synthesis failed.");
+              }
+            } else {
+              setServerMsg(`Generated ${payload.items.length} cards. Audio ready (${okCount} clips).`);
+            }
+          } catch (ttsErr: any) {
+            const detail = ttsErr?.message || String(ttsErr);
+            setError(`Audio generation failed: ${detail}`);
+            setServerMsg("Cards were generated, but audio synthesis did not complete.");
+          }
+        } else {
+          setGenerateProgress((prev) => (95 > prev ? 95 : prev));
+          setGenerateProgressLabel("Audio is enabled, but there are no clips to synthesize.");
+          setServerMsg("Generated cards. Audio is enabled but no eligible rows for TTS.");
+        }
+      }
+      setGenerateProgress(100);
+      setGenerateProgressLabel(`Done: ${payload.items.length}/${totalRows} row(s).`);
+    } catch (e: any) {
+      setError(e?.message || String(e));
+      setGenerateProgress(0);
+      setGenerateProgressLabel("");
+    } finally {
+      if (progressTimer != null) {
+        window.clearInterval(progressTimer);
+      }
+      setBusy(false);
+    }
+  }
+
+  function onSaveInputText() {
+    if (!inputText.trim()) {
+      setError("Input is empty. Add rows first.");
+      return;
+    }
+    const base = normalizedDeckName(settings.defaultDeck || "dutch_words");
+    const fileName = `${base}.txt`;
+    const blob = new Blob([normalizeImportedText(inputText)], { type: "text/plain;charset=utf-8" });
+    downloadBlobFile(blob, fileName);
+    setFileMsg(`Saved ${fileName}.`);
+  }
+
+  async function onExportDeck(format: ExportFormat) {
+    if (!response) return;
+    if (exportCards.length === 0) {
+      setError("No successful cards to export.");
+      return;
+    }
+    setExportBusy(format);
+    setError("");
+    setServerMsg("");
+    try {
+      const req: ExportDeckRequest = {
+        run_id: response.run_id || generateRunId(),
+        l1: settings.l1,
+        cefr: settings.cefr,
+        profile: settings.profile,
+        model: settings.model,
+        deck_name: settings.defaultDeck || "Dutch",
+        guid_policy: "stable",
+        include_basic_reversed: settings.includeBasicReversed,
+        include_basic_typein: settings.includeBasicTypein,
+        media_map: format === "apkg" && Object.keys(audioMediaMap).length > 0 ? audioMediaMap : undefined,
+        cards: exportCards,
+      };
+      const url = (settings.apiBase || "") + `/api/export/${format}`;
+      const headers = apiHeaders();
+      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
+      const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(apiErrorText(data, res.status));
+      }
+      const payload = data as ExportFileResponse;
+      const bytes = decodeBase64ToBytes(payload.content_b64);
+      const blob = new Blob([bytes], { type: payload.mime_type || "application/octet-stream" });
+      downloadBlobFile(blob, payload.file_name);
+      setServerMsg(`Downloaded ${payload.file_name} (${payload.card_count} cards).`);
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
-      setBusy(false);
+      setExportBusy(null);
+    }
+  }
+
+  function openInputFilePicker(mode: "replace" | "append") {
+    fileImportModeRef.current = mode;
+    fileInputRef.current?.click();
+  }
+
+  async function onInputFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length) return;
+    setFileMsg("");
+    setError("");
+    try {
+      const chunks = await Promise.all(
+        files.map(async (file) => {
+          const text = await file.text();
+          return normalizeImportedText(text).replace(/^\n+|\n+$/g, "");
+        })
+      );
+      const merged = chunks.filter((chunk) => chunk.length > 0).join("\n");
+      if (!merged.trim()) {
+        setFileMsg("Selected file is empty.");
+        return;
+      }
+
+      const mode = fileImportModeRef.current;
+      setInputText((prev) => {
+        if (mode === "append" && prev.trim()) {
+          return `${prev.replace(/\n+$/g, "")}\n${merged.replace(/^\n+/g, "")}`;
+        }
+        return merged;
+      });
+      setResponse(null);
+      setAudioMediaMap({});
+      setResultFilter("all");
+      const shown = files.slice(0, 2).map((f) => f.name).join(", ");
+      const extra = files.length > 2 ? ` +${files.length - 2} more` : "";
+      setFileMsg(`${mode === "append" ? "Appended" : "Loaded"} ${files.length} file(s): ${shown}${extra}.`);
+    } catch (e: any) {
+      setError(e?.message || "Failed to read selected file.");
     }
   }
 
@@ -563,7 +1003,7 @@ export default function App() {
           <section className="card">
             <h2>Input</h2>
             <p className="hint flow-hint">
-              1. Paste your rows. 2. Click Generate. 3. Review errors/repaired items below.
+              1. Paste rows or load text files. 2. Click Generate. 3. Review errors/repaired items below.
             </p>
             <div className="input-toolbar">
               <div className="meta">
@@ -571,11 +1011,43 @@ export default function App() {
                   <span className="k">rows parsed</span> {parsed.items.length}
                 </div>
               </div>
-              <button className="btn primary" onClick={onGenerate} disabled={busy || !canGenerate}>
-                {busy ? "Generating..." : `Generate (${parsed.items.length})`}
-              </button>
+              <div className="input-toolbar-actions">
+                <button className="btn small" type="button" onClick={() => openInputFilePicker("replace")} disabled={busy}>
+                  Load file
+                </button>
+                <button className="btn small" type="button" onClick={() => openInputFilePicker("append")} disabled={busy}>
+                  Append file
+                </button>
+                <button className="btn small" type="button" onClick={onSaveInputText} disabled={busy || !inputText.trim()}>
+                  Save text
+                </button>
+                <button className="btn primary" onClick={onGenerate} disabled={busy || !canGenerate}>
+                  {busy ? "Generating..." : `Generate (${parsed.items.length})`}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".txt,.tsv,.csv,text/plain,text/tab-separated-values,text/csv"
+                  onChange={onInputFilesSelected}
+                  className="hidden-file-input"
+                />
+              </div>
             </div>
+            {(busy || (generateProgress === 100 && !!response)) && (
+              <div className={`gen-progress ${busy ? "active" : "done"}`}>
+                <div className="gen-progress-track">
+                  <div className="gen-progress-fill" style={{ width: `${Math.max(0, Math.min(100, generateProgress))}%` }} />
+                </div>
+                <div className="gen-progress-meta">
+                  <span>{busy ? "Generation in progress" : "Generation complete"}</span>
+                  <span>{Math.round(generateProgress)}%</span>
+                </div>
+                {generateProgressLabel && <p className="hint subtle">{generateProgressLabel}</p>}
+              </div>
+            )}
             <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} rows={6} />
+            {fileMsg && <p className="hint subtle">{fileMsg}</p>}
             {warnings.length > 0 && (
               <div className="warnings">
                 {warnings.map((w) => (
@@ -594,17 +1066,28 @@ export default function App() {
           <section className="card">
             <h2>Result</h2>
             {response && (
-              <div className="result-filters">
-                <button className={`btn small ${resultFilter === "all" ? "active" : ""}`} onClick={() => setResultFilter("all")}>
-                  All
-                </button>
-                <button className={`btn small ${resultFilter === "errors" ? "active" : ""}`} onClick={() => setResultFilter("errors")}>
-                  Errors
-                </button>
-                <button className={`btn small ${resultFilter === "repaired" ? "active" : ""}`} onClick={() => setResultFilter("repaired")}>
-                  Repaired
-                </button>
-              </div>
+              <>
+                <div className="result-filters">
+                  <button className={`btn small ${resultFilter === "all" ? "active" : ""}`} onClick={() => setResultFilter("all")}>
+                    All
+                  </button>
+                  <button className={`btn small ${resultFilter === "errors" ? "active" : ""}`} onClick={() => setResultFilter("errors")}>
+                    Errors
+                  </button>
+                  <button className={`btn small ${resultFilter === "repaired" ? "active" : ""}`} onClick={() => setResultFilter("repaired")}>
+                    Repaired
+                  </button>
+                </div>
+                <div className="result-actions">
+                  <button className="btn small" onClick={() => onExportDeck("csv")} disabled={busy || exportBusy != null || exportCards.length === 0}>
+                    {exportBusy === "csv" ? "Preparing CSV..." : `Download CSV (${exportCards.length})`}
+                  </button>
+                  <button className="btn small" onClick={() => onExportDeck("apkg")} disabled={busy || exportBusy != null || exportCards.length === 0}>
+                    {exportBusy === "apkg" ? "Preparing APKG..." : "Download APKG"}
+                  </button>
+                </div>
+                {settings.generateAudio && <p className="hint subtle">Audio clips ready: {audioClipCount}</p>}
+              </>
             )}
             {error && <div className="error">{error}</div>}
             {!error && !response && (
@@ -740,7 +1223,18 @@ export default function App() {
               <div className="grid">
                 <label>
                   <span>Model</span>
-                  <input value={settings.model} onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))} />
+                  <div className="inline-input-action">
+                    <select value={settings.model} onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))}>
+                      {textModelOptions.map((modelId) => (
+                        <option key={modelId} value={modelId}>
+                          {modelId}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="btn tiny" type="button" onClick={() => onLoadTtsOptions(false)} disabled={ttsOptionsBusy || busy}>
+                      {ttsOptionsBusy ? "..." : "Reload"}
+                    </button>
+                  </div>
                 </label>
                 <label>
                   <span>Temperature (%) 0..100</span>
@@ -831,29 +1325,51 @@ export default function App() {
               <div className="grid">
                 <label>
                   <span>TTS provider</span>
-                  <input
-                    value={settings.audioProvider}
-                    onChange={(e) => setSettings((s) => ({ ...s, audioProvider: e.target.value }))}
-                    placeholder="openai|elevenlabs"
-                  />
+                  <select
+                    value={audioProviderKey}
+                    onChange={(e) => {
+                      const nextProvider = e.target.value;
+                      const nextOptions = ttsOptions?.by_provider?.[nextProvider];
+                      setSettings((s) => ({
+                        ...s,
+                        audioProvider: nextProvider,
+                        audioModel: nextOptions?.default_model || s.audioModel,
+                        audioVoice: nextOptions?.default_voice || s.audioVoice,
+                      }));
+                    }}
+                  >
+                    {availableAudioProviders.map((providerId) => (
+                      <option key={providerId} value={providerId}>
+                        {providerId}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   <span>TTS model</span>
-                  <input
-                    value={settings.audioModel}
-                    onChange={(e) => setSettings((s) => ({ ...s, audioModel: e.target.value }))}
-                    placeholder="gpt-4o-mini-tts-... / elevenlabs id"
-                  />
+                  <select value={settings.audioModel} onChange={(e) => setSettings((s) => ({ ...s, audioModel: e.target.value }))}>
+                    {availableAudioModelOptions.length === 0 && <option value="">(load models)</option>}
+                    {availableAudioModelOptions.map((modelId) => (
+                      <option key={modelId} value={modelId}>
+                        {modelId}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   <span>TTS voice</span>
-                  <input
-                    value={settings.audioVoice}
-                    onChange={(e) => setSettings((s) => ({ ...s, audioVoice: e.target.value }))}
-                    placeholder="alloy / elevenlabs voice id"
-                  />
+                  <select value={settings.audioVoice} onChange={(e) => setSettings((s) => ({ ...s, audioVoice: e.target.value }))}>
+                    {availableAudioVoiceOptions.length === 0 && <option value="">(load voices)</option>}
+                    {availableAudioVoiceOptions.map((voiceId) => (
+                      <option key={voiceId} value={voiceId}>
+                        {audioVoiceLabels[voiceId] || voiceId}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               </div>
+              {availableAudioModelOptions.length > 0 && <p className="hint subtle">Known models: {availableAudioModelOptions.join(", ")}</p>}
+              {availableAudioModelOptions.length === 0 && <p className="hint subtle">Click Reload to fetch TTS models.</p>}
               {!settings.generateAudio && (
                 <p className="hint subtle">Audio word/sentence options are disabled until “Generate audio” is enabled.</p>
               )}

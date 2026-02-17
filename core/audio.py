@@ -818,6 +818,8 @@ def ensure_audio_for_cards(
         last_error: Optional[Exception] = None
         fallback_flag = False
         for idx, model_id in enumerate(models_order):
+            inflight_event: Optional[threading.Event] = None
+            owns_event = False
             if provider_key == "openai":
                 instruction_text: Optional[str] = None
                 if isinstance(instruction_payload, dict):
@@ -874,13 +876,13 @@ def ensure_audio_for_cards(
                 cache_token = _payload_token(token_source)
                 cache_key = _cache_key(f"elevenlabs:{model_id}", voice, text, cache_token)
                 filename_hint = _filename(kind, voice, text)
-                cached = _load_from_cache(cache_key, filename_hint)
+                cached, inflight_event, owns_event = _claim_or_wait(cache_key, filename_hint)
                 cache_hit = False
                 if cached is not None:
                     filename, data = cached
                     _store_media(filename, data)
                     cache_hit = True
-                    return filename, False, cache_hit
+                    return filename, False, cache_hit, model_id
                 try:
                     data = _synthesize_elevenlabs(
                         api_key=eleven_api_key or "",

@@ -27,6 +27,9 @@ export type Card = {
   L2_collocations: string;
   L2_definition: string;
   L1_gloss: string;
+  L1_hint?: string;
+  AudioSentence?: string;
+  AudioWord?: string;
 };
 
 export type UsageEvent = {
@@ -57,6 +60,84 @@ export type GenerateResponse = {
   items: GenerateItemResult[];
   run_report: Record<string, unknown>;
   timing: { elapsed_ms: number };
+};
+
+export type ExportDeckRequest = {
+  run_id?: string;
+  l1: string;
+  cefr: string;
+  profile: string;
+  model: string;
+  deck_name: string;
+  guid_policy: "stable" | "unique";
+  include_basic_reversed: boolean;
+  include_basic_typein: boolean;
+  media_map?: Record<string, string>;
+  cards: Card[];
+};
+
+export type ExportFileResponse = {
+  file_name: string;
+  mime_type: string;
+  content_b64: string;
+  card_count: number;
+};
+
+export type TTSItemType = "word" | "sentence";
+
+export type TTSItem = {
+  card_id: string;
+  type: TTSItemType;
+  text: string;
+};
+
+export type TTSRequest = {
+  run_id?: string;
+  provider: string;
+  model?: string;
+  voice?: string;
+  items: TTSItem[];
+};
+
+export type TTSOption = {
+  id: string;
+  label: string;
+};
+
+export type TTSProviderOptions = {
+  models: string[];
+  voices: TTSOption[];
+  default_model?: string | null;
+  default_voice?: string | null;
+};
+
+export type TTSOptionsResponse = {
+  text_models: string[];
+  providers: string[];
+  by_provider: Record<string, TTSProviderOptions>;
+};
+
+export type TTSAudio = {
+  card_id: string;
+  type: TTSItemType;
+  filename: string;
+  audio_b64?: string | null;
+  usage?: UsageEvent | null;
+};
+
+export type TTSResponse = {
+  run_id: string;
+  provider: string;
+  model: string;
+  audios: TTSAudio[];
+  summary: {
+    ok: number;
+    failed: number;
+    cached: number;
+    errors?: string[];
+    usage: Record<string, unknown>;
+    cost: Record<string, unknown>;
+  };
 };
 
 export type UserSettings = {

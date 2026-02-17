@@ -195,6 +195,41 @@ class GenerateResponse(BaseModel):
     timing: Dict[str, Any]
 
 
+# ---------- Export ----------
+
+class ExportCard(BaseModel):
+    L2_word: str
+    L2_cloze: str
+    L1_sentence: str
+    L2_collocations: str
+    L2_definition: str
+    L1_gloss: str
+    L1_hint: str = ""
+    AudioSentence: str = ""
+    AudioWord: str = ""
+
+
+class ExportDeckRequest(BaseModel):
+    run_id: Optional[str] = None
+    l1: str
+    cefr: str
+    profile: str
+    model: str
+    deck_name: str = "Dutch"
+    guid_policy: Literal["stable", "unique"] = "stable"
+    include_basic_reversed: bool = False
+    include_basic_typein: bool = False
+    media_map: Optional[Dict[str, str]] = None
+    cards: List[ExportCard]
+
+
+class ExportFileResponse(BaseModel):
+    file_name: str
+    mime_type: str
+    content_b64: str
+    card_count: int
+
+
 # ---------- TTS ----------
 
 class TTSItem(BaseModel):
@@ -206,9 +241,27 @@ class TTSItem(BaseModel):
 class TTSRequest(BaseModel):
     run_id: Optional[str] = None
     provider: str
-    model: str
+    model: Optional[str] = None
     voice: Optional[str] = None
     items: List[TTSItem]
+
+
+class TTSOption(BaseModel):
+    id: str
+    label: str
+
+
+class TTSProviderOptions(BaseModel):
+    models: List[str] = Field(default_factory=list)
+    voices: List[TTSOption] = Field(default_factory=list)
+    default_model: Optional[str] = None
+    default_voice: Optional[str] = None
+
+
+class TTSOptionsResponse(BaseModel):
+    text_models: List[str] = Field(default_factory=list)
+    providers: List[str] = Field(default_factory=list)
+    by_provider: Dict[str, TTSProviderOptions] = Field(default_factory=dict)
 
 
 class TTSAudio(BaseModel):
@@ -223,6 +276,7 @@ class TTSSummary(BaseModel):
     ok: int
     failed: int
     cached: int
+    errors: List[str] = Field(default_factory=list)
     usage: Dict[str, Any]
     cost: Dict[str, Any]
 
