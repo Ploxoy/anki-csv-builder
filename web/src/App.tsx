@@ -501,8 +501,13 @@ export default function App() {
       if (!res.ok) {
         throw new Error(apiErrorText(data, res.status));
       }
-      setUsage(data as UsageListResponse);
-      setServerMsg("Loaded usage events.");
+      const payload = data as UsageListResponse;
+      setUsage(payload);
+      if ((payload.summary?.events || 0) > 0) {
+        setServerMsg(`Loaded usage events (${payload.summary.events}).`);
+      } else {
+        setServerMsg("Usage loaded: no events yet for this token.");
+      }
     } catch (e: any) {
       setError(e?.message || String(e));
     }
@@ -1079,6 +1084,7 @@ export default function App() {
       </div>
 
       {serverMsg && <p className="hint info-banner">{serverMsg}</p>}
+      {error && activeTab !== "generate" && <p className="hint error-banner">{error}</p>}
 
       {activeTab === "generate" && (
         <>
@@ -1629,6 +1635,31 @@ export default function App() {
               Load usage
             </button>
           </div>
+          {usage && (
+            <div className="settings-usage-preview">
+              <div className="meta">
+                <div>
+                  <span className="k">events</span> {usage.summary.events}
+                </div>
+                <div>
+                  <span className="k">tokens</span> {usage.summary.input_tokens}+{usage.summary.output_tokens} (cached{" "}
+                  {usage.summary.cached_tokens})
+                </div>
+                <div>
+                  <span className="k">audio chars</span> {usage.summary.audio_chars}
+                </div>
+                {usage.summary.raw_cost_usd != null && (
+                  <div>
+                    <span className="k">est USD</span> {usage.summary.raw_cost_usd}
+                  </div>
+                )}
+              </div>
+              <details className="raw">
+                <summary>Usage details</summary>
+                <pre className="pre">{shortJson(usage)}</pre>
+              </details>
+            </div>
+          )}
           <p className="hint">
             Leave API base empty and run the dev server with proxy to avoid CORS. For beta, use an invite token.
           </p>
