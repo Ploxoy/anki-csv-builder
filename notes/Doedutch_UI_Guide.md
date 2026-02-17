@@ -74,5 +74,21 @@ a:hover, .stButton>button:hover {
 
 ---
 
+## 🗂️ UI Conventions (Tabs + Local Notices)
+
+- Keep top-level navigation tab-based: **Generate / Settings / Admin**.
+- In `Generate`, preserve linear visual flow: **Input → Run → Review → Export**.
+- Use **one primary CTA** per flow stage; avoid duplicated global action buttons.
+- Display feedback locally per context (tab + section), not as global cross-tab banners.
+- Recommended notice scopes:
+  - Generate: `input`, `run`, `audio`, `export`
+  - Settings: `toolbar`, `access`, `generation`, `audio`, `export`
+  - Admin: `toolbar`, `invite`, `users`, `usage`
+- Keep progress compact by default; expose batch/stage details via explicit toggle.
+- For long provider calls, show explicit waiting status (`waiting provider...`) in progress details.
+- Keep spacing on 8/12/16/24 scale and avoid oversized gaps between checkbox and label.
+
+---
+
 **Prepared for:** Doedutch Project (Streamlit UI)  
 **Design reference:** AnkiWeb aesthetic, adapted under fair use (no logos, code, or trademarks copied).

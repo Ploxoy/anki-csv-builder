@@ -19,6 +19,12 @@
 - **Тесты**: `pytest` (29 тестов) зелёный.
 
 ## Свежие изменения (февраль 2026)
+- Deep UI Rework v1 (web): интерфейс переведён на light theme по `notes/Doedutch_UI_Guide.md`, логика вкладок сохранена (`Generate / Settings / Admin`).
+- `web/src/App.tsx` декомпозирован на `AppShell`, табовые фичи (`GenerateTab/SettingsTab/AdminTab`), `Notice` и `ProgressPanel`; добавлены `web/src/lib/uiState.ts` и `web/src/lib/messages.ts`.
+- Сообщения/ошибки изолированы по вкладкам и секциям (scoped notices), убрано глобальное смешивание статусов между Generate/Settings/Admin.
+- В Generate оставлен один primary action, flow перестроен в явную последовательность `Input → Run → Review → Export`.
+- В Settings добавлен `dirty state` с `Save / Revert / Reload`, блоки переупорядочены (`Access`, `Generation defaults`, `Audio defaults`, `Export defaults`).
+- В Admin усилена структура: `User management` + `Admin usage`, читаемая таблица пользователей и локальная карточка invite/rotate с copy-action.
 - Зафиксирован checkpoint `e7f8e94`: merged scope по web+api (export endpoints, dynamic TTS options, resilient audio flow).
 - TTS Reliability/UX hardening в FastAPI + web:
   - `/api/tts` теперь возвращает clip-level `status` (`ok|failed|cached`) и `error` для failed-клипов.

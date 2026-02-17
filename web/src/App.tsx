@@ -3,218 +3,53 @@ import { parseItems } from "./lib/parse";
 import { loadJson, saveJson } from "./lib/storage";
 import {
   Card,
-  GenerateRequest,
-  GenerateResponse,
   ExportDeckRequest,
   ExportFileResponse,
-  TTSRequest,
+  GenerateRequest,
+  GenerateResponse,
+  InviteCreateResponse,
   TTSOptionsResponse,
+  TTSRequest,
   TTSResponse,
   UsageListResponse,
+  UserListResponse,
   UserSettingsResponse,
   UserSettingsUpsertRequest,
-  UserListResponse,
-  InviteCreateResponse
 } from "./types";
-
-type TabId = "generate" | "settings" | "admin";
-type ResultFilter = "all" | "errors" | "repaired";
-type ExportFormat = "csv" | "apkg";
-type TemperatureParseResult = {
-  ratio: number | null;
-  percent: number | null;
-  error: string | null;
-  usedLegacyScale: boolean;
-};
-
-type ProgressStage = "queued" | "text" | "audio" | "done";
-
-type GenerateProgressMeta = {
-  stage: ProgressStage;
-  done: number;
-  total: number;
-  batchIndex: number;
-  batchTotal: number;
-  elapsedMs: number;
-  waitingProvider: boolean;
-};
-
-type AudioRunSummary = {
-  requested: boolean;
-  total: number;
-  ok: number;
-  failed: number;
-  errors: string[];
-};
-
-type Settings = {
-  apiBase: string; // keep for prod; in dev we can use Vite proxy with empty string
-  xApiKey: string;
-  userToken: string;
-  promptVersion: string;
-  provider: string;
-  model: string;
-  cefr: string;
-  profile: string;
-  l1: string;
-  audioProvider: string;
-  audioModel: string;
-  audioVoice: string;
-  temperature: string;
-  includeFlagged: boolean;
-  generateAudio: boolean;
-  includeAudioWord: boolean;
-  includeAudioSentence: boolean;
-  includeBasicReversed: boolean;
-  includeBasicTypein: boolean;
-  defaultDeck: string;
-};
-
-const SETTINGS_KEY = "doedutch.settings.v1";
-
-const DEFAULT_SETTINGS: Settings = {
-  apiBase: "",
-  xApiKey: "",
-  userToken: "",
-  promptVersion: "p0",
-  provider: "openai",
-  model: "gpt-4.1-mini",
-  cefr: "B1",
-  profile: "balanced",
-  l1: "EN",
-  audioProvider: "openai",
-  audioModel: "",
-  audioVoice: "",
-  temperature: "",
-  includeFlagged: false,
-  generateAudio: false,
-  includeAudioWord: true,
-  includeAudioSentence: true,
-  includeBasicReversed: false,
-  includeBasicTypein: false,
-  defaultDeck: "Dutch"
-};
-
-function generateRunId(): string {
-  try {
-    // Modern browsers (Chrome/Edge/Firefox) support this.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const anyCrypto = crypto as any;
-    if (anyCrypto?.randomUUID) return anyCrypto.randomUUID();
-  } catch {
-    // ignore
-  }
-  return `u_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-function shortJson(obj: unknown): string {
-  try {
-    return JSON.stringify(obj, null, 2);
-  } catch {
-    return String(obj);
-  }
-}
-
-function apiErrorText(data: any, status: number): string {
-  const candidate = data?.detail ?? data?.error?.message ?? data;
-  if (typeof candidate === "string" && candidate.trim()) return candidate;
-  if (candidate != null) return shortJson(candidate);
-  return `HTTP ${status}`;
-}
-
-function formatPercent(value: number): string {
-  const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? String(Math.round(rounded)) : String(rounded);
-}
-
-function temperatureToDisplayString(raw: number | null | undefined): string {
-  if (raw == null || !Number.isFinite(raw)) return "";
-  const normalized = raw <= 1 ? raw * 100 : raw;
-  return formatPercent(normalized);
-}
-
-function parseTemperatureValue(raw: string): TemperatureParseResult {
-  const trimmed = raw.trim();
-  if (!trimmed) return { ratio: null, percent: null, error: null, usedLegacyScale: false };
-  const value = Number(trimmed);
-  if (!Number.isFinite(value)) {
-    return { ratio: null, percent: null, error: "Temperature must be a number between 0 and 100.", usedLegacyScale: false };
-  }
-
-  // Backward compatibility: old UI often stored decimal 0..1.
-  const looksLegacyDecimal = value > 0 && value < 1 && trimmed.includes(".");
-  if (looksLegacyDecimal) {
-    return {
-      ratio: value,
-      percent: value * 100,
-      error: null,
-      usedLegacyScale: true,
-    };
-  }
-
-  if (value < 0 || value > 100) {
-    return { ratio: null, percent: null, error: "Temperature must be in range 0..100.", usedLegacyScale: false };
-  }
-
-  return {
-    ratio: value / 100,
-    percent: value,
-    error: null,
-    usedLegacyScale: false,
-  };
-}
-
-function formatElapsedMs(ms: number): string {
-  const safe = Math.max(0, Math.floor(ms));
-  if (safe < 1000) return `${safe} ms`;
-  const totalSeconds = Math.floor(safe / 1000);
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  if (mins <= 0) return `${secs}s`;
-  return `${mins}m ${secs}s`;
-}
-
-function appendUniqueError(errors: string[], candidate: unknown): void {
-  const text = typeof candidate === "string" ? candidate.trim() : "";
-  if (!text) return;
-  if (!errors.includes(text)) errors.push(text);
-}
-
-function progressStageLabel(stage: ProgressStage): string {
-  if (stage === "queued") return "Queued";
-  if (stage === "text") return "Text generation";
-  if (stage === "audio") return "Audio synthesis";
-  return "Completed";
-}
-
-function normalizeImportedText(raw: string): string {
-  return raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
-}
-
-function decodeBase64ToBytes(contentB64: string): Uint8Array {
-  const binary = atob(contentB64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-function downloadBlobFile(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function normalizedDeckName(rawName: string): string {
-  const safe = rawName.trim().replace(/[^\w.-]+/g, "_").replace(/^[_\-.]+|[_\-.]+$/g, "");
-  return safe || "deck";
-}
+import {
+  apiErrorText,
+  appendUniqueError,
+  AudioRunSummary,
+  decodeBase64ToArrayBuffer,
+  DEFAULT_SETTINGS,
+  downloadBlobFile,
+  ExportFormat,
+  formatPercent,
+  GenerateProgressMeta,
+  generateRunId,
+  normalizeImportedText,
+  normalizedDeckName,
+  parseTemperatureValue,
+  SETTINGS_KEY,
+  settingsFingerprint,
+  Settings,
+  temperatureToDisplayString,
+} from "./lib/uiState";
+import {
+  clearAdminNotices,
+  clearGenerateNotices,
+  clearSettingsNotices,
+  EMPTY_NOTICES,
+  ScopedNotices,
+  withAdminNotice,
+  withGenerateNotice,
+  withSettingsNotice,
+} from "./lib/messages";
+import { AppShell } from "./ui/AppShell";
+import { GenerateTab } from "./features/generate/GenerateTab";
+import { SettingsTab } from "./features/settings/SettingsTab";
+import { AdminTab } from "./features/admin/AdminTab";
+import { TabId } from "./lib/uiState";
 
 function buildTtsItems(
   generated: GenerateResponse,
@@ -260,76 +95,109 @@ function mergeTtsIntoResponse(generated: GenerateResponse, tts: TTSResponse): Ge
   };
 }
 
+function mapServerSettings(base: Settings, payload: UserSettingsResponse): Settings {
+  return {
+    ...base,
+    promptVersion: payload.settings.prompt_version,
+    provider: payload.settings.provider,
+    model: payload.settings.model,
+    cefr: payload.settings.cefr,
+    profile: payload.settings.profile,
+    l1: payload.settings.l1,
+    audioProvider: payload.settings.audio_provider,
+    audioModel: payload.settings.audio_model || "",
+    audioVoice: payload.settings.audio_voice || "",
+    temperature: temperatureToDisplayString(payload.settings.temperature),
+    includeFlagged: payload.settings.force_generate_flagged,
+    generateAudio: payload.settings.generate_audio,
+    includeAudioWord: payload.settings.include_audio_word,
+    includeAudioSentence: payload.settings.include_audio_sentence,
+    includeBasicReversed: payload.settings.include_basic_reversed,
+    includeBasicTypein: payload.settings.include_basic_typein,
+    defaultDeck: payload.settings.default_deck_name,
+  };
+}
+
+const STARTER_INPUT = "aanraken\tiets voelen\tto touch\nbegrijpen\tsnappen wat iets betekent\tto understand";
+
 export default function App() {
-  const [settings, setSettings] = useState<Settings>(() => ({
-    ...DEFAULT_SETTINGS,
-    ...loadJson(SETTINGS_KEY, DEFAULT_SETTINGS)
-  }));
-  const [inputText, setInputText] = useState<string>(
-    "aanraken\tiets voelen\tto touch\nbegrijpen\tsnappen wat iets betekent\tto understand"
-  );
+  const loadedSettings = useMemo<Settings>(() => ({ ...DEFAULT_SETTINGS, ...loadJson(SETTINGS_KEY, DEFAULT_SETTINGS) }), []);
+
+  const [settings, setSettings] = useState<Settings>(loadedSettings);
+  const [initialSettingsSnapshot, setInitialSettingsSnapshot] = useState<Settings>(loadedSettings);
+  const [inputText, setInputText] = useState<string>(STARTER_INPUT);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>("");
   const [response, setResponse] = useState<GenerateResponse | null>(null);
-  const [serverMsg, setServerMsg] = useState<string>("");
   const [usage, setUsage] = useState<UsageListResponse | null>(null);
   const [users, setUsers] = useState<UserListResponse | null>(null);
   const [newInvite, setNewInvite] = useState<InviteCreateResponse | null>(null);
   const [adminUsage, setAdminUsage] = useState<UsageListResponse | null>(null);
   const [adminBusy, setAdminBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("generate");
-  const [showUserToken, setShowUserToken] = useState(false);
-  const [showXApiKey, setShowXApiKey] = useState(false);
-  const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
-  const [fileMsg, setFileMsg] = useState("");
   const [generateProgress, setGenerateProgress] = useState(0);
   const [generateProgressLabel, setGenerateProgressLabel] = useState("");
   const [generateProgressMeta, setGenerateProgressMeta] = useState<GenerateProgressMeta | null>(null);
   const [exportBusy, setExportBusy] = useState<ExportFormat | null>(null);
   const [audioMediaMap, setAudioMediaMap] = useState<Record<string, string>>({});
   const [audioRunSummary, setAudioRunSummary] = useState<AudioRunSummary | null>(null);
-  const [showAllAudioErrors, setShowAllAudioErrors] = useState(false);
   const [ttsOptions, setTtsOptions] = useState<TTSOptionsResponse | null>(null);
   const [ttsOptionsBusy, setTtsOptionsBusy] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [notices, setNotices] = useState<ScopedNotices>({
+    generate: { ...EMPTY_NOTICES.generate },
+    settings: { ...EMPTY_NOTICES.settings },
+    admin: { ...EMPTY_NOTICES.admin },
+  });
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const fileImportModeRef = useRef<"replace" | "append">("replace");
 
   const deckPreview = useMemo(() => {
     const base = settings.defaultDeck?.trim() || "Deck";
     return `${base}.csv / ${base}.apkg`;
   }, [settings.defaultDeck]);
+
   const parsed = useMemo(() => parseItems(inputText), [inputText]);
   const adminEnabled = settings.xApiKey.trim().length > 0;
   const canGenerateByInput = parsed.items.length > 0;
   const temperatureState = useMemo(() => parseTemperatureValue(settings.temperature), [settings.temperature]);
   const canGenerate = canGenerateByInput && !temperatureState.error;
+  const isDirty = useMemo(
+    () => settingsFingerprint(settings) !== settingsFingerprint(initialSettingsSnapshot),
+    [settings, initialSettingsSnapshot]
+  );
   const audioClipCount = useMemo(() => Object.keys(audioMediaMap).length, [audioMediaMap]);
   const audioProviderKey = (settings.audioProvider || "openai").trim().toLowerCase();
+
   const availableAudioProviders = useMemo(() => {
     const fromApi = ttsOptions?.providers || [];
     const fromState = settings.audioProvider ? [audioProviderKey] : [];
-    return Array.from(new Set([...fromApi, ...fromState].filter(Boolean)));
+    const merged = Array.from(new Set([...fromApi, ...fromState].filter(Boolean)));
+    return merged.length > 0 ? merged : ["openai"];
   }, [ttsOptions, settings.audioProvider, audioProviderKey]);
+
   const textModelOptions = useMemo(() => {
     const fromApi = ttsOptions?.text_models || [];
     const fallback = settings.model ? [settings.model] : [];
     const merged = Array.from(new Set([...fromApi, ...fallback].filter(Boolean)));
     return merged.length > 0 ? merged : ["gpt-4.1-mini"];
   }, [ttsOptions, settings.model]);
+
   const activeAudioProviderOptions = ttsOptions?.by_provider?.[audioProviderKey];
   const audioModelOptions = activeAudioProviderOptions?.models || [];
   const audioVoiceOptions = activeAudioProviderOptions?.voices || [];
+
   const availableAudioModelOptions = useMemo(() => {
-    const fromApi = audioModelOptions;
     const fromCurrent = settings.audioModel ? [settings.audioModel] : [];
-    return Array.from(new Set([...fromApi, ...fromCurrent].filter(Boolean)));
+    return Array.from(new Set([...audioModelOptions, ...fromCurrent].filter(Boolean)));
   }, [audioModelOptions, settings.audioModel]);
+
   const availableAudioVoiceOptions = useMemo(() => {
     const fromApi = audioVoiceOptions.map((voice) => voice.id);
     const fromCurrent = settings.audioVoice ? [settings.audioVoice] : [];
     return Array.from(new Set([...fromApi, ...fromCurrent].filter(Boolean)));
   }, [audioVoiceOptions, settings.audioVoice]);
+
   const audioVoiceLabels = useMemo(() => {
     const map: Record<string, string> = {};
     for (const voice of audioVoiceOptions) {
@@ -340,6 +208,66 @@ export default function App() {
     }
     return map;
   }, [audioVoiceOptions, settings.audioVoice]);
+
+  const exportCards = useMemo(() => {
+    const items = response?.items || [];
+    return items
+      .filter((it) => !!it.card && (it.status === "ok" || it.status === "repaired"))
+      .map((it) => {
+        const card = it.card as Card;
+        return {
+          L2_word: card.L2_word || "",
+          L2_cloze: card.L2_cloze || "",
+          L1_sentence: card.L1_sentence || "",
+          L2_collocations: card.L2_collocations || "",
+          L2_definition: card.L2_definition || "",
+          L1_gloss: card.L1_gloss || "",
+          L1_hint: card.L1_hint || "",
+          AudioSentence: card.AudioSentence || "",
+          AudioWord: card.AudioWord || "",
+        } as Card;
+      });
+  }, [response]);
+
+  const hasAudioFailures = !!audioRunSummary && audioRunSummary.requested && audioRunSummary.failed > 0;
+
+  function setGenerateNotice(section: "input" | "run" | "audio" | "export", level: "info" | "success" | "warning" | "error", message: string, details?: string) {
+    setNotices((prev) => withGenerateNotice(prev, section, { level, message, details }));
+  }
+
+  function clearGenerate() {
+    setNotices((prev) => clearGenerateNotices(prev));
+  }
+
+  function setSettingsNotice(section: "toolbar" | "access" | "generation" | "audio" | "export", level: "info" | "success" | "warning" | "error", message: string, details?: string) {
+    setNotices((prev) => withSettingsNotice(prev, section, { level, message, details }));
+  }
+
+  function clearSettings() {
+    setNotices((prev) => clearSettingsNotices(prev));
+  }
+
+  function setAdminNotice(section: "toolbar" | "invite" | "users" | "usage", level: "info" | "success" | "warning" | "error", message: string, details?: string) {
+    setNotices((prev) => withAdminNotice(prev, section, { level, message, details }));
+  }
+
+  function clearAdmin() {
+    setNotices((prev) => clearAdminNotices(prev));
+  }
+
+  function patchSettings(patch: Partial<Settings>) {
+    setSettings((current) => ({ ...current, ...patch }));
+  }
+
+  function onAudioProviderChange(providerId: string) {
+    const nextOptions = ttsOptions?.by_provider?.[providerId];
+    setSettings((current) => ({
+      ...current,
+      audioProvider: providerId,
+      audioModel: nextOptions?.default_model || current.audioModel,
+      audioVoice: nextOptions?.default_voice || current.audioVoice,
+    }));
+  }
 
   useEffect(() => {
     saveJson(SETTINGS_KEY, settings);
@@ -369,49 +297,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.userToken, settings.apiBase]);
 
-  const filteredItems = useMemo(() => {
-    const items = response?.items || [];
-    if (resultFilter === "all") return items;
-    if (resultFilter === "repaired") return items.filter((it) => it.status === "repaired");
-    return items.filter((it) => it.status === "failed" || it.status === "flagged" || !!it.error);
-  }, [response, resultFilter]);
-  const exportCards = useMemo(() => {
-    const items = response?.items || [];
-    return items
-      .filter((it) => !!it.card && (it.status === "ok" || it.status === "repaired"))
-      .map((it) => {
-        const card = it.card as Card;
-        return {
-          L2_word: card.L2_word || "",
-          L2_cloze: card.L2_cloze || "",
-          L1_sentence: card.L1_sentence || "",
-          L2_collocations: card.L2_collocations || "",
-          L2_definition: card.L2_definition || "",
-          L1_gloss: card.L1_gloss || "",
-          L1_hint: card.L1_hint || "",
-          AudioSentence: card.AudioSentence || "",
-          AudioWord: card.AudioWord || "",
-        } as Card;
-      });
-  }, [response]);
-  const hasAudioFailures = !!audioRunSummary && audioRunSummary.requested && audioRunSummary.failed > 0;
-  const audioErrorPreview = useMemo(() => {
-    if (!audioRunSummary?.errors?.length) return [];
-    return audioRunSummary.errors.slice(0, 5);
-  }, [audioRunSummary]);
-
   function apiHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (settings.userToken.trim()) headers["Authorization"] = `Bearer ${settings.userToken.trim()}`;
-    if (settings.xApiKey.trim()) headers["X-API-Key"] = settings.xApiKey.trim(); // admin/legacy only
+    if (settings.userToken.trim()) headers.Authorization = `Bearer ${settings.userToken.trim()}`;
+    if (settings.xApiKey.trim()) headers["X-API-Key"] = settings.xApiKey.trim();
     return headers;
   }
 
   async function onLoadSettings() {
-    setServerMsg("");
-    setError("");
+    clearSettings();
     try {
-      const url = (settings.apiBase || "") + "/api/settings";
+      const url = `${settings.apiBase || ""}/api/settings`;
       const headers = apiHeaders();
       const res = await fetch(url, { method: "GET", headers });
       const data = (await res.json().catch(() => null)) as any;
@@ -419,42 +315,25 @@ export default function App() {
         throw new Error(apiErrorText(data, res.status));
       }
       const payload = data as UserSettingsResponse;
-      setSettings((s) => ({
-        ...s,
-        promptVersion: payload.settings.prompt_version,
-        provider: payload.settings.provider,
-        model: payload.settings.model,
-        cefr: payload.settings.cefr,
-        profile: payload.settings.profile,
-        l1: payload.settings.l1,
-        audioProvider: payload.settings.audio_provider,
-        audioModel: payload.settings.audio_model || "",
-        audioVoice: payload.settings.audio_voice || "",
-        temperature: temperatureToDisplayString(payload.settings.temperature),
-        includeFlagged: payload.settings.force_generate_flagged,
-        generateAudio: payload.settings.generate_audio,
-        includeAudioWord: payload.settings.include_audio_word,
-        includeAudioSentence: payload.settings.include_audio_sentence,
-        includeBasicReversed: payload.settings.include_basic_reversed,
-        includeBasicTypein: payload.settings.include_basic_typein,
-        defaultDeck: payload.settings.default_deck_name
-      }));
-      setServerMsg(`Loaded settings for ${payload.user_id} (${payload.updated_at || "no timestamp"}).`);
+      const nextSettings = mapServerSettings(settings, payload);
+      setSettings(nextSettings);
+      setInitialSettingsSnapshot(nextSettings);
+      setSettingsNotice("toolbar", "success", `Settings loaded for ${payload.user_id}.`);
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setSettingsNotice("toolbar", "error", e?.message || String(e));
     }
   }
 
   async function onSaveSettings() {
-    setServerMsg("");
-    setError("");
+    clearSettings();
     const tempParsed = parseTemperatureValue(settings.temperature);
     if (tempParsed.error) {
-      setError(tempParsed.error);
+      setSettingsNotice("generation", "error", tempParsed.error);
       return;
     }
+
     try {
-      const url = (settings.apiBase || "") + "/api/settings";
+      const url = `${settings.apiBase || ""}/api/settings`;
       const headers = apiHeaders();
       const body: UserSettingsUpsertRequest = {
         settings: {
@@ -475,8 +354,8 @@ export default function App() {
           include_audio_sentence: settings.includeAudioSentence,
           include_basic_reversed: settings.includeBasicReversed,
           include_basic_typein: settings.includeBasicTypein,
-          default_deck_name: settings.defaultDeck
-        }
+          default_deck_name: settings.defaultDeck,
+        },
       };
       const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
       const data = (await res.json().catch(() => null)) as any;
@@ -484,17 +363,25 @@ export default function App() {
         throw new Error(apiErrorText(data, res.status));
       }
       const payload = data as UserSettingsResponse;
-      setServerMsg(`Saved settings for ${payload.user_id} (${payload.updated_at || "no timestamp"}).`);
+      const nextSettings = mapServerSettings(settings, payload);
+      setSettings(nextSettings);
+      setInitialSettingsSnapshot(nextSettings);
+      setSettingsNotice("toolbar", "success", `Settings saved for ${payload.user_id}.`);
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setSettingsNotice("toolbar", "error", e?.message || String(e));
     }
   }
 
+  function onRevertSettings() {
+    setSettings(initialSettingsSnapshot);
+    clearSettings();
+    setSettingsNotice("toolbar", "info", "Changes reverted to last saved snapshot.");
+  }
+
   async function onLoadUsage() {
-    setServerMsg("");
-    setError("");
+    clearSettings();
     try {
-      const url = (settings.apiBase || "") + "/api/usage?limit=50";
+      const url = `${settings.apiBase || ""}/api/usage?limit=50`;
       const headers = apiHeaders();
       const res = await fetch(url, { method: "GET", headers });
       const data = (await res.json().catch(() => null)) as any;
@@ -504,33 +391,32 @@ export default function App() {
       const payload = data as UsageListResponse;
       setUsage(payload);
       if ((payload.summary?.events || 0) > 0) {
-        setServerMsg(`Loaded usage events (${payload.summary.events}).`);
+        setSettingsNotice("toolbar", "success", `Usage loaded (${payload.summary.events} events).`);
       } else {
-        setServerMsg("Usage loaded: no events yet for this token.");
+        setSettingsNotice("toolbar", "info", "Usage loaded: no events yet for this token.");
       }
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setSettingsNotice("toolbar", "error", e?.message || String(e));
     }
   }
 
   async function adminCreateInvite(label: string) {
     setAdminBusy(true);
-    setServerMsg("");
-    setError("");
+    clearAdmin();
     try {
-      const url = (settings.apiBase || "") + "/api/admin/invite";
+      const url = `${settings.apiBase || ""}/api/admin/invite`;
       const headers = apiHeaders();
       const res = await fetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify({ label })
+        body: JSON.stringify({ label }),
       });
       const data = (await res.json().catch(() => null)) as any;
-      if (!res.ok) throw new Error(data?.detail || shortJson(data) || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(apiErrorText(data, res.status));
       setNewInvite(data as InviteCreateResponse);
-      setServerMsg("Invite created.");
+      setAdminNotice("invite", "success", "Invite created. Token is shown once.");
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setAdminNotice("toolbar", "error", e?.message || String(e));
     } finally {
       setAdminBusy(false);
     }
@@ -538,18 +424,18 @@ export default function App() {
 
   async function adminListUsers() {
     setAdminBusy(true);
-    setServerMsg("");
-    setError("");
+    setNotices((prev) => withAdminNotice(prev, "users", null));
     try {
-      const url = (settings.apiBase || "") + "/api/admin/users";
+      const url = `${settings.apiBase || ""}/api/admin/users`;
       const headers = apiHeaders();
       const res = await fetch(url, { method: "GET", headers });
       const data = (await res.json().catch(() => null)) as any;
-      if (!res.ok) throw new Error(data?.detail || shortJson(data) || `HTTP ${res.status}`);
-      setUsers(data as UserListResponse);
-      setServerMsg("Loaded users.");
+      if (!res.ok) throw new Error(apiErrorText(data, res.status));
+      const payload = data as UserListResponse;
+      setUsers(payload);
+      setAdminNotice("users", "success", `Loaded ${payload.items.length} user(s).`);
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setAdminNotice("users", "error", e?.message || String(e));
     } finally {
       setAdminBusy(false);
     }
@@ -557,18 +443,17 @@ export default function App() {
 
   async function adminSetStatus(userId: string, status: "active" | "blocked") {
     setAdminBusy(true);
-    setServerMsg("");
-    setError("");
+    setNotices((prev) => withAdminNotice(prev, "toolbar", null));
     try {
-      const url = (settings.apiBase || "") + `/api/admin/users/${userId}/status`;
+      const url = `${settings.apiBase || ""}/api/admin/users/${userId}/status`;
       const headers = apiHeaders();
       const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ status }) });
       const data = (await res.json().catch(() => null)) as any;
-      if (!res.ok) throw new Error(data?.detail || shortJson(data) || `HTTP ${res.status}`);
-      setServerMsg(`User ${userId} -> ${status}`);
+      if (!res.ok) throw new Error(apiErrorText(data, res.status));
+      setAdminNotice("toolbar", "success", `User ${userId} set to ${status}.`);
       await adminListUsers();
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setAdminNotice("toolbar", "error", e?.message || String(e));
     } finally {
       setAdminBusy(false);
     }
@@ -576,19 +461,18 @@ export default function App() {
 
   async function adminRotate(userId: string) {
     setAdminBusy(true);
-    setServerMsg("");
-    setError("");
+    setNotices((prev) => withAdminNotice(prev, "toolbar", null));
     try {
-      const url = (settings.apiBase || "") + `/api/admin/users/${userId}/rotate`;
+      const url = `${settings.apiBase || ""}/api/admin/users/${userId}/rotate`;
       const headers = apiHeaders();
       const res = await fetch(url, { method: "POST", headers });
       const data = (await res.json().catch(() => null)) as any;
-      if (!res.ok) throw new Error(data?.detail || shortJson(data) || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(apiErrorText(data, res.status));
       setNewInvite(data as InviteCreateResponse);
-      setServerMsg(`Rotated token for ${userId}`);
+      setAdminNotice("invite", "success", `Token rotated for ${userId}.`);
       await adminListUsers();
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setAdminNotice("toolbar", "error", e?.message || String(e));
     } finally {
       setAdminBusy(false);
     }
@@ -596,18 +480,17 @@ export default function App() {
 
   async function adminLoadUsage(userId: string) {
     setAdminBusy(true);
-    setServerMsg("");
-    setError("");
+    setNotices((prev) => withAdminNotice(prev, "usage", null));
     try {
-      const url = (settings.apiBase || "") + `/api/admin/usage?user_id=${encodeURIComponent(userId)}&limit=100`;
+      const url = `${settings.apiBase || ""}/api/admin/usage?user_id=${encodeURIComponent(userId)}&limit=100`;
       const headers = apiHeaders();
       const res = await fetch(url, { method: "GET", headers });
       const data = (await res.json().catch(() => null)) as any;
-      if (!res.ok) throw new Error(data?.detail || shortJson(data) || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(apiErrorText(data, res.status));
       setAdminUsage(data as UsageListResponse);
-      setServerMsg(`Loaded usage for ${userId}`);
+      setAdminNotice("usage", "success", `Loaded usage for ${userId}.`);
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setAdminNotice("usage", "error", e?.message || String(e));
     } finally {
       setAdminBusy(false);
     }
@@ -615,16 +498,17 @@ export default function App() {
 
   async function onLoadTtsOptions(silent = false) {
     if (!settings.userToken.trim()) {
-      if (!silent) setError("Invite token is required to load TTS options.");
+      if (!silent) setSettingsNotice("access", "warning", "Invite token is required to load TTS options.");
       return;
     }
     if (!silent) {
-      setError("");
-      setServerMsg("");
+      setNotices((prev) => withSettingsNotice(prev, "generation", null));
+      setNotices((prev) => withSettingsNotice(prev, "audio", null));
     }
+
     setTtsOptionsBusy(true);
     try {
-      const url = (settings.apiBase || "") + "/api/tts/options";
+      const url = `${settings.apiBase || ""}/api/tts/options`;
       const headers = apiHeaders();
       const res = await fetch(url, { method: "GET", headers });
       const data = (await res.json().catch(() => null)) as any;
@@ -633,18 +517,19 @@ export default function App() {
       }
       const payload = data as TTSOptionsResponse;
       setTtsOptions(payload);
+
       setSettings((current) => {
         const currentProvider = (current.audioProvider || "").trim().toLowerCase();
-        const textModels = payload.text_models || [];
         const providerFromApi = payload.providers[0] || "openai";
         const provider = payload.by_provider[currentProvider] ? currentProvider : providerFromApi;
         const selected = payload.by_provider[provider];
+        const textModels = payload.text_models || [];
         const currentTextModel = (current.model || "").trim();
         const currentModel = (current.audioModel || "").trim();
         const currentVoice = (current.audioVoice || "").trim();
         const textModelInList = !!currentTextModel && textModels.includes(currentTextModel);
         const modelInList = !!currentModel && (selected?.models || []).includes(currentModel);
-        const voiceInList = !!currentVoice && (selected?.voices || []).some((v) => v.id === currentVoice);
+        const voiceInList = !!currentVoice && (selected?.voices || []).some((voice) => voice.id === currentVoice);
         return {
           ...current,
           model: currentTextModel && textModelInList ? currentTextModel : textModels[0] || currentTextModel || "gpt-4.1-mini",
@@ -653,9 +538,14 @@ export default function App() {
           audioVoice: currentVoice && voiceInList ? currentVoice : selected?.default_voice || currentVoice,
         };
       });
-      if (!silent) setServerMsg("Loaded TTS models and voices.");
+
+      if (!silent) {
+        setSettingsNotice("audio", "success", "TTS models and voices loaded.");
+      }
     } catch (e: any) {
-      if (!silent) setError(e?.message || String(e));
+      if (!silent) {
+        setSettingsNotice("audio", "error", e?.message || String(e));
+      }
     } finally {
       setTtsOptionsBusy(false);
     }
@@ -664,9 +554,12 @@ export default function App() {
   async function onGenerate() {
     const tempParsed = parseTemperatureValue(settings.temperature);
     if (tempParsed.error) {
-      setError(tempParsed.error);
+      setGenerateNotice("run", "error", tempParsed.error);
       return;
     }
+
+    clearGenerate();
+
     const totalRows = parsed.items.length;
     const audioRequested = settings.generateAudio;
     const textProgressCap = audioRequested ? 72 : 94;
@@ -674,6 +567,7 @@ export default function App() {
     const startedAt = Date.now();
     const WAITING_PROVIDER_MS = 4000;
     let progressTimer: number | null = null;
+
     const updateProgressMeta = (patch: Partial<GenerateProgressMeta>) => {
       setGenerateProgressMeta((prev) => ({
         stage: patch.stage ?? prev?.stage ?? "queued",
@@ -685,15 +579,14 @@ export default function App() {
         waitingProvider: patch.waitingProvider ?? prev?.waitingProvider ?? false,
       }));
     };
+
     setBusy(true);
-    setError("");
     setResponse(null);
-    setServerMsg("");
     setAudioMediaMap({});
     setAudioRunSummary(null);
-    setShowAllAudioErrors(false);
     setGenerateProgress(3);
     setGenerateProgressLabel(`Queued ${totalRows} row(s) for generation.`);
+    setGenerateNotice("run", "info", `Queued ${totalRows} row(s) for generation.`);
     updateProgressMeta({
       stage: "queued",
       done: 0,
@@ -703,12 +596,14 @@ export default function App() {
       waitingProvider: false,
       elapsedMs: 0,
     });
+
     progressTimer = window.setInterval(() => {
       const elapsedMs = Date.now() - startedAt;
       const predicted = Math.min(textProgressCap, 6 + (elapsedMs / expectedMs) * Math.max(1, textProgressCap - 6));
       setGenerateProgress((prev) => (predicted > prev ? predicted : prev));
       setGenerateProgressLabel(`Generating cards... ${Math.round(predicted)}%`);
-      const estimatedDone = totalRows > 0 ? Math.min(totalRows, Math.round((predicted / Math.max(textProgressCap, 1)) * totalRows)) : 0;
+      const estimatedDone =
+        totalRows > 0 ? Math.min(totalRows, Math.round((predicted / Math.max(textProgressCap, 1)) * totalRows)) : 0;
       updateProgressMeta({
         stage: "text",
         done: estimatedDone,
@@ -719,6 +614,7 @@ export default function App() {
         elapsedMs,
       });
     }, 220);
+
     try {
       const runId = generateRunId();
       const req: GenerateRequest = {
@@ -730,10 +626,10 @@ export default function App() {
         profile: settings.profile,
         l1: settings.l1,
         temperature: tempParsed.ratio,
-        items: parsed.items
+        items: parsed.items,
       };
 
-      const url = (settings.apiBase || "") + "/api/generate";
+      const url = `${settings.apiBase || ""}/api/generate`;
       const headers = apiHeaders();
 
       const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
@@ -741,12 +637,15 @@ export default function App() {
       if (!res.ok) {
         throw new Error(apiErrorText(data, res.status));
       }
+
       let payload = data as GenerateResponse;
       setResponse(payload);
+
       if (progressTimer != null) {
         window.clearInterval(progressTimer);
         progressTimer = null;
       }
+
       setGenerateProgress(textProgressCap);
       setGenerateProgressLabel(`Text ready: ${payload.items.length}/${totalRows}.`);
       updateProgressMeta({
@@ -770,10 +669,12 @@ export default function App() {
           waitingProvider: false,
           elapsedMs: Date.now() - startedAt,
         });
+
         const ttsItems = buildTtsItems(payload, {
           includeWord: settings.includeAudioWord,
           includeSentence: settings.includeAudioSentence,
         });
+
         if (ttsItems.length > 0) {
           const totalClips = ttsItems.length;
           const ttsBatchSize = 8;
@@ -785,7 +686,13 @@ export default function App() {
           const mediaMap: Record<string, string> = {};
           const audioProgressStart = Math.min(94, textProgressCap + 4);
           const audioProgressSpan = Math.max(1, 99 - audioProgressStart);
-          const updateAudioProgress = (done: number, batchIndex: number, waitingProvider: boolean, suffix = "") => {
+
+          const updateAudioProgress = (
+            done: number,
+            batchIndex: number,
+            waitingProvider: boolean,
+            suffix = ""
+          ) => {
             const ratio = totalClips > 0 ? done / totalClips : 1;
             const next = Math.min(99, audioProgressStart + ratio * audioProgressSpan);
             setGenerateProgress((prev) => (next > prev ? next : prev));
@@ -802,9 +709,11 @@ export default function App() {
               elapsedMs: Date.now() - startedAt,
             });
           };
+
           updateAudioProgress(0, 0, false, "Batch 1 in queue.");
+
           try {
-            const ttsUrl = (settings.apiBase || "") + "/api/tts";
+            const ttsUrl = `${settings.apiBase || ""}/api/tts`;
             for (let offset = 0; offset < totalClips; offset += ttsBatchSize) {
               const batchIndex = Math.floor(offset / ttsBatchSize) + 1;
               const batch = ttsItems.slice(offset, offset + ttsBatchSize);
@@ -818,14 +727,22 @@ export default function App() {
               );
               let waitingProgress = baseProgress;
               const batchStartedAt = Date.now();
+
               updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${totalBatches} in progress...`);
+
               let waitTimer: number | null = window.setInterval(() => {
                 const step = Math.max(0.08, (waitingCap - baseProgress) / 16);
                 waitingProgress = Math.min(waitingCap, waitingProgress + step);
                 const waitingProvider = Date.now() - batchStartedAt >= WAITING_PROVIDER_MS;
                 setGenerateProgress((prev) => (waitingProgress > prev ? waitingProgress : prev));
-                updateAudioProgress(doneClips, batchIndex, waitingProvider, `Batch ${batchIndex}/${totalBatches} in progress...`);
+                updateAudioProgress(
+                  doneClips,
+                  batchIndex,
+                  waitingProvider,
+                  `Batch ${batchIndex}/${totalBatches} in progress...`
+                );
               }, 350);
+
               const ttsReq: TTSRequest = {
                 run_id: payload.run_id || runId,
                 provider: settings.audioProvider || "openai",
@@ -833,6 +750,7 @@ export default function App() {
                 voice: settings.audioVoice || undefined,
                 items: batch,
               };
+
               try {
                 const ttsRes = await fetch(ttsUrl, { method: "POST", headers, body: JSON.stringify(ttsReq) });
                 const ttsData = (await ttsRes.json().catch(() => null)) as any;
@@ -844,29 +762,37 @@ export default function App() {
                   updateAudioProgress(doneClips, batchIndex, false, "Stopped after API error.");
                   break;
                 }
+
                 const ttsPayload = ttsData as TTSResponse;
                 payload = mergeTtsIntoResponse(payload, ttsPayload);
                 const batchAudios = Array.isArray(ttsPayload.audios) ? ttsPayload.audios : [];
+
                 for (const audio of batchAudios) {
                   if (audio.status !== "failed" && audio.filename && audio.audio_b64) {
                     mediaMap[audio.filename] = audio.audio_b64;
                   }
                 }
+
                 let batchOk = batchAudios.filter((audio) => audio.status === "ok" || audio.status === "cached").length;
                 let batchFailed = batchAudios.filter((audio) => audio.status === "failed").length;
+
                 for (const audio of batchAudios) {
                   if (audio.status === "failed") appendUniqueError(errorSamples, audio.error);
                 }
+
                 const missingStatuses = Math.max(0, batch.length - (batchOk + batchFailed));
                 if (missingStatuses > 0) {
                   batchFailed += missingStatuses;
                   appendUniqueError(errorSamples, "Some clip statuses were missing in TTS response.");
                 }
+
                 okCount += batchOk;
                 failedCount += batchFailed;
+
                 for (const err of ttsPayload.summary?.errors || []) {
                   appendUniqueError(errorSamples, err);
                 }
+
                 doneClips = doneTarget;
                 setResponse(payload);
                 updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${totalBatches} complete.`);
@@ -877,10 +803,13 @@ export default function App() {
                 }
               }
             }
+
             setAudioMediaMap(mediaMap);
             setResponse(payload);
+
             const resolvedOk = Math.min(okCount, totalClips);
             const resolvedFailed = Math.max(failedCount, totalClips - resolvedOk);
+
             setAudioRunSummary({
               requested: true,
               total: totalClips,
@@ -888,18 +817,22 @@ export default function App() {
               failed: resolvedFailed,
               errors: errorSamples,
             });
+
             if (resolvedFailed > 0) {
               const firstErr = errorSamples.find((err) => typeof err === "string" && err.trim().length > 0);
-              const details = firstErr ? ` First error: ${firstErr}` : "";
+              const details = firstErr ? `First error: ${firstErr}` : undefined;
               if (resolvedOk > 0) {
-                setError(`Audio partial: ${resolvedOk} succeeded, ${resolvedFailed} failed.${details}`);
-                setServerMsg(`Generated ${payload.items.length} cards with partial audio (${resolvedOk}/${resolvedOk + resolvedFailed}).`);
+                setGenerateNotice(
+                  "audio",
+                  "warning",
+                  `Audio partial: ${resolvedOk} succeeded, ${resolvedFailed} failed.`,
+                  details
+                );
               } else {
-                setError(`Audio generation failed for all clips (${resolvedFailed}).${details}`);
-                setServerMsg("Cards were generated, but audio synthesis failed.");
+                setGenerateNotice("audio", "error", `Audio failed for all clips (${resolvedFailed}).`, details);
               }
             } else {
-              setServerMsg(`Generated ${payload.items.length} cards. Audio ready (${resolvedOk} clips).`);
+              setGenerateNotice("audio", "success", `Audio ready: ${resolvedOk} clip(s).`);
             }
           } catch (ttsErr: any) {
             const detail = ttsErr?.message || String(ttsErr);
@@ -912,8 +845,7 @@ export default function App() {
               failed: unresolvedFailed,
               errors: errorSamples,
             });
-            setError(`Audio generation failed: ${detail}`);
-            setServerMsg("Cards were generated, but audio synthesis did not complete.");
+            setGenerateNotice("audio", "error", "Audio synthesis did not complete.", detail);
           }
         } else {
           setAudioRunSummary({ requested: true, total: 0, ok: 0, failed: 0, errors: [] });
@@ -928,11 +860,13 @@ export default function App() {
             waitingProvider: false,
             elapsedMs: Date.now() - startedAt,
           });
-          setServerMsg("Generated cards. Audio is enabled but no eligible rows for TTS.");
+          setGenerateNotice("audio", "info", "Audio enabled, but no eligible clips were found.");
         }
       } else {
         setAudioRunSummary({ requested: false, total: 0, ok: 0, failed: 0, errors: [] });
+        setGenerateNotice("audio", "info", "Audio generation is disabled for this run.");
       }
+
       setGenerateProgress(100);
       setGenerateProgressLabel(`Done: ${payload.items.length}/${totalRows} row(s).`);
       updateProgressMeta({
@@ -940,8 +874,9 @@ export default function App() {
         waitingProvider: false,
         elapsedMs: Date.now() - startedAt,
       });
+      setGenerateNotice("run", "success", `Generation completed: ${payload.items.length}/${totalRows} row(s).`);
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setGenerateNotice("run", "error", e?.message || String(e));
       setGenerateProgress(0);
       setGenerateProgressLabel("");
       setGenerateProgressMeta(null);
@@ -955,29 +890,31 @@ export default function App() {
 
   function onSaveInputText() {
     if (!inputText.trim()) {
-      setError("Input is empty. Add rows first.");
+      setGenerateNotice("input", "warning", "Input is empty. Add rows first.");
       return;
     }
     const base = normalizedDeckName(settings.defaultDeck || "dutch_words");
     const fileName = `${base}.txt`;
     const blob = new Blob([normalizeImportedText(inputText)], { type: "text/plain;charset=utf-8" });
     downloadBlobFile(blob, fileName);
-    setFileMsg(`Saved ${fileName}.`);
+    setGenerateNotice("input", "success", `Saved ${fileName}.`);
   }
 
   async function onExportDeck(format: ExportFormat) {
     if (!response) return;
     if (exportCards.length === 0) {
-      setError("No successful cards to export.");
+      setGenerateNotice("export", "warning", "No successful cards to export.");
       return;
     }
+
     const exportWarning =
       hasAudioFailures && settings.generateAudio
-        ? ` Warning: audio is incomplete (${audioRunSummary?.ok || 0}/${audioRunSummary?.total || 0} clips).`
+        ? `Audio is incomplete (${audioRunSummary?.ok || 0}/${audioRunSummary?.total || 0} clips).`
         : "";
+
     setExportBusy(format);
-    setError("");
-    setServerMsg("");
+    setNotices((prev) => withGenerateNotice(prev, "export", null));
+
     try {
       const req: ExportDeckRequest = {
         run_id: response.run_id || generateRunId(),
@@ -992,20 +929,23 @@ export default function App() {
         media_map: format === "apkg" && Object.keys(audioMediaMap).length > 0 ? audioMediaMap : undefined,
         cards: exportCards,
       };
-      const url = (settings.apiBase || "") + `/api/export/${format}`;
+
+      const url = `${settings.apiBase || ""}/api/export/${format}`;
       const headers = apiHeaders();
       const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
       const data = (await res.json().catch(() => null)) as any;
       if (!res.ok) {
         throw new Error(apiErrorText(data, res.status));
       }
+
       const payload = data as ExportFileResponse;
-      const bytes = decodeBase64ToBytes(payload.content_b64);
-      const blob = new Blob([bytes], { type: payload.mime_type || "application/octet-stream" });
+      const buffer = decodeBase64ToArrayBuffer(payload.content_b64);
+      const blob = new Blob([buffer], { type: payload.mime_type || "application/octet-stream" });
       downloadBlobFile(blob, payload.file_name);
-      setServerMsg(`Downloaded ${payload.file_name} (${payload.card_count} cards).${exportWarning}`);
+      const details = exportWarning || undefined;
+      setGenerateNotice("export", "success", `Downloaded ${payload.file_name} (${payload.card_count} cards).`, details);
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setGenerateNotice("export", "error", e?.message || String(e));
     } finally {
       setExportBusy(null);
     }
@@ -1020,8 +960,7 @@ export default function App() {
     const files = Array.from(event.target.files || []);
     event.target.value = "";
     if (!files.length) return;
-    setFileMsg("");
-    setError("");
+
     try {
       const chunks = await Promise.all(
         files.map(async (file) => {
@@ -1029,9 +968,10 @@ export default function App() {
           return normalizeImportedText(text).replace(/^\n+|\n+$/g, "");
         })
       );
+
       const merged = chunks.filter((chunk) => chunk.length > 0).join("\n");
       if (!merged.trim()) {
-        setFileMsg("Selected file is empty.");
+        setGenerateNotice("input", "warning", "Selected file is empty.");
         return;
       }
 
@@ -1042,721 +982,104 @@ export default function App() {
         }
         return merged;
       });
+
       setResponse(null);
       setAudioMediaMap({});
-      setResultFilter("all");
-      const shown = files.slice(0, 2).map((f) => f.name).join(", ");
+      setAudioRunSummary(null);
+      setGenerateProgress(0);
+      setGenerateProgressLabel("");
+      setGenerateProgressMeta(null);
+
+      const shown = files
+        .slice(0, 2)
+        .map((file) => file.name)
+        .join(", ");
       const extra = files.length > 2 ? ` +${files.length - 2} more` : "";
-      setFileMsg(`${mode === "append" ? "Appended" : "Loaded"} ${files.length} file(s): ${shown}${extra}.`);
+      clearGenerate();
+      setGenerateNotice(
+        "input",
+        "success",
+        `${mode === "append" ? "Appended" : "Loaded"} ${files.length} file(s): ${shown}${extra}.`
+      );
     } catch (e: any) {
-      setError(e?.message || "Failed to read selected file.");
+      setGenerateNotice("input", "error", e?.message || "Failed to read selected file.");
     }
   }
 
   return (
-    <div className="page">
-      <header className="header">
-        <div className="brand">
-          <div className="title">Doedutch</div>
-          <div className="subtitle">Minimal UI (React + Vite)</div>
-        </div>
-        {activeTab === "generate" && (
-          <div className="actions">
-            <button className="btn primary" onClick={onGenerate} disabled={busy || !canGenerate}>
-              {busy ? "Generating..." : `Generate (${parsed.items.length})`}
-            </button>
-          </div>
-        )}
-      </header>
-
-      <div className="tabs">
-        <button className={`tab ${activeTab === "generate" ? "active" : ""}`} onClick={() => setActiveTab("generate")}>
-          Generate
-        </button>
-        <button className={`tab ${activeTab === "settings" ? "active" : ""}`} onClick={() => setActiveTab("settings")}>
-          Settings
-        </button>
-        {adminEnabled && (
-          <button className={`tab ${activeTab === "admin" ? "active" : ""}`} onClick={() => setActiveTab("admin")}>
-            Admin
-          </button>
-        )}
-      </div>
-
-      {serverMsg && <p className="hint info-banner">{serverMsg}</p>}
-      {error && activeTab !== "generate" && <p className="hint error-banner">{error}</p>}
-
+    <AppShell activeTab={activeTab} adminEnabled={adminEnabled} onTabChange={setActiveTab}>
       {activeTab === "generate" && (
-        <>
-          <section className="card">
-            <h2>Quick setup</h2>
-            <div className="chips">
-              <span className="chip">Model: {settings.model}</span>
-              <span className={`chip ${temperatureState.error ? "chip-danger" : ""}`}>
-                Temp: {temperatureState.percent != null ? `${formatPercent(temperatureState.percent)}%` : "default"}
-              </span>
-              <span className="chip">CEFR: {settings.cefr}</span>
-              <span className="chip">Profile: {settings.profile}</span>
-              <span className="chip">Audio: {settings.audioProvider}</span>
-              <span className="chip">Deck: {settings.defaultDeck || "—"}</span>
-            </div>
-            <div className="quick-toggles">
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.generateAudio}
-                  onChange={(e) => setSettings((s) => ({ ...s, generateAudio: e.target.checked }))}
-                />
-                <span>Generate audio</span>
-              </label>
-              <label className={`toggle ${!settings.generateAudio ? "disabled" : ""}`}>
-                <input
-                  type="checkbox"
-                  checked={settings.includeAudioWord}
-                  disabled={!settings.generateAudio}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeAudioWord: e.target.checked }))}
-                />
-                <span>Audio: word</span>
-              </label>
-              <label className={`toggle ${!settings.generateAudio ? "disabled" : ""}`}>
-                <input
-                  type="checkbox"
-                  checked={settings.includeAudioSentence}
-                  disabled={!settings.generateAudio}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeAudioSentence: e.target.checked }))}
-                />
-                <span>Audio: sentence</span>
-              </label>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.includeBasicReversed}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeBasicReversed: e.target.checked }))}
-                />
-                <span>Basic (reversed)</span>
-              </label>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.includeBasicTypein}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeBasicTypein: e.target.checked }))}
-                />
-                <span>Basic (type-in)</span>
-              </label>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.includeFlagged}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeFlagged: e.target.checked }))}
-                />
-                <span>Force flagged</span>
-              </label>
-            </div>
-            {!settings.generateAudio && (
-              <p className="hint subtle">Enable “Generate audio” to use word/sentence audio options.</p>
-            )}
-            <div className="meta">
-              <div>
-                <span className="k">Deck preview</span> {deckPreview}
-              </div>
-              <div>
-                <button className="btn" onClick={() => setActiveTab("settings")}>Edit in Settings</button>
-              </div>
-              <div>
-                <button className="btn" onClick={onLoadUsage} disabled={busy}>
-                  Load usage
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="card">
-            <h2>Input</h2>
-            <p className="hint flow-hint">
-              1. Paste rows or load text files. 2. Click Generate. 3. Review errors/repaired items below.
-            </p>
-            <div className="input-toolbar">
-              <div className="meta">
-                <div>
-                  <span className="k">rows parsed</span> {parsed.items.length}
-                </div>
-              </div>
-              <div className="input-toolbar-actions">
-                <button className="btn small" type="button" onClick={() => openInputFilePicker("replace")} disabled={busy}>
-                  Load file
-                </button>
-                <button className="btn small" type="button" onClick={() => openInputFilePicker("append")} disabled={busy}>
-                  Append file
-                </button>
-                <button className="btn small" type="button" onClick={onSaveInputText} disabled={busy || !inputText.trim()}>
-                  Save text
-                </button>
-                <button className="btn primary" onClick={onGenerate} disabled={busy || !canGenerate}>
-                  {busy ? "Generating..." : `Generate (${parsed.items.length})`}
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept=".txt,.tsv,.csv,text/plain,text/tab-separated-values,text/csv"
-                  onChange={onInputFilesSelected}
-                  className="hidden-file-input"
-                />
-              </div>
-            </div>
-            {(busy || (generateProgress === 100 && !!response)) && (
-              <div className={`gen-progress ${busy ? "active" : "done"}`}>
-                <div className="gen-progress-track">
-                  <div className="gen-progress-fill" style={{ width: `${Math.max(0, Math.min(100, generateProgress))}%` }} />
-                </div>
-                <div className="gen-progress-meta">
-                  <span>{busy ? "Generation in progress" : "Generation complete"}</span>
-                  <span>{Math.round(generateProgress)}%</span>
-                </div>
-                {generateProgressMeta && (
-                  <div className="gen-progress-detail">
-                    <span>
-                      <span className="k">stage</span> {progressStageLabel(generateProgressMeta.stage)}
-                    </span>
-                    <span>
-                      <span className="k">done</span> {generateProgressMeta.done}/{generateProgressMeta.total}
-                    </span>
-                    <span>
-                      <span className="k">batch</span>{" "}
-                      {generateProgressMeta.batchTotal > 0
-                        ? `${generateProgressMeta.batchIndex}/${generateProgressMeta.batchTotal}`
-                        : "—"}
-                    </span>
-                    <span>
-                      <span className="k">elapsed</span> {formatElapsedMs(generateProgressMeta.elapsedMs)}
-                    </span>
-                    <span className={generateProgressMeta.waitingProvider ? "waiting-provider active" : "waiting-provider"}>
-                      {generateProgressMeta.waitingProvider ? "waiting provider..." : "provider responsive"}
-                    </span>
-                  </div>
-                )}
-                {generateProgressLabel && <p className="hint subtle">{generateProgressLabel}</p>}
-              </div>
-            )}
-            <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} rows={6} />
-            {fileMsg && <p className="hint subtle">{fileMsg}</p>}
-            {warnings.length > 0 && (
-              <div className="warnings">
-                {warnings.map((w) => (
-                  <div key={w} className="warning">
-                    {w}
-                  </div>
-                ))}
-              </div>
-            )}
-            {temperatureState.error && <div className="warning">{temperatureState.error}</div>}
-            <p className="hint">
-              Accepted formats per line: TSV, `woord ;; def ;; translation`, `woord — def — translation`.
-            </p>
-          </section>
-
-          <section className="card">
-            <h2>Result</h2>
-            {response && (
-              <>
-                <div className="result-filters">
-                  <button className={`btn small ${resultFilter === "all" ? "active" : ""}`} onClick={() => setResultFilter("all")}>
-                    All
-                  </button>
-                  <button className={`btn small ${resultFilter === "errors" ? "active" : ""}`} onClick={() => setResultFilter("errors")}>
-                    Errors
-                  </button>
-                  <button className={`btn small ${resultFilter === "repaired" ? "active" : ""}`} onClick={() => setResultFilter("repaired")}>
-                    Repaired
-                  </button>
-                </div>
-                <div className="result-actions">
-                  <button className="btn small" onClick={() => onExportDeck("csv")} disabled={busy || exportBusy != null || exportCards.length === 0}>
-                    {exportBusy === "csv" ? "Preparing CSV..." : `Download CSV (${exportCards.length})`}
-                  </button>
-                  <button className="btn small" onClick={() => onExportDeck("apkg")} disabled={busy || exportBusy != null || exportCards.length === 0}>
-                    {exportBusy === "apkg" ? "Preparing APKG..." : "Download APKG"}
-                  </button>
-                </div>
-                {settings.generateAudio && <p className="hint subtle">Audio clips ready: {audioClipCount}</p>}
-                {audioRunSummary?.requested && (
-                  <p className="hint subtle">
-                    Audio run summary: {audioRunSummary.ok}/{audioRunSummary.total} clips ready, {audioRunSummary.failed} failed.
-                  </p>
-                )}
-                {hasAudioFailures && (
-                  <div className="warning audio-warning">
-                    <div>
-                      Audio synthesis is partial: {audioRunSummary?.ok || 0} succeeded, {audioRunSummary?.failed || 0} failed.
-                    </div>
-                    {audioErrorPreview.length > 0 && (
-                      <div className="audio-warning-errors">
-                        <div>First error: {audioErrorPreview[0]}</div>
-                        {(audioRunSummary?.errors?.length || 0) > 1 && (
-                          <button className="btn tiny" type="button" onClick={() => setShowAllAudioErrors((v) => !v)}>
-                            {showAllAudioErrors ? "Hide all errors" : `Show all errors (${audioRunSummary?.errors?.length || 0})`}
-                          </button>
-                        )}
-                        {showAllAudioErrors && (
-                          <pre className="pre">{(audioRunSummary?.errors || []).join("\n")}</pre>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-            {error && <div className="error">{error}</div>}
-            {!error && !response && (
-              <div className="empty">
-                No generation yet. Add at least one row in Input, then click <strong>Generate</strong>.
-              </div>
-            )}
-            {response && (
-              <div className="result">
-                <div className="meta">
-                  <div>
-                    <span className="k">elapsed</span> {response.timing?.elapsed_ms} ms
-                  </div>
-                  <div>
-                    <span className="k">model</span> {response.model}
-                  </div>
-                  <div>
-                    <span className="k">items</span> {response.items.length}
-                  </div>
-                  <div>
-                    <span className="k">shown</span> {filteredItems.length}
-                  </div>
-                </div>
-                <div className="table">
-                  {filteredItems.length === 0 && <div className="empty">No rows match the selected filter.</div>}
-                  {filteredItems.map((it) => (
-                    <div key={it.id} className="row">
-                      <div className={"status " + it.status}>{it.status}</div>
-                      <div className="id">#{it.id}</div>
-                      <div className="content">
-                        {it.error && <div className="errline">{it.error}</div>}
-                        {it.card && (
-                          <details>
-                            <summary>{it.card.L2_word}</summary>
-                            <pre className="pre">{shortJson(it.card)}</pre>
-                          </details>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <details className="raw">
-                  <summary>Raw response</summary>
-                  <pre className="pre">{shortJson(response)}</pre>
-                </details>
-              </div>
-            )}
-          </section>
-
-          {usage && (
-            <section className="card">
-              <h2>Usage (latest)</h2>
-              <div className="meta">
-                <div>
-                  <span className="k">events</span> {usage.summary.events}
-                </div>
-                <div>
-                  <span className="k">tokens</span> {usage.summary.input_tokens}+{usage.summary.output_tokens} (cached{" "}
-                  {usage.summary.cached_tokens})
-                </div>
-                <div>
-                  <span className="k">audio chars</span> {usage.summary.audio_chars}
-                </div>
-                {usage.summary.raw_cost_usd != null && (
-                  <div>
-                    <span className="k">est USD</span> {usage.summary.raw_cost_usd}
-                  </div>
-                )}
-              </div>
-              <details className="raw">
-                <summary>Raw usage</summary>
-                <pre className="pre">{shortJson(usage)}</pre>
-              </details>
-            </section>
-          )}
-        </>
+        <GenerateTab
+          settings={settings}
+          parsedCount={parsed.items.length}
+          warnings={warnings}
+          inputText={inputText}
+          onInputTextChange={setInputText}
+          onSettingsPatch={patchSettings}
+          onGenerate={onGenerate}
+          canGenerate={canGenerate}
+          busy={busy}
+          onOpenFilePicker={openInputFilePicker}
+          fileInputRef={fileInputRef}
+          onInputFilesSelected={onInputFilesSelected}
+          onSaveInputText={onSaveInputText}
+          response={response}
+          generateProgress={generateProgress}
+          generateProgressLabel={generateProgressLabel}
+          generateProgressMeta={generateProgressMeta}
+          notices={notices.generate}
+          onExportDeck={onExportDeck}
+          exportBusy={exportBusy}
+          exportCardCount={exportCards.length}
+          deckPreview={deckPreview}
+          temperatureState={temperatureState}
+          audioClipCount={audioClipCount}
+          audioRunSummary={audioRunSummary}
+          hasAudioFailures={hasAudioFailures}
+          onGoSettings={() => setActiveTab("settings")}
+        />
       )}
 
       {activeTab === "settings" && (
-        <section className="card">
-          <h2>Settings</h2>
-          <div className="settings-section">
-            <h3>Access</h3>
-            <div className="grid">
-              <label>
-                <span>Invite token (beta)</span>
-                <div className="secret-input">
-                  <input
-                    type={showUserToken ? "text" : "password"}
-                    value={settings.userToken}
-                    onChange={(e) => setSettings((s) => ({ ...s, userToken: e.target.value }))}
-                    placeholder="paste token from /api/admin/invite"
-                  />
-                  <button type="button" className="btn tiny" onClick={() => setShowUserToken((v) => !v)}>
-                    {showUserToken ? "Hide" : "Show"}
-                  </button>
-                </div>
-              </label>
-            </div>
-            <details className="advanced">
-              <summary>Advanced access (dev/admin)</summary>
-              <div className="grid">
-                <label>
-                  <span>API base</span>
-                  <input
-                    value={settings.apiBase}
-                    onChange={(e) => setSettings((s) => ({ ...s, apiBase: e.target.value }))}
-                    placeholder="(empty = use Vite proxy)"
-                  />
-                </label>
-                <label>
-                  <span>X-API-Key (admin only)</span>
-                  <div className="secret-input">
-                    <input
-                      type={showXApiKey ? "text" : "password"}
-                      value={settings.xApiKey}
-                      onChange={(e) => setSettings((s) => ({ ...s, xApiKey: e.target.value }))}
-                      placeholder="API_SHARED_SECRET"
-                    />
-                    <button type="button" className="btn tiny" onClick={() => setShowXApiKey((v) => !v)}>
-                      {showXApiKey ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                </label>
-              </div>
-            </details>
-            {!adminEnabled && <p className="hint subtle">Add X-API-Key in Advanced access to unlock the Admin tab.</p>}
-          </div>
-
-          <div className="settings-triad">
-            <div className="settings-section settings-block">
-              <h3>Generation</h3>
-              <div className="grid">
-                <label>
-                  <span>Model</span>
-                  <div className="inline-input-action">
-                    <select value={settings.model} onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))}>
-                      {textModelOptions.map((modelId) => (
-                        <option key={modelId} value={modelId}>
-                          {modelId}
-                        </option>
-                      ))}
-                    </select>
-                    <button className="btn tiny" type="button" onClick={() => onLoadTtsOptions(false)} disabled={ttsOptionsBusy || busy}>
-                      {ttsOptionsBusy ? "..." : "Reload"}
-                    </button>
-                  </div>
-                </label>
-                <label>
-                  <span>Temperature (%) 0..100</span>
-                  <input
-                    type="number"
-                    step="1"
-                    min="0"
-                    max="100"
-                    value={settings.temperature}
-                    onChange={(e) => setSettings((s) => ({ ...s, temperature: e.target.value }))}
-                    placeholder="empty = model default"
-                  />
-                </label>
-                <label>
-                  <span>CEFR</span>
-                  <select value={settings.cefr} onChange={(e) => setSettings((s) => ({ ...s, cefr: e.target.value }))}>
-                    <option value="A1">A1</option>
-                    <option value="A2">A2</option>
-                    <option value="B1">B1</option>
-                    <option value="B2">B2</option>
-                    <option value="C1">C1</option>
-                    <option value="C2">C2</option>
-                  </select>
-                </label>
-                <label>
-                  <span>Profile</span>
-                  <select value={settings.profile} onChange={(e) => setSettings((s) => ({ ...s, profile: e.target.value }))}>
-                    <option value="strict">strict</option>
-                    <option value="balanced">balanced</option>
-                    <option value="exam">exam</option>
-                    <option value="creative">creative</option>
-                  </select>
-                </label>
-                <label>
-                  <span>L1</span>
-                  <select value={settings.l1} onChange={(e) => setSettings((s) => ({ ...s, l1: e.target.value }))}>
-                    <option value="EN">EN</option>
-                    <option value="RU">RU</option>
-                    <option value="ES">ES</option>
-                    <option value="DE">DE</option>
-                  </select>
-                </label>
-              </div>
-              <label className="checkbox-control">
-                <input
-                  type="checkbox"
-                  checked={settings.includeFlagged}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeFlagged: e.target.checked }))}
-                />
-                <span>Force generate flagged rows</span>
-              </label>
-              {temperatureState.error && <div className="warning">{temperatureState.error}</div>}
-              {temperatureState.usedLegacyScale && (
-                <p className="hint subtle">Legacy decimal detected and auto-converted (e.g. 0.8 → 80%).</p>
-              )}
-            </div>
-
-            <div className="settings-section settings-block">
-              <h3>Audio</h3>
-              <div className="checkbox-group">
-                <label className="checkbox-control">
-                  <input
-                    type="checkbox"
-                    checked={settings.generateAudio}
-                    onChange={(e) => setSettings((s) => ({ ...s, generateAudio: e.target.checked }))}
-                  />
-                  <span>Generate audio</span>
-                </label>
-                <label className={`checkbox-control ${!settings.generateAudio ? "disabled-control" : ""}`}>
-                  <input
-                    type="checkbox"
-                    checked={settings.includeAudioWord}
-                    disabled={!settings.generateAudio}
-                    onChange={(e) => setSettings((s) => ({ ...s, includeAudioWord: e.target.checked }))}
-                  />
-                  <span>Include audio: word</span>
-                </label>
-                <label className={`checkbox-control ${!settings.generateAudio ? "disabled-control" : ""}`}>
-                  <input
-                    type="checkbox"
-                    checked={settings.includeAudioSentence}
-                    disabled={!settings.generateAudio}
-                    onChange={(e) => setSettings((s) => ({ ...s, includeAudioSentence: e.target.checked }))}
-                  />
-                  <span>Include audio: sentence</span>
-                </label>
-              </div>
-              <div className="grid">
-                <label>
-                  <span>TTS provider</span>
-                  <select
-                    value={audioProviderKey}
-                    onChange={(e) => {
-                      const nextProvider = e.target.value;
-                      const nextOptions = ttsOptions?.by_provider?.[nextProvider];
-                      setSettings((s) => ({
-                        ...s,
-                        audioProvider: nextProvider,
-                        audioModel: nextOptions?.default_model || s.audioModel,
-                        audioVoice: nextOptions?.default_voice || s.audioVoice,
-                      }));
-                    }}
-                  >
-                    {availableAudioProviders.map((providerId) => (
-                      <option key={providerId} value={providerId}>
-                        {providerId}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>TTS model</span>
-                  <select value={settings.audioModel} onChange={(e) => setSettings((s) => ({ ...s, audioModel: e.target.value }))}>
-                    {availableAudioModelOptions.length === 0 && <option value="">(load models)</option>}
-                    {availableAudioModelOptions.map((modelId) => (
-                      <option key={modelId} value={modelId}>
-                        {modelId}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>TTS voice</span>
-                  <select value={settings.audioVoice} onChange={(e) => setSettings((s) => ({ ...s, audioVoice: e.target.value }))}>
-                    {availableAudioVoiceOptions.length === 0 && <option value="">(load voices)</option>}
-                    {availableAudioVoiceOptions.map((voiceId) => (
-                      <option key={voiceId} value={voiceId}>
-                        {audioVoiceLabels[voiceId] || voiceId}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              {availableAudioModelOptions.length > 0 && <p className="hint subtle">Known models: {availableAudioModelOptions.join(", ")}</p>}
-              {availableAudioModelOptions.length === 0 && <p className="hint subtle">Click Reload to fetch TTS models.</p>}
-              {!settings.generateAudio && (
-                <p className="hint subtle">Audio word/sentence options are disabled until “Generate audio” is enabled.</p>
-              )}
-            </div>
-
-            <div className="settings-section settings-block">
-              <h3>Export</h3>
-              <div className="checkbox-group">
-                <label className="checkbox-control">
-                  <input
-                    type="checkbox"
-                    checked={settings.includeBasicReversed}
-                    onChange={(e) => setSettings((s) => ({ ...s, includeBasicReversed: e.target.checked }))}
-                  />
-                  <span>Include basic (reversed)</span>
-                </label>
-                <label className="checkbox-control">
-                  <input
-                    type="checkbox"
-                    checked={settings.includeBasicTypein}
-                    onChange={(e) => setSettings((s) => ({ ...s, includeBasicTypein: e.target.checked }))}
-                  />
-                  <span>Include basic (type-in)</span>
-                </label>
-              </div>
-              <div className="grid">
-                <label>
-                  <span>Default deck name (CSV/APKG filename)</span>
-                  <input
-                    value={settings.defaultDeck}
-                    onChange={(e) => setSettings((s) => ({ ...s, defaultDeck: e.target.value }))}
-                    placeholder="e.g., Dutch"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-          <div className="actions">
-            <button className="btn" onClick={onLoadSettings} disabled={busy}>
-              Load settings
-            </button>
-            <button className="btn" onClick={onSaveSettings} disabled={busy}>
-              Save settings
-            </button>
-            <button className="btn" onClick={onLoadUsage} disabled={busy}>
-              Load usage
-            </button>
-          </div>
-          {usage && (
-            <div className="settings-usage-preview">
-              <div className="meta">
-                <div>
-                  <span className="k">events</span> {usage.summary.events}
-                </div>
-                <div>
-                  <span className="k">tokens</span> {usage.summary.input_tokens}+{usage.summary.output_tokens} (cached{" "}
-                  {usage.summary.cached_tokens})
-                </div>
-                <div>
-                  <span className="k">audio chars</span> {usage.summary.audio_chars}
-                </div>
-                {usage.summary.raw_cost_usd != null && (
-                  <div>
-                    <span className="k">est USD</span> {usage.summary.raw_cost_usd}
-                  </div>
-                )}
-              </div>
-              <details className="raw">
-                <summary>Usage details</summary>
-                <pre className="pre">{shortJson(usage)}</pre>
-              </details>
-            </div>
-          )}
-          <p className="hint">
-            Leave API base empty and run the dev server with proxy to avoid CORS. For beta, use an invite token.
-          </p>
-        </section>
+        <SettingsTab
+          settings={settings}
+          onSettingsPatch={patchSettings}
+          onAudioProviderChange={onAudioProviderChange}
+          onLoadSettings={onLoadSettings}
+          onSaveSettings={onSaveSettings}
+          onRevertSettings={onRevertSettings}
+          onLoadUsage={onLoadUsage}
+          usage={usage}
+          busy={busy}
+          isDirty={isDirty}
+          temperatureState={temperatureState}
+          textModelOptions={textModelOptions}
+          availableAudioProviders={availableAudioProviders}
+          availableAudioModelOptions={availableAudioModelOptions}
+          availableAudioVoiceOptions={availableAudioVoiceOptions}
+          audioVoiceLabels={audioVoiceLabels}
+          ttsOptionsBusy={ttsOptionsBusy}
+          onReloadTtsOptions={() => onLoadTtsOptions(false)}
+          notices={notices.settings}
+          adminEnabled={adminEnabled}
+        />
       )}
 
-      {activeTab === "admin" && (
-        <>
-          <section className="card">
-            <h2>Admin (invite + users)</h2>
-            <div className="actions">
-              <button className="btn" onClick={() => adminCreateInvite("")} disabled={adminBusy || !settings.xApiKey}>
-                Create invite
-              </button>
-              <button className="btn" onClick={adminListUsers} disabled={adminBusy || !settings.xApiKey}>
-                List users
-              </button>
-            </div>
-            {newInvite && (
-              <div className="meta">
-                <div>
-                  <span className="k">invite user_id</span> {newInvite.user_id}
-                </div>
-                <div>
-                  <span className="k">token</span> {newInvite.token}
-                </div>
-              </div>
-            )}
-            {users && users.items.length > 0 && (
-              <div className="table">
-                {users.items.map((u) => (
-                  <div key={u.id} className="row">
-                    <div className={"status " + (u.status === "active" ? "ok" : "failed")}>{u.status}</div>
-                    <div className="id">{u.id}</div>
-                    <div className="content">
-                      <div className="meta">
-                        {u.label && (
-                          <div>
-                            <span className="k">label</span> {u.label}
-                          </div>
-                        )}
-                        <div>
-                          <span className="k">created</span> {u.created_at}
-                        </div>
-                        {u.last_used_at && (
-                          <div>
-                            <span className="k">last</span> {u.last_used_at}
-                          </div>
-                        )}
-                      </div>
-                      <div className="actions">
-                        <button className="btn" onClick={() => adminSetStatus(u.id, u.status === "active" ? "blocked" : "active")} disabled={adminBusy || !settings.xApiKey}>
-                          {u.status === "active" ? "Block" : "Unblock"}
-                        </button>
-                        <button className="btn" onClick={() => adminRotate(u.id)} disabled={adminBusy || !settings.xApiKey}>
-                          Rotate token
-                        </button>
-                        <button className="btn" onClick={() => adminLoadUsage(u.id)} disabled={adminBusy || !settings.xApiKey}>
-                          Usage
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {!users && <p className="hint">Admin actions need X-API-Key. Use invite token for normal calls.</p>}
-          </section>
-
-          {adminUsage && (
-            <section className="card">
-              <h2>Admin: usage for {adminUsage.user_id}</h2>
-              <div className="meta">
-                <div>
-                  <span className="k">events</span> {adminUsage.summary.events}
-                </div>
-                <div>
-                  <span className="k">tokens</span> {adminUsage.summary.input_tokens}+{adminUsage.summary.output_tokens} (cached{" "}
-                  {adminUsage.summary.cached_tokens})
-                </div>
-                <div>
-                  <span className="k">audio chars</span> {adminUsage.summary.audio_chars}
-                </div>
-                {adminUsage.summary.raw_cost_usd != null && (
-                  <div>
-                    <span className="k">est USD</span> {adminUsage.summary.raw_cost_usd}
-                  </div>
-                )}
-              </div>
-              <details className="raw">
-                <summary>Raw usage</summary>
-                <pre className="pre">{shortJson(adminUsage)}</pre>
-              </details>
-            </section>
-          )}
-        </>
+      {activeTab === "admin" && adminEnabled && (
+        <AdminTab
+          adminBusy={adminBusy}
+          hasAdminKey={adminEnabled}
+          users={users}
+          newInvite={newInvite}
+          adminUsage={adminUsage}
+          onCreateInvite={() => adminCreateInvite("")}
+          onListUsers={adminListUsers}
+          onSetStatus={adminSetStatus}
+          onRotate={adminRotate}
+          onLoadUsage={adminLoadUsage}
+          notices={notices.admin}
+        />
       )}
-    </div>
+    </AppShell>
   );
 }
