@@ -19,6 +19,7 @@ from openai import OpenAI
 import requests
 
 __all__ = [
+    "AudioClipResult",
     "AudioSynthesisSummary",
     "ensure_audio_for_cards",
     "fetch_elevenlabs_voices",
@@ -80,6 +81,7 @@ class AudioSynthesisSummary:
     model_usage: Dict[str, Dict[str, int]] = field(default_factory=dict)
     total_characters: int = 0
     total_requests_billed: int = 0
+    clip_results: List["AudioClipResult"] = field(default_factory=list)
 
     def register_usage(self, model: str, kind: str, char_count: int, *, fallback_used: bool) -> None:
         """Track billed usage for model/voice combination."""
@@ -110,6 +112,18 @@ class AudioSynthesisSummary:
             entry["sentence_requests"] += 1
         self.total_characters += char_count
         self.total_requests_billed += 1
+
+
+@dataclass
+class AudioClipResult:
+    card_index: int
+    kind: str
+    text: str
+    status: str
+    filename: str = ""
+    error: str = ""
+    model: str = ""
+    fallback_used: bool = False
 
 
 def sentence_for_tts(cloze_text: str) -> str:
@@ -164,6 +178,55 @@ def _filename(kind: str, voice: str, text: str) -> str:
 def _is_model_not_found(error: Exception) -> bool:
     message = str(error).lower()
     return "model_not_found" in message or "does not exist" in message or "404" in message
+
+
+def _status_code_from_error(error: Exception) -> Optional[int]:
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int):
+        return status
+    response = getattr(error, "response", None)
+    code = getattr(response, "status_code", None)
+    if isinstance(code, int):
+        return code
+    return None
+
+
+def _is_transient_tts_error(error: Exception) -> bool:
+    status_code = _status_code_from_error(error)
+    if status_code == 429 or (status_code is not None and 500 <= status_code <= 599):
+        return True
+    message = str(error).lower()
+    transient_markers = (
+        "429",
+        "rate limit",
+        "too many requests",
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "connection reset",
+        "connection aborted",
+        "503",
+        "502",
+        "504",
+        "bad gateway",
+        "service unavailable",
+    )
+    return any(marker in message for marker in transient_markers)
+
+
+def _call_with_single_retry(callable_: Callable[[], bytes], *, retry_backoff: float = 0.75) -> bytes:
+    last_error: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            return callable_()
+        except Exception as err:  # pragma: no cover - network dependent
+            last_error = err
+            if attempt >= 1 or not _is_transient_tts_error(err):
+                raise
+            time.sleep(retry_backoff * (attempt + 1))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Unexpected retry state")
 
 
 def _extract_bytes(response: object) -> bytes:
@@ -839,12 +902,14 @@ def ensure_audio_for_cards(
                     cache_hit = True
                     return filename, (fallback_flag or idx > 0), cache_hit, model_id
                 try:
-                    data = _synthesize(
-                        openai_client,
-                        model=model_id,
-                        voice=voice,
-                        text=text,
-                        instructions=instruction_text,
+                    data = _call_with_single_retry(
+                        lambda: _synthesize(
+                            openai_client,
+                            model=model_id,
+                            voice=voice,
+                            text=text,
+                            instructions=instruction_text,
+                        )
                     )
                 except Exception as err:  # pragma: no cover - network dependent
                     if owns_event and inflight_event is not None:
@@ -884,13 +949,15 @@ def ensure_audio_for_cards(
                     cache_hit = True
                     return filename, False, cache_hit, model_id
                 try:
-                    data = _synthesize_elevenlabs(
-                        api_key=eleven_api_key or "",
-                        model=model_id,
-                        voice=voice,
-                        text=text,
-                        voice_settings=voice_settings,
-                        spoken_language=spoken_language,
+                    data = _call_with_single_retry(
+                        lambda: _synthesize_elevenlabs(
+                            api_key=eleven_api_key or "",
+                            model=model_id,
+                            voice=voice,
+                            text=text,
+                            voice_settings=voice_settings,
+                            spoken_language=spoken_language,
+                        )
                     )
                 except Exception as err:  # pragma: no cover - network dependent
                     if owns_event and inflight_event is not None:
@@ -938,17 +1005,41 @@ def ensure_audio_for_cards(
             kind = kind_res
             card = cards_list[card_idx]
             if error or not filename:
+                error_text = str(error) if error else "Audio synthesis failed"
+                summary.clip_results.append(
+                    AudioClipResult(
+                        card_index=card_idx,
+                        kind=kind,
+                        text=text,
+                        status="failed",
+                        filename=filename or "",
+                        error=error_text,
+                        model=model_used or "",
+                        fallback_used=used_fallback,
+                    )
+                )
                 if kind == "word":
                     summary.word_skipped += 1
                     label = (card.get("L2_word") or "").strip()
-                    summary.errors.append(f"{label or 'word'}: {error}") if error else None
+                    summary.errors.append(f"{label or 'word'}: {error_text}")
                 else:
                     summary.sentence_skipped += 1
                     label = (card.get("L2_word") or "").strip()
-                    summary.errors.append(
-                        f"Sentence for '{label}': {error}"
-                    ) if error else None
+                    summary.errors.append(f"Sentence for '{label}': {error_text}")
             else:
+                clip_status = "cached" if cache_hit else "ok"
+                summary.clip_results.append(
+                    AudioClipResult(
+                        card_index=card_idx,
+                        kind=kind,
+                        text=text,
+                        status=clip_status,
+                        filename=filename,
+                        error="",
+                        model=model_used or "",
+                        fallback_used=used_fallback,
+                    )
+                )
                 if kind == "word":
                     card["AudioWord"] = f"[sound:{filename}]"
                     summary.word_success += 1

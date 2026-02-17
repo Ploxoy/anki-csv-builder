@@ -27,6 +27,26 @@ type TemperatureParseResult = {
   usedLegacyScale: boolean;
 };
 
+type ProgressStage = "queued" | "text" | "audio" | "done";
+
+type GenerateProgressMeta = {
+  stage: ProgressStage;
+  done: number;
+  total: number;
+  batchIndex: number;
+  batchTotal: number;
+  elapsedMs: number;
+  waitingProvider: boolean;
+};
+
+type AudioRunSummary = {
+  requested: boolean;
+  total: number;
+  ok: number;
+  failed: number;
+  errors: string[];
+};
+
 type Settings = {
   apiBase: string; // keep for prod; in dev we can use Vite proxy with empty string
   xApiKey: string;
@@ -144,6 +164,29 @@ function parseTemperatureValue(raw: string): TemperatureParseResult {
   };
 }
 
+function formatElapsedMs(ms: number): string {
+  const safe = Math.max(0, Math.floor(ms));
+  if (safe < 1000) return `${safe} ms`;
+  const totalSeconds = Math.floor(safe / 1000);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  if (mins <= 0) return `${secs}s`;
+  return `${mins}m ${secs}s`;
+}
+
+function appendUniqueError(errors: string[], candidate: unknown): void {
+  const text = typeof candidate === "string" ? candidate.trim() : "";
+  if (!text) return;
+  if (!errors.includes(text)) errors.push(text);
+}
+
+function progressStageLabel(stage: ProgressStage): string {
+  if (stage === "queued") return "Queued";
+  if (stage === "text") return "Text generation";
+  if (stage === "audio") return "Audio synthesis";
+  return "Completed";
+}
+
 function normalizeImportedText(raw: string): string {
   return raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
 }
@@ -196,6 +239,7 @@ function buildTtsItems(
 function mergeTtsIntoResponse(generated: GenerateResponse, tts: TTSResponse): GenerateResponse {
   const byCard = new Map<string, { word?: string; sentence?: string }>();
   for (const audio of tts.audios) {
+    if (audio.status === "failed") continue;
     if (!audio.filename) continue;
     const current = byCard.get(audio.card_id) || {};
     if (audio.type === "word") current.word = audio.filename;
@@ -241,8 +285,11 @@ export default function App() {
   const [fileMsg, setFileMsg] = useState("");
   const [generateProgress, setGenerateProgress] = useState(0);
   const [generateProgressLabel, setGenerateProgressLabel] = useState("");
+  const [generateProgressMeta, setGenerateProgressMeta] = useState<GenerateProgressMeta | null>(null);
   const [exportBusy, setExportBusy] = useState<ExportFormat | null>(null);
   const [audioMediaMap, setAudioMediaMap] = useState<Record<string, string>>({});
+  const [audioRunSummary, setAudioRunSummary] = useState<AudioRunSummary | null>(null);
+  const [showAllAudioErrors, setShowAllAudioErrors] = useState(false);
   const [ttsOptions, setTtsOptions] = useState<TTSOptionsResponse | null>(null);
   const [ttsOptionsBusy, setTtsOptionsBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -347,6 +394,11 @@ export default function App() {
         } as Card;
       });
   }, [response]);
+  const hasAudioFailures = !!audioRunSummary && audioRunSummary.requested && audioRunSummary.failed > 0;
+  const audioErrorPreview = useMemo(() => {
+    if (!audioRunSummary?.errors?.length) return [];
+    return audioRunSummary.errors.slice(0, 5);
+  }, [audioRunSummary]);
 
   function apiHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -615,19 +667,52 @@ export default function App() {
     const textProgressCap = audioRequested ? 72 : 94;
     const expectedMs = Math.max(3000, totalRows * 1300);
     const startedAt = Date.now();
+    const WAITING_PROVIDER_MS = 4000;
     let progressTimer: number | null = null;
+    const updateProgressMeta = (patch: Partial<GenerateProgressMeta>) => {
+      setGenerateProgressMeta((prev) => ({
+        stage: patch.stage ?? prev?.stage ?? "queued",
+        done: patch.done ?? prev?.done ?? 0,
+        total: patch.total ?? prev?.total ?? (audioRequested ? 0 : totalRows),
+        batchIndex: patch.batchIndex ?? prev?.batchIndex ?? 0,
+        batchTotal: patch.batchTotal ?? prev?.batchTotal ?? 0,
+        elapsedMs: patch.elapsedMs ?? Date.now() - startedAt,
+        waitingProvider: patch.waitingProvider ?? prev?.waitingProvider ?? false,
+      }));
+    };
     setBusy(true);
     setError("");
     setResponse(null);
     setServerMsg("");
     setAudioMediaMap({});
+    setAudioRunSummary(null);
+    setShowAllAudioErrors(false);
     setGenerateProgress(3);
     setGenerateProgressLabel(`Queued ${totalRows} row(s) for generation.`);
+    updateProgressMeta({
+      stage: "queued",
+      done: 0,
+      total: totalRows,
+      batchIndex: 0,
+      batchTotal: 0,
+      waitingProvider: false,
+      elapsedMs: 0,
+    });
     progressTimer = window.setInterval(() => {
       const elapsedMs = Date.now() - startedAt;
       const predicted = Math.min(textProgressCap, 6 + (elapsedMs / expectedMs) * Math.max(1, textProgressCap - 6));
       setGenerateProgress((prev) => (predicted > prev ? predicted : prev));
       setGenerateProgressLabel(`Generating cards... ${Math.round(predicted)}%`);
+      const estimatedDone = totalRows > 0 ? Math.min(totalRows, Math.round((predicted / Math.max(textProgressCap, 1)) * totalRows)) : 0;
+      updateProgressMeta({
+        stage: "text",
+        done: estimatedDone,
+        total: totalRows,
+        batchIndex: 0,
+        batchTotal: 0,
+        waitingProvider: false,
+        elapsedMs,
+      });
     }, 220);
     try {
       const runId = generateRunId();
@@ -659,9 +744,27 @@ export default function App() {
       }
       setGenerateProgress(textProgressCap);
       setGenerateProgressLabel(`Text ready: ${payload.items.length}/${totalRows}.`);
+      updateProgressMeta({
+        stage: "text",
+        done: payload.items.length,
+        total: totalRows,
+        batchIndex: 0,
+        batchTotal: 0,
+        waitingProvider: false,
+        elapsedMs: Date.now() - startedAt,
+      });
 
       if (settings.generateAudio) {
         setGenerateProgressLabel("Preparing audio synthesis...");
+        updateProgressMeta({
+          stage: "audio",
+          done: 0,
+          total: 0,
+          batchIndex: 0,
+          batchTotal: 0,
+          waitingProvider: false,
+          elapsedMs: Date.now() - startedAt,
+        });
         const ttsItems = buildTtsItems(payload, {
           includeWord: settings.includeAudioWord,
           includeSentence: settings.includeAudioSentence,
@@ -677,14 +780,24 @@ export default function App() {
           const mediaMap: Record<string, string> = {};
           const audioProgressStart = Math.min(94, textProgressCap + 4);
           const audioProgressSpan = Math.max(1, 99 - audioProgressStart);
-          const updateAudioProgress = (done: number, suffix = "") => {
+          const updateAudioProgress = (done: number, batchIndex: number, waitingProvider: boolean, suffix = "") => {
             const ratio = totalClips > 0 ? done / totalClips : 1;
             const next = Math.min(99, audioProgressStart + ratio * audioProgressSpan);
             setGenerateProgress((prev) => (next > prev ? next : prev));
             const tail = suffix ? ` ${suffix}` : "";
-            setGenerateProgressLabel(`Generating audio: ${done}/${totalClips} clips.${tail}`);
+            const waitingText = waitingProvider ? " waiting provider..." : "";
+            setGenerateProgressLabel(`Generating audio: ${done}/${totalClips} clips.${tail}${waitingText}`);
+            updateProgressMeta({
+              stage: "audio",
+              done,
+              total: totalClips,
+              batchIndex,
+              batchTotal: totalBatches,
+              waitingProvider,
+              elapsedMs: Date.now() - startedAt,
+            });
           };
-          updateAudioProgress(0, "Batch 1 in queue.");
+          updateAudioProgress(0, 0, false, "Batch 1 in queue.");
           try {
             const ttsUrl = (settings.apiBase || "") + "/api/tts";
             for (let offset = 0; offset < totalClips; offset += ttsBatchSize) {
@@ -699,14 +812,14 @@ export default function App() {
                 audioProgressStart + (baseRatio + (doneRatio - baseRatio) * 0.85) * audioProgressSpan
               );
               let waitingProgress = baseProgress;
-              updateAudioProgress(doneClips, `Batch ${batchIndex}/${totalBatches} in progress...`);
+              const batchStartedAt = Date.now();
+              updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${totalBatches} in progress...`);
               let waitTimer: number | null = window.setInterval(() => {
                 const step = Math.max(0.08, (waitingCap - baseProgress) / 16);
                 waitingProgress = Math.min(waitingCap, waitingProgress + step);
+                const waitingProvider = Date.now() - batchStartedAt >= WAITING_PROVIDER_MS;
                 setGenerateProgress((prev) => (waitingProgress > prev ? waitingProgress : prev));
-                setGenerateProgressLabel(
-                  `Generating audio: ${doneClips}/${totalClips} clips. Batch ${batchIndex}/${totalBatches} in progress...`
-                );
+                updateAudioProgress(doneClips, batchIndex, waitingProvider, `Batch ${batchIndex}/${totalBatches} in progress...`);
               }, 350);
               const ttsReq: TTSRequest = {
                 run_id: payload.run_id || runId,
@@ -720,27 +833,38 @@ export default function App() {
                 const ttsData = (await ttsRes.json().catch(() => null)) as any;
                 if (!ttsRes.ok) {
                   const detail = apiErrorText(ttsData, ttsRes.status);
-                  errorSamples.push(detail);
+                  appendUniqueError(errorSamples, detail);
                   failedCount += totalClips - doneClips;
                   doneClips = totalClips;
-                  updateAudioProgress(doneClips, "Stopped after API error.");
+                  updateAudioProgress(doneClips, batchIndex, false, "Stopped after API error.");
                   break;
                 }
                 const ttsPayload = ttsData as TTSResponse;
                 payload = mergeTtsIntoResponse(payload, ttsPayload);
-                for (const audio of ttsPayload.audios) {
-                  if (audio.filename && audio.audio_b64) {
+                const batchAudios = Array.isArray(ttsPayload.audios) ? ttsPayload.audios : [];
+                for (const audio of batchAudios) {
+                  if (audio.status !== "failed" && audio.filename && audio.audio_b64) {
                     mediaMap[audio.filename] = audio.audio_b64;
                   }
                 }
-                okCount += Number(ttsPayload.summary?.ok || 0);
-                failedCount += Number(ttsPayload.summary?.failed || 0);
+                let batchOk = batchAudios.filter((audio) => audio.status === "ok" || audio.status === "cached").length;
+                let batchFailed = batchAudios.filter((audio) => audio.status === "failed").length;
+                for (const audio of batchAudios) {
+                  if (audio.status === "failed") appendUniqueError(errorSamples, audio.error);
+                }
+                const missingStatuses = Math.max(0, batch.length - (batchOk + batchFailed));
+                if (missingStatuses > 0) {
+                  batchFailed += missingStatuses;
+                  appendUniqueError(errorSamples, "Some clip statuses were missing in TTS response.");
+                }
+                okCount += batchOk;
+                failedCount += batchFailed;
                 for (const err of ttsPayload.summary?.errors || []) {
-                  if (typeof err === "string" && err.trim()) errorSamples.push(err);
+                  appendUniqueError(errorSamples, err);
                 }
                 doneClips = doneTarget;
                 setResponse(payload);
-                updateAudioProgress(doneClips, `Batch ${batchIndex}/${totalBatches} complete.`);
+                updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${totalBatches} complete.`);
               } finally {
                 if (waitTimer != null) {
                   window.clearInterval(waitTimer);
@@ -750,36 +874,72 @@ export default function App() {
             }
             setAudioMediaMap(mediaMap);
             setResponse(payload);
-            if (failedCount > 0) {
+            const resolvedOk = Math.min(okCount, totalClips);
+            const resolvedFailed = Math.max(failedCount, totalClips - resolvedOk);
+            setAudioRunSummary({
+              requested: true,
+              total: totalClips,
+              ok: resolvedOk,
+              failed: resolvedFailed,
+              errors: errorSamples,
+            });
+            if (resolvedFailed > 0) {
               const firstErr = errorSamples.find((err) => typeof err === "string" && err.trim().length > 0);
               const details = firstErr ? ` First error: ${firstErr}` : "";
-              if (okCount > 0) {
-                setError(`Audio partial: ${okCount} succeeded, ${failedCount} failed.${details}`);
-                setServerMsg(`Generated ${payload.items.length} cards with partial audio (${okCount}/${okCount + failedCount}).`);
+              if (resolvedOk > 0) {
+                setError(`Audio partial: ${resolvedOk} succeeded, ${resolvedFailed} failed.${details}`);
+                setServerMsg(`Generated ${payload.items.length} cards with partial audio (${resolvedOk}/${resolvedOk + resolvedFailed}).`);
               } else {
-                setError(`Audio generation failed for all clips (${failedCount}).${details}`);
+                setError(`Audio generation failed for all clips (${resolvedFailed}).${details}`);
                 setServerMsg("Cards were generated, but audio synthesis failed.");
               }
             } else {
-              setServerMsg(`Generated ${payload.items.length} cards. Audio ready (${okCount} clips).`);
+              setServerMsg(`Generated ${payload.items.length} cards. Audio ready (${resolvedOk} clips).`);
             }
           } catch (ttsErr: any) {
             const detail = ttsErr?.message || String(ttsErr);
+            appendUniqueError(errorSamples, detail);
+            const unresolvedFailed = Math.max(totalClips - okCount, failedCount);
+            setAudioRunSummary({
+              requested: true,
+              total: totalClips,
+              ok: okCount,
+              failed: unresolvedFailed,
+              errors: errorSamples,
+            });
             setError(`Audio generation failed: ${detail}`);
             setServerMsg("Cards were generated, but audio synthesis did not complete.");
           }
         } else {
+          setAudioRunSummary({ requested: true, total: 0, ok: 0, failed: 0, errors: [] });
           setGenerateProgress((prev) => (95 > prev ? 95 : prev));
           setGenerateProgressLabel("Audio is enabled, but there are no clips to synthesize.");
+          updateProgressMeta({
+            stage: "audio",
+            done: 0,
+            total: 0,
+            batchIndex: 0,
+            batchTotal: 0,
+            waitingProvider: false,
+            elapsedMs: Date.now() - startedAt,
+          });
           setServerMsg("Generated cards. Audio is enabled but no eligible rows for TTS.");
         }
+      } else {
+        setAudioRunSummary({ requested: false, total: 0, ok: 0, failed: 0, errors: [] });
       }
       setGenerateProgress(100);
       setGenerateProgressLabel(`Done: ${payload.items.length}/${totalRows} row(s).`);
+      updateProgressMeta({
+        stage: "done",
+        waitingProvider: false,
+        elapsedMs: Date.now() - startedAt,
+      });
     } catch (e: any) {
       setError(e?.message || String(e));
       setGenerateProgress(0);
       setGenerateProgressLabel("");
+      setGenerateProgressMeta(null);
     } finally {
       if (progressTimer != null) {
         window.clearInterval(progressTimer);
@@ -806,6 +966,10 @@ export default function App() {
       setError("No successful cards to export.");
       return;
     }
+    const exportWarning =
+      hasAudioFailures && settings.generateAudio
+        ? ` Warning: audio is incomplete (${audioRunSummary?.ok || 0}/${audioRunSummary?.total || 0} clips).`
+        : "";
     setExportBusy(format);
     setError("");
     setServerMsg("");
@@ -834,7 +998,7 @@ export default function App() {
       const bytes = decodeBase64ToBytes(payload.content_b64);
       const blob = new Blob([bytes], { type: payload.mime_type || "application/octet-stream" });
       downloadBlobFile(blob, payload.file_name);
-      setServerMsg(`Downloaded ${payload.file_name} (${payload.card_count} cards).`);
+      setServerMsg(`Downloaded ${payload.file_name} (${payload.card_count} cards).${exportWarning}`);
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -1043,6 +1207,28 @@ export default function App() {
                   <span>{busy ? "Generation in progress" : "Generation complete"}</span>
                   <span>{Math.round(generateProgress)}%</span>
                 </div>
+                {generateProgressMeta && (
+                  <div className="gen-progress-detail">
+                    <span>
+                      <span className="k">stage</span> {progressStageLabel(generateProgressMeta.stage)}
+                    </span>
+                    <span>
+                      <span className="k">done</span> {generateProgressMeta.done}/{generateProgressMeta.total}
+                    </span>
+                    <span>
+                      <span className="k">batch</span>{" "}
+                      {generateProgressMeta.batchTotal > 0
+                        ? `${generateProgressMeta.batchIndex}/${generateProgressMeta.batchTotal}`
+                        : "—"}
+                    </span>
+                    <span>
+                      <span className="k">elapsed</span> {formatElapsedMs(generateProgressMeta.elapsedMs)}
+                    </span>
+                    <span className={generateProgressMeta.waitingProvider ? "waiting-provider active" : "waiting-provider"}>
+                      {generateProgressMeta.waitingProvider ? "waiting provider..." : "provider responsive"}
+                    </span>
+                  </div>
+                )}
                 {generateProgressLabel && <p className="hint subtle">{generateProgressLabel}</p>}
               </div>
             )}
@@ -1087,6 +1273,31 @@ export default function App() {
                   </button>
                 </div>
                 {settings.generateAudio && <p className="hint subtle">Audio clips ready: {audioClipCount}</p>}
+                {audioRunSummary?.requested && (
+                  <p className="hint subtle">
+                    Audio run summary: {audioRunSummary.ok}/{audioRunSummary.total} clips ready, {audioRunSummary.failed} failed.
+                  </p>
+                )}
+                {hasAudioFailures && (
+                  <div className="warning audio-warning">
+                    <div>
+                      Audio synthesis is partial: {audioRunSummary?.ok || 0} succeeded, {audioRunSummary?.failed || 0} failed.
+                    </div>
+                    {audioErrorPreview.length > 0 && (
+                      <div className="audio-warning-errors">
+                        <div>First error: {audioErrorPreview[0]}</div>
+                        {(audioRunSummary?.errors?.length || 0) > 1 && (
+                          <button className="btn tiny" type="button" onClick={() => setShowAllAudioErrors((v) => !v)}>
+                            {showAllAudioErrors ? "Hide all errors" : `Show all errors (${audioRunSummary?.errors?.length || 0})`}
+                          </button>
+                        )}
+                        {showAllAudioErrors && (
+                          <pre className="pre">{(audioRunSummary?.errors || []).join("\n")}</pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
             {error && <div className="error">{error}</div>}

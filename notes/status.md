@@ -16,9 +16,16 @@
   - ElevenLabs: динамическая загрузка голосов по `ELEVENLABS_API_KEY`, фильтр по NL, spoken_language=nl, экспоненциальный бэк-офф на 429.
   - Голос хранится помодульно (`audio_voice_map`), переключение провайдера не сбрасывает выбор.
 - **Secrets**: `OPENAI_API_KEY` и `ELEVENLABS_API_KEY` подтягиваются из secrets/env при старте, без ручного ввода.
-- **Тесты**: `pytest` (23 теста) зелёный.
+- **Тесты**: `pytest` (29 тестов) зелёный.
 
 ## Свежие изменения (февраль 2026)
+- Зафиксирован checkpoint `e7f8e94`: merged scope по web+api (export endpoints, dynamic TTS options, resilient audio flow).
+- TTS Reliability/UX hardening в FastAPI + web:
+  - `/api/tts` теперь возвращает clip-level `status` (`ok|failed|cached`) и `error` для failed-клипов.
+  - В synthesis-пайплайне добавлен один автоматический retry только для транзитных ошибок (`429/5xx/timeout`) с backoff; валидационные ошибки не ретраятся.
+  - В web-прогрессе добавлены явные поля `stage`, `done/total`, `batch`, `elapsed` и индикатор `waiting provider...` для длинных батчей.
+  - При partial audio UI показывает компактный summary + first error + переключатель `Show all errors`; экспорт CSV/APKG доступен с явным предупреждением о неполной озвучке.
+- Контракты и тесты синхронизированы: добавлены API/core тесты для clip-status и retry-политики.
 - Превью в Streamlit поддерживает ручное редактирование ключевых полей карточки и сохранение изменений в `session_state.results` (`app/preview_panel.py`).
 - Для малых списков рекомендация batch/workers уже оптимизирована: при `total <= 10` используется один батч (`batch_size=total`) с параллельными воркерами (`app/ui_helpers.py`).
 - Навигация по ошибкам в превью уже активна (`Show only errors` + `Next error`) в `app/preview_panel.py`.

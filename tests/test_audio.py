@@ -2,8 +2,14 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+import pathlib
+import sys
 
 import pytest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 from core import audio
 
@@ -266,3 +272,128 @@ def test_disk_cache_survives_session(monkeypatch: pytest.MonkeyPatch, tmp_path) 
 
     assert summary_second.cache_hits == 1
     assert synth_calls  # initial run executed
+
+
+def test_ensure_audio_retries_once_on_transient_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _set_temp_audio_cache(monkeypatch, tmp_path)
+
+    calls = {"count": 0}
+
+    def flaky_synthesize(*_, **__) -> bytes:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("429 Too Many Requests")
+        return b"audio-data"
+
+    monkeypatch.setattr(audio, "_synthesize", flaky_synthesize)
+
+    cards = [{"L2_word": "fiets", "L2_cloze": ""}]
+    _, summary = audio.ensure_audio_for_cards(
+        cards,
+        provider="openai",
+        voice="test-voice",
+        include_word=True,
+        include_sentence=False,
+        cache={},
+        progress_cb=None,
+        instruction_payloads=None,
+        instruction_keys=None,
+        max_workers=1,
+        openai_client=object(),
+        openai_model="gpt-tts",
+        openai_fallback_model=None,
+    )
+
+    assert calls["count"] == 2
+    assert summary.word_success == 1
+    assert summary.errors == []
+    assert summary.clip_results[0].status == "ok"
+
+
+def test_ensure_audio_does_not_retry_on_validation_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _set_temp_audio_cache(monkeypatch, tmp_path)
+
+    calls = {"count": 0}
+
+    def invalid_synthesize(*_, **__) -> bytes:
+        calls["count"] += 1
+        raise ValueError("voice is invalid")
+
+    monkeypatch.setattr(audio, "_synthesize", invalid_synthesize)
+
+    cards = [{"L2_word": "fiets", "L2_cloze": ""}]
+    _, summary = audio.ensure_audio_for_cards(
+        cards,
+        provider="openai",
+        voice="test-voice",
+        include_word=True,
+        include_sentence=False,
+        cache={},
+        progress_cb=None,
+        instruction_payloads=None,
+        instruction_keys=None,
+        max_workers=1,
+        openai_client=object(),
+        openai_model="gpt-tts",
+        openai_fallback_model=None,
+    )
+
+    assert calls["count"] == 1
+    assert summary.word_success == 0
+    assert summary.clip_results[0].status == "failed"
+    assert "voice is invalid" in summary.clip_results[0].error
+
+
+def test_ensure_audio_elevenlabs_cache_hit_keeps_clip_status(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _set_temp_audio_cache(monkeypatch, tmp_path)
+    cache: dict[str, tuple[str, bytes]] = {}
+
+    calls = {"count": 0}
+
+    def fake_elevenlabs(*_, **__) -> bytes:
+        calls["count"] += 1
+        return b"eleven-data"
+
+    monkeypatch.setattr(audio, "_synthesize_elevenlabs", fake_elevenlabs)
+
+    cards_first = [{"L2_word": "aanraken", "L2_cloze": ""}]
+    audio.ensure_audio_for_cards(
+        cards_first,
+        provider="elevenlabs",
+        voice="voice-eleven",
+        include_word=True,
+        include_sentence=False,
+        cache=cache,
+        progress_cb=None,
+        instruction_payloads=None,
+        instruction_keys=None,
+        max_workers=1,
+        eleven_api_key="secret",
+        eleven_model="eleven_multilingual_v2",
+    )
+
+    def fail_elevenlabs(*_, **__) -> bytes:  # pragma: no cover - should never run on cache hit
+        raise AssertionError("ElevenLabs synth should not run on cache hit")
+
+    monkeypatch.setattr(audio, "_synthesize_elevenlabs", fail_elevenlabs)
+
+    cards_second = [{"L2_word": "aanraken", "L2_cloze": ""}]
+    _, summary_second = audio.ensure_audio_for_cards(
+        cards_second,
+        provider="elevenlabs",
+        voice="voice-eleven",
+        include_word=True,
+        include_sentence=False,
+        cache=cache,
+        progress_cb=None,
+        instruction_payloads=None,
+        instruction_keys=None,
+        max_workers=1,
+        eleven_api_key="secret",
+        eleven_model="eleven_multilingual_v2",
+    )
+
+    assert calls["count"] == 1
+    assert summary_second.cache_hits == 1
+    assert summary_second.word_success == 1
+    assert summary_second.clip_results[0].status == "cached"

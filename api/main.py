@@ -877,37 +877,71 @@ def api_tts(
         instruction_keys = {"word": word_key, "sentence": sentence_key}
         voice = payload.voice or (AUDIO_VOICES[0]["id"] if AUDIO_VOICES else "alloy")
 
-    media_map, summary = ensure_audio_for_cards(
-        cards,
-        provider=provider,
-        voice=voice,
-        include_word=include_word,
-        include_sentence=include_sentence,
-        instruction_payloads=instruction_payloads,
-        instruction_keys=instruction_keys,
-        openai_client=openai_client,
-        openai_model=(payload.model or AUDIO_TTS_MODEL) if provider == "openai" else None,
-        openai_fallback_model=AUDIO_TTS_FALLBACK if provider == "openai" else None,
-        eleven_api_key=eleven_api_key,
-        eleven_model=(payload.model or None) if provider == "elevenlabs" else None,
-        max_workers=4,
-    )
+    resolved_model = (payload.model or AUDIO_TTS_MODEL) if provider == "openai" else (payload.model or "eleven_multilingual_v2")
+    try:
+        media_map, summary = ensure_audio_for_cards(
+            cards,
+            provider=provider,
+            voice=voice,
+            include_word=include_word,
+            include_sentence=include_sentence,
+            instruction_payloads=instruction_payloads,
+            instruction_keys=instruction_keys,
+            openai_client=openai_client,
+            openai_model=resolved_model if provider == "openai" else None,
+            openai_fallback_model=AUDIO_TTS_FALLBACK if provider == "openai" else None,
+            eleven_api_key=eleven_api_key,
+            eleven_model=(payload.model or None) if provider == "elevenlabs" else None,
+            max_workers=4,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"TTS pipeline failed: {exc}") from exc
 
     # Build response audios
+    clip_map: Dict[tuple[int, str], Any] = {}
+    for clip in summary.clip_results:
+        key = (int(clip.card_index), str(clip.kind))
+        clip_map[key] = clip
+
     audios: List[TTSAudio] = []
-    for item, card in zip(payload.items, cards):
-        if item.type == "word":
-            sound_field = card.get("AudioWord", "")
-        else:
-            sound_field = card.get("AudioSentence", "")
-        filename = _extract_sound_filename(sound_field)
-        data = media_map.get(filename, b"")
+    for idx, (item, card) in enumerate(zip(payload.items, cards)):
+        clip = clip_map.get((idx, item.type))
+        status = str(getattr(clip, "status", "") or "").strip().lower()
+        if status not in {"ok", "failed", "cached"}:
+            status = "failed"
+
+        clip_error = str(getattr(clip, "error", "") or "").strip()
+        if status == "failed" and not clip_error:
+            if not (item.text or "").strip():
+                clip_error = "Text is empty."
+            else:
+                clip_error = "Audio synthesis did not return a clip."
+
+        filename = str(getattr(clip, "filename", "") or "").strip()
+        if not filename:
+            if item.type == "word":
+                sound_field = card.get("AudioWord", "")
+            else:
+                sound_field = card.get("AudioSentence", "")
+            filename = _extract_sound_filename(sound_field)
+        if not filename:
+            status = "failed"
+
+        data = media_map.get(filename, b"") if filename else b""
+        if status in {"ok", "cached"} and not data:
+            status = "failed"
+            if not clip_error:
+                clip_error = "Audio bytes are missing in media payload."
+
+        model_used = str(getattr(clip, "model", "") or "").strip() or resolved_model
         usage_entry = None
         # We approximate per-item audio chars by len(text)
-        if data:
+        if status in {"ok", "cached"} and data:
             usage_entry = UsageEvent(
                 provider=summary.provider or (payload.provider or "openai"),
-                model=payload.model or AUDIO_TTS_MODEL,
+                model=model_used,
                 audio_chars=len(item.text or ""),
                 audio_tokens=None,
                 seconds=None,
@@ -926,8 +960,10 @@ def api_tts(
             TTSAudio(
                 card_id=item.card_id,
                 type=item.type,
-                filename=filename,
+                status=status,
+                filename=filename or None,
                 audio_b64=base64.b64encode(data).decode("ascii") if data else None,
+                error=clip_error or None,
                 usage=usage_entry,
             )
         )
@@ -945,11 +981,25 @@ def api_tts(
                 audio_cost_total += est
             cost_by_model[model_name] = {"estimated_usd": est, "characters": chars}
 
+    ok_count = sum(1 for audio in audios if audio.status in {"ok", "cached"})
+    failed_count = sum(1 for audio in audios if audio.status == "failed")
+    cached_count = sum(1 for audio in audios if audio.status == "cached")
+    summary_errors: List[str] = []
+    for err in list(summary.errors or []):
+        text = str(err or "").strip()
+        if text and text not in summary_errors:
+            summary_errors.append(text)
+    for audio in audios:
+        if audio.status == "failed" and audio.error:
+            text = str(audio.error or "").strip()
+            if text and text not in summary_errors:
+                summary_errors.append(text)
+
     summary_block = TTSSummary(
-        ok=summary.word_success + summary.sentence_success,
-        failed=len(summary.errors or []),
-        cached=summary.cache_hits,
-        errors=list(summary.errors or []),
+        ok=ok_count,
+        failed=failed_count,
+        cached=cached_count,
+        errors=summary_errors,
         usage={"audio_chars": summary.total_characters},
         cost={"estimated_usd": round(audio_cost_total, 6) if audio_cost_total else None, "by_model": cost_by_model},
     )
@@ -983,7 +1033,7 @@ def api_tts(
     return TTSResponse(
         run_id=payload.run_id or "",
         provider=payload.provider,
-        model=payload.model or AUDIO_TTS_MODEL,
+        model=resolved_model,
         audios=audios,
         summary=summary_block,
     )

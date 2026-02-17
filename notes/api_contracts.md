@@ -105,6 +105,10 @@ Notes:
 }
 ```
 
+Notes:
+- `model` is optional. If omitted, server picks provider default.
+- Server applies a single automatic retry only for transient synthesis errors (`429/5xx/timeout`).
+
 **Response (200)**
 ```json
 {
@@ -115,8 +119,10 @@ Notes:
     {
       "card_id": "row-1",
       "type": "word",
+      "status": "ok",
       "filename": "word_voorbeeld__alloy__abcd1234.mp3",
       "audio_b64": "<base64 or omitted if served as file>",
+      "error": null,
       "usage": {
         "provider": "openai",
         "model": "gpt-4o-mini-tts-2025-12-15",
@@ -136,6 +142,11 @@ Notes:
   }
 }
 ```
+
+`status` meanings:
+- `ok`: generated in this run.
+- `cached`: reused from cache.
+- `failed`: synthesis failed; check per-clip `error` and `summary.errors`.
 
 ## Error envelope (shared)
 

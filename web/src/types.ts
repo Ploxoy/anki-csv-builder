@@ -120,8 +120,10 @@ export type TTSOptionsResponse = {
 export type TTSAudio = {
   card_id: string;
   type: TTSItemType;
-  filename: string;
+  status: "ok" | "failed" | "cached";
+  filename?: string | null;
   audio_b64?: string | null;
+  error?: string | null;
   usage?: UsageEvent | null;
 };
 

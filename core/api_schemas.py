@@ -267,8 +267,10 @@ class TTSOptionsResponse(BaseModel):
 class TTSAudio(BaseModel):
     card_id: str
     type: Literal["word", "sentence"]
-    filename: str
+    status: Literal["ok", "failed", "cached"]
+    filename: Optional[str] = None
     audio_b64: Optional[str] = None
+    error: Optional[str] = None
     usage: Optional[UsageEvent] = None
 
 
