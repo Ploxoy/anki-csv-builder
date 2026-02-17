@@ -76,6 +76,18 @@ body {
   background: linear-gradient(180deg, rgba(77, 214, 167, 0.22), rgba(77, 214, 167, 0.12));
   border-color: rgba(77, 214, 167, 0.35);
 }
+.btn.small {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.btn.tiny {
+  padding: 6px 9px;
+  font-size: 12px;
+}
+.btn.active {
+  border-color: rgba(77, 214, 167, 0.45);
+  background: rgba(77, 214, 167, 0.13);
+}
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -106,8 +118,8 @@ body {
 
 label span {
   display: block;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.82);
   margin-bottom: 6px;
 }
 
@@ -130,8 +142,16 @@ textarea {
 
 .hint {
   margin: 10px 0 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.hint.subtle {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.flow-hint {
+  margin-top: 0;
 }
 
 .info-banner {
@@ -140,12 +160,6 @@ textarea {
   border-radius: 10px;
   background: rgba(77, 214, 167, 0.08);
   margin-bottom: 10px;
-}
-
-.checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .tabs {
@@ -183,6 +197,10 @@ textarea {
   color: rgba(255, 255, 255, 0.85);
   background: rgba(255, 255, 255, 0.04);
 }
+.chip-danger {
+  border-color: rgba(255, 90, 107, 0.45);
+  color: rgba(255, 150, 160, 0.95);
+}
 
 .quick-toggles {
   display: flex;
@@ -202,10 +220,120 @@ textarea {
   cursor: pointer;
   font-size: 13px;
 }
+.toggle.disabled {
+  opacity: 0.6;
+}
 
 .toggle input {
   width: 16px;
   height: 16px;
+}
+
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 10px;
+}
+
+.result-filters {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.settings-section {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.settings-triad {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.settings-block {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 12px;
+  margin: 0;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.settings-block .grid {
+  gap: 10px;
+}
+
+.settings-section h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+label.checkbox-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+}
+
+label.checkbox-control input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+label.checkbox-control span {
+  display: inline;
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.settings-block > label.checkbox-control {
+  margin-top: 10px;
+}
+
+.secret-input {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.advanced {
+  margin-top: 10px;
+}
+
+.advanced summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.78);
+  margin-bottom: 8px;
+}
+
+.advanced[open] summary {
+  margin-bottom: 10px;
+}
+
+.disabled-control {
+  opacity: 0.65;
 }
 
 .warnings {
@@ -233,6 +361,9 @@ textarea {
 .empty {
   color: var(--muted);
   font-size: 13px;
+}
+.empty strong {
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .meta {
@@ -324,6 +455,14 @@ textarea {
 @media (max-width: 720px) {
   .grid {
     grid-template-columns: 1fr;
+  }
+  .input-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .secret-input {
+    flex-direction: column;
+    align-items: stretch;
   }
   .row {
     grid-template-columns: 88px 1fr;

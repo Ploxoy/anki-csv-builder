@@ -11,6 +11,15 @@ import {
   InviteCreateResponse
 } from "./types";
 
+type TabId = "generate" | "settings" | "admin";
+type ResultFilter = "all" | "errors" | "repaired";
+type TemperatureParseResult = {
+  ratio: number | null;
+  percent: number | null;
+  error: string | null;
+  usedLegacyScale: boolean;
+};
+
 type Settings = {
   apiBase: string; // keep for prod; in dev we can use Vite proxy with empty string
   xApiKey: string;
@@ -79,6 +88,48 @@ function shortJson(obj: unknown): string {
   }
 }
 
+function formatPercent(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(Math.round(rounded)) : String(rounded);
+}
+
+function temperatureToDisplayString(raw: number | null | undefined): string {
+  if (raw == null || !Number.isFinite(raw)) return "";
+  const normalized = raw <= 1 ? raw * 100 : raw;
+  return formatPercent(normalized);
+}
+
+function parseTemperatureValue(raw: string): TemperatureParseResult {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ratio: null, percent: null, error: null, usedLegacyScale: false };
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) {
+    return { ratio: null, percent: null, error: "Temperature must be a number between 0 and 100.", usedLegacyScale: false };
+  }
+
+  // Backward compatibility: old UI often stored decimal 0..1.
+  const looksLegacyDecimal = value > 0 && value < 1 && trimmed.includes(".");
+  if (looksLegacyDecimal) {
+    return {
+      ratio: value,
+      percent: value * 100,
+      error: null,
+      usedLegacyScale: true,
+    };
+  }
+
+  if (value < 0 || value > 100) {
+    return { ratio: null, percent: null, error: "Temperature must be in range 0..100.", usedLegacyScale: false };
+  }
+
+  return {
+    ratio: value / 100,
+    percent: value,
+    error: null,
+    usedLegacyScale: false,
+  };
+}
+
 export default function App() {
   const [settings, setSettings] = useState<Settings>(() => ({
     ...DEFAULT_SETTINGS,
@@ -97,19 +148,49 @@ export default function App() {
   const [newInvite, setNewInvite] = useState<InviteCreateResponse | null>(null);
   const [adminUsage, setAdminUsage] = useState<UsageListResponse | null>(null);
   const [adminBusy, setAdminBusy] = useState(false);
-  const [activeTab, setActiveTab] = useState<"generate" | "settings" | "admin">("generate");
+  const [activeTab, setActiveTab] = useState<TabId>("generate");
+  const [showUserToken, setShowUserToken] = useState(false);
+  const [showXApiKey, setShowXApiKey] = useState(false);
+  const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
 
   const deckPreview = useMemo(() => {
     const base = settings.defaultDeck?.trim() || "Deck";
     return `${base}.csv / ${base}.apkg`;
   }, [settings.defaultDeck]);
+  const parsed = useMemo(() => parseItems(inputText), [inputText]);
+  const adminEnabled = settings.xApiKey.trim().length > 0;
+  const canGenerateByInput = parsed.items.length > 0;
+  const temperatureState = useMemo(() => parseTemperatureValue(settings.temperature), [settings.temperature]);
+  const canGenerate = canGenerateByInput && !temperatureState.error;
 
   useEffect(() => {
     saveJson(SETTINGS_KEY, settings);
   }, [settings]);
 
-  const parsed = useMemo(() => parseItems(inputText), [inputText]);
   useEffect(() => setWarnings(parsed.warnings), [parsed.warnings]);
+
+  useEffect(() => {
+    setSettings((current) => {
+      const parsedTemp = parseTemperatureValue(current.temperature);
+      if (!parsedTemp.usedLegacyScale || parsedTemp.percent == null) return current;
+      const normalized = formatPercent(parsedTemp.percent);
+      if (normalized === current.temperature.trim()) return current;
+      return { ...current, temperature: normalized };
+    });
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "admin" && !adminEnabled) {
+      setActiveTab("settings");
+    }
+  }, [activeTab, adminEnabled]);
+
+  const filteredItems = useMemo(() => {
+    const items = response?.items || [];
+    if (resultFilter === "all") return items;
+    if (resultFilter === "repaired") return items.filter((it) => it.status === "repaired");
+    return items.filter((it) => it.status === "failed" || it.status === "flagged" || !!it.error);
+  }, [response, resultFilter]);
 
   function apiHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -142,7 +223,7 @@ export default function App() {
         audioProvider: payload.settings.audio_provider,
         audioModel: payload.settings.audio_model || "",
         audioVoice: payload.settings.audio_voice || "",
-        temperature: payload.settings.temperature != null ? String(payload.settings.temperature) : "",
+        temperature: temperatureToDisplayString(payload.settings.temperature),
         includeFlagged: payload.settings.force_generate_flagged,
         generateAudio: payload.settings.generate_audio,
         includeAudioWord: payload.settings.include_audio_word,
@@ -160,6 +241,11 @@ export default function App() {
   async function onSaveSettings() {
     setServerMsg("");
     setError("");
+    const tempParsed = parseTemperatureValue(settings.temperature);
+    if (tempParsed.error) {
+      setError(tempParsed.error);
+      return;
+    }
     try {
       const url = (settings.apiBase || "") + "/api/settings";
       const headers = apiHeaders();
@@ -174,7 +260,7 @@ export default function App() {
           audio_provider: settings.audioProvider,
           audio_model: settings.audioModel || null,
           audio_voice: settings.audioVoice || null,
-          temperature: settings.temperature ? Number(settings.temperature) : null,
+          temperature: tempParsed.ratio,
           max_output_tokens: null,
           force_generate_flagged: settings.includeFlagged,
           generate_audio: settings.generateAudio,
@@ -318,6 +404,11 @@ export default function App() {
   }
 
   async function onGenerate() {
+    const tempParsed = parseTemperatureValue(settings.temperature);
+    if (tempParsed.error) {
+      setError(tempParsed.error);
+      return;
+    }
     setBusy(true);
     setError("");
     setResponse(null);
@@ -332,6 +423,7 @@ export default function App() {
         cefr: settings.cefr,
         profile: settings.profile,
         l1: settings.l1,
+        temperature: tempParsed.ratio,
         items: parsed.items
       };
 
@@ -359,11 +451,13 @@ export default function App() {
           <div className="title">Doedutch</div>
           <div className="subtitle">Minimal UI (React + Vite)</div>
         </div>
-        <div className="actions">
-          <button className="btn primary" onClick={onGenerate} disabled={busy || parsed.items.length === 0}>
-            {busy ? "Generating..." : "Generate"}
-          </button>
-        </div>
+        {activeTab === "generate" && (
+          <div className="actions">
+            <button className="btn primary" onClick={onGenerate} disabled={busy || !canGenerate}>
+              {busy ? "Generating..." : `Generate (${parsed.items.length})`}
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="tabs">
@@ -373,9 +467,11 @@ export default function App() {
         <button className={`tab ${activeTab === "settings" ? "active" : ""}`} onClick={() => setActiveTab("settings")}>
           Settings
         </button>
-        <button className={`tab ${activeTab === "admin" ? "active" : ""}`} onClick={() => setActiveTab("admin")}>
-          Admin
-        </button>
+        {adminEnabled && (
+          <button className={`tab ${activeTab === "admin" ? "active" : ""}`} onClick={() => setActiveTab("admin")}>
+            Admin
+          </button>
+        )}
       </div>
 
       {serverMsg && <p className="hint info-banner">{serverMsg}</p>}
@@ -386,7 +482,9 @@ export default function App() {
             <h2>Quick setup</h2>
             <div className="chips">
               <span className="chip">Model: {settings.model}</span>
-              <span className="chip">Temp: {settings.temperature || "default"}</span>
+              <span className={`chip ${temperatureState.error ? "chip-danger" : ""}`}>
+                Temp: {temperatureState.percent != null ? `${formatPercent(temperatureState.percent)}%` : "default"}
+              </span>
               <span className="chip">CEFR: {settings.cefr}</span>
               <span className="chip">Profile: {settings.profile}</span>
               <span className="chip">Audio: {settings.audioProvider}</span>
@@ -401,7 +499,7 @@ export default function App() {
                 />
                 <span>Generate audio</span>
               </label>
-              <label className="toggle">
+              <label className={`toggle ${!settings.generateAudio ? "disabled" : ""}`}>
                 <input
                   type="checkbox"
                   checked={settings.includeAudioWord}
@@ -410,7 +508,7 @@ export default function App() {
                 />
                 <span>Audio: word</span>
               </label>
-              <label className="toggle">
+              <label className={`toggle ${!settings.generateAudio ? "disabled" : ""}`}>
                 <input
                   type="checkbox"
                   checked={settings.includeAudioSentence}
@@ -444,6 +542,9 @@ export default function App() {
                 <span>Force flagged</span>
               </label>
             </div>
+            {!settings.generateAudio && (
+              <p className="hint subtle">Enable “Generate audio” to use word/sentence audio options.</p>
+            )}
             <div className="meta">
               <div>
                 <span className="k">Deck preview</span> {deckPreview}
@@ -461,6 +562,19 @@ export default function App() {
 
           <section className="card">
             <h2>Input</h2>
+            <p className="hint flow-hint">
+              1. Paste your rows. 2. Click Generate. 3. Review errors/repaired items below.
+            </p>
+            <div className="input-toolbar">
+              <div className="meta">
+                <div>
+                  <span className="k">rows parsed</span> {parsed.items.length}
+                </div>
+              </div>
+              <button className="btn primary" onClick={onGenerate} disabled={busy || !canGenerate}>
+                {busy ? "Generating..." : `Generate (${parsed.items.length})`}
+              </button>
+            </div>
             <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} rows={6} />
             {warnings.length > 0 && (
               <div className="warnings">
@@ -471,13 +585,33 @@ export default function App() {
                 ))}
               </div>
             )}
-            <p className="hint">Accepted formats per line: TSV, `woord ;; def ;; translation`, `woord — def — translation`.</p>
+            {temperatureState.error && <div className="warning">{temperatureState.error}</div>}
+            <p className="hint">
+              Accepted formats per line: TSV, `woord ;; def ;; translation`, `woord — def — translation`.
+            </p>
           </section>
 
           <section className="card">
             <h2>Result</h2>
+            {response && (
+              <div className="result-filters">
+                <button className={`btn small ${resultFilter === "all" ? "active" : ""}`} onClick={() => setResultFilter("all")}>
+                  All
+                </button>
+                <button className={`btn small ${resultFilter === "errors" ? "active" : ""}`} onClick={() => setResultFilter("errors")}>
+                  Errors
+                </button>
+                <button className={`btn small ${resultFilter === "repaired" ? "active" : ""}`} onClick={() => setResultFilter("repaired")}>
+                  Repaired
+                </button>
+              </div>
+            )}
             {error && <div className="error">{error}</div>}
-            {!error && !response && <div className="empty">No response yet.</div>}
+            {!error && !response && (
+              <div className="empty">
+                No generation yet. Add at least one row in Input, then click <strong>Generate</strong>.
+              </div>
+            )}
             {response && (
               <div className="result">
                 <div className="meta">
@@ -490,9 +624,13 @@ export default function App() {
                   <div>
                     <span className="k">items</span> {response.items.length}
                   </div>
+                  <div>
+                    <span className="k">shown</span> {filteredItems.length}
+                  </div>
                 </div>
                 <div className="table">
-                  {response.items.map((it) => (
+                  {filteredItems.length === 0 && <div className="empty">No rows match the selected filter.</div>}
+                  {filteredItems.map((it) => (
                     <div key={it.id} className="row">
                       <div className={"status " + it.status}>{it.status}</div>
                       <div className="id">#{it.id}</div>
@@ -548,176 +686,210 @@ export default function App() {
       {activeTab === "settings" && (
         <section className="card">
           <h2>Settings</h2>
-          <div className="grid">
-            <label>
-              <span>API base</span>
-              <input
-                value={settings.apiBase}
-                onChange={(e) => setSettings((s) => ({ ...s, apiBase: e.target.value }))}
-                placeholder="(empty = use Vite proxy)"
-              />
-            </label>
-            <label>
-              <span>X-API-Key (dev only)</span>
-              <input
-                value={settings.xApiKey}
-                onChange={(e) => setSettings((s) => ({ ...s, xApiKey: e.target.value }))}
-                placeholder="API_SHARED_SECRET"
-              />
-            </label>
-            <label>
-              <span>Invite token (Phase 0.5)</span>
-              <input
-                value={settings.userToken}
-                onChange={(e) => setSettings((s) => ({ ...s, userToken: e.target.value }))}
-                placeholder="paste token from /api/admin/invite"
-              />
-            </label>
-            <label>
-              <span>Model</span>
-              <input value={settings.model} onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))} />
-            </label>
-            <label>
-              <span>TTS provider</span>
-              <input
-                value={settings.audioProvider}
-                onChange={(e) => setSettings((s) => ({ ...s, audioProvider: e.target.value }))}
-                placeholder="openai|elevenlabs"
-              />
-            </label>
-            <label>
-              <span>TTS model</span>
-              <input
-                value={settings.audioModel}
-                onChange={(e) => setSettings((s) => ({ ...s, audioModel: e.target.value }))}
-                placeholder="gpt-4o-mini-tts-... / elevenlabs id"
-              />
-            </label>
-            <label>
-              <span>TTS voice</span>
-              <input
-                value={settings.audioVoice}
-                onChange={(e) => setSettings((s) => ({ ...s, audioVoice: e.target.value }))}
-                placeholder="alloy / elevenlabs voice id"
-              />
-            </label>
-            <label>
-              <span>Temperature</span>
-              <input
-                type="number"
-                step="0.1"
-                min="0"
-                max="2"
-                value={settings.temperature}
-                onChange={(e) => setSettings((s) => ({ ...s, temperature: e.target.value }))}
-                placeholder="empty = model default"
-              />
-            </label>
-            <label>
-              <span>Force generate for flagged entries</span>
-              <div className="checkbox-row">
+          <div className="settings-section">
+            <h3>Access</h3>
+            <div className="grid">
+              <label>
+                <span>Invite token (beta)</span>
+                <div className="secret-input">
+                  <input
+                    type={showUserToken ? "text" : "password"}
+                    value={settings.userToken}
+                    onChange={(e) => setSettings((s) => ({ ...s, userToken: e.target.value }))}
+                    placeholder="paste token from /api/admin/invite"
+                  />
+                  <button type="button" className="btn tiny" onClick={() => setShowUserToken((v) => !v)}>
+                    {showUserToken ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </label>
+            </div>
+            <details className="advanced">
+              <summary>Advanced access (dev/admin)</summary>
+              <div className="grid">
+                <label>
+                  <span>API base</span>
+                  <input
+                    value={settings.apiBase}
+                    onChange={(e) => setSettings((s) => ({ ...s, apiBase: e.target.value }))}
+                    placeholder="(empty = use Vite proxy)"
+                  />
+                </label>
+                <label>
+                  <span>X-API-Key (admin only)</span>
+                  <div className="secret-input">
+                    <input
+                      type={showXApiKey ? "text" : "password"}
+                      value={settings.xApiKey}
+                      onChange={(e) => setSettings((s) => ({ ...s, xApiKey: e.target.value }))}
+                      placeholder="API_SHARED_SECRET"
+                    />
+                    <button type="button" className="btn tiny" onClick={() => setShowXApiKey((v) => !v)}>
+                      {showXApiKey ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </label>
+              </div>
+            </details>
+            {!adminEnabled && <p className="hint subtle">Add X-API-Key in Advanced access to unlock the Admin tab.</p>}
+          </div>
+
+          <div className="settings-triad">
+            <div className="settings-section settings-block">
+              <h3>Generation</h3>
+              <div className="grid">
+                <label>
+                  <span>Model</span>
+                  <input value={settings.model} onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))} />
+                </label>
+                <label>
+                  <span>Temperature (%) 0..100</span>
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    max="100"
+                    value={settings.temperature}
+                    onChange={(e) => setSettings((s) => ({ ...s, temperature: e.target.value }))}
+                    placeholder="empty = model default"
+                  />
+                </label>
+                <label>
+                  <span>CEFR</span>
+                  <select value={settings.cefr} onChange={(e) => setSettings((s) => ({ ...s, cefr: e.target.value }))}>
+                    <option value="A1">A1</option>
+                    <option value="A2">A2</option>
+                    <option value="B1">B1</option>
+                    <option value="B2">B2</option>
+                    <option value="C1">C1</option>
+                    <option value="C2">C2</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Profile</span>
+                  <select value={settings.profile} onChange={(e) => setSettings((s) => ({ ...s, profile: e.target.value }))}>
+                    <option value="strict">strict</option>
+                    <option value="balanced">balanced</option>
+                    <option value="exam">exam</option>
+                    <option value="creative">creative</option>
+                  </select>
+                </label>
+                <label>
+                  <span>L1</span>
+                  <select value={settings.l1} onChange={(e) => setSettings((s) => ({ ...s, l1: e.target.value }))}>
+                    <option value="EN">EN</option>
+                    <option value="RU">RU</option>
+                    <option value="ES">ES</option>
+                    <option value="DE">DE</option>
+                  </select>
+                </label>
+              </div>
+              <label className="checkbox-control">
                 <input
                   type="checkbox"
                   checked={settings.includeFlagged}
                   onChange={(e) => setSettings((s) => ({ ...s, includeFlagged: e.target.checked }))}
                 />
-                <span>{settings.includeFlagged ? "Enabled" : "Disabled"}</span>
+                <span>Force generate flagged rows</span>
+              </label>
+              {temperatureState.error && <div className="warning">{temperatureState.error}</div>}
+              {temperatureState.usedLegacyScale && (
+                <p className="hint subtle">Legacy decimal detected and auto-converted (e.g. 0.8 → 80%).</p>
+              )}
+            </div>
+
+            <div className="settings-section settings-block">
+              <h3>Audio</h3>
+              <div className="checkbox-group">
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={settings.generateAudio}
+                    onChange={(e) => setSettings((s) => ({ ...s, generateAudio: e.target.checked }))}
+                  />
+                  <span>Generate audio</span>
+                </label>
+                <label className={`checkbox-control ${!settings.generateAudio ? "disabled-control" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={settings.includeAudioWord}
+                    disabled={!settings.generateAudio}
+                    onChange={(e) => setSettings((s) => ({ ...s, includeAudioWord: e.target.checked }))}
+                  />
+                  <span>Include audio: word</span>
+                </label>
+                <label className={`checkbox-control ${!settings.generateAudio ? "disabled-control" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={settings.includeAudioSentence}
+                    disabled={!settings.generateAudio}
+                    onChange={(e) => setSettings((s) => ({ ...s, includeAudioSentence: e.target.checked }))}
+                  />
+                  <span>Include audio: sentence</span>
+                </label>
               </div>
-            </label>
-            <label>
-              <span>Generate audio</span>
-              <div className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.generateAudio}
-                  onChange={(e) => setSettings((s) => ({ ...s, generateAudio: e.target.checked }))}
-                />
-                <span>{settings.generateAudio ? "Yes" : "No"}</span>
+              <div className="grid">
+                <label>
+                  <span>TTS provider</span>
+                  <input
+                    value={settings.audioProvider}
+                    onChange={(e) => setSettings((s) => ({ ...s, audioProvider: e.target.value }))}
+                    placeholder="openai|elevenlabs"
+                  />
+                </label>
+                <label>
+                  <span>TTS model</span>
+                  <input
+                    value={settings.audioModel}
+                    onChange={(e) => setSettings((s) => ({ ...s, audioModel: e.target.value }))}
+                    placeholder="gpt-4o-mini-tts-... / elevenlabs id"
+                  />
+                </label>
+                <label>
+                  <span>TTS voice</span>
+                  <input
+                    value={settings.audioVoice}
+                    onChange={(e) => setSettings((s) => ({ ...s, audioVoice: e.target.value }))}
+                    placeholder="alloy / elevenlabs voice id"
+                  />
+                </label>
               </div>
-            </label>
-            <label>
-              <span>Include audio: word</span>
-              <div className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.includeAudioWord}
-                  disabled={!settings.generateAudio}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeAudioWord: e.target.checked }))}
-                />
-                <span>{settings.includeAudioWord ? "On" : "Off"}</span>
+              {!settings.generateAudio && (
+                <p className="hint subtle">Audio word/sentence options are disabled until “Generate audio” is enabled.</p>
+              )}
+            </div>
+
+            <div className="settings-section settings-block">
+              <h3>Export</h3>
+              <div className="checkbox-group">
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={settings.includeBasicReversed}
+                    onChange={(e) => setSettings((s) => ({ ...s, includeBasicReversed: e.target.checked }))}
+                  />
+                  <span>Include basic (reversed)</span>
+                </label>
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={settings.includeBasicTypein}
+                    onChange={(e) => setSettings((s) => ({ ...s, includeBasicTypein: e.target.checked }))}
+                  />
+                  <span>Include basic (type-in)</span>
+                </label>
               </div>
-            </label>
-            <label>
-              <span>Include audio: sentence</span>
-              <div className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.includeAudioSentence}
-                  disabled={!settings.generateAudio}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeAudioSentence: e.target.checked }))}
-                />
-                <span>{settings.includeAudioSentence ? "On" : "Off"}</span>
+              <div className="grid">
+                <label>
+                  <span>Default deck name (CSV/APKG filename)</span>
+                  <input
+                    value={settings.defaultDeck}
+                    onChange={(e) => setSettings((s) => ({ ...s, defaultDeck: e.target.value }))}
+                    placeholder="e.g., Dutch"
+                  />
+                </label>
               </div>
-            </label>
-            <label>
-              <span>Include basic (reversed card)</span>
-              <div className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.includeBasicReversed}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeBasicReversed: e.target.checked }))}
-                />
-                <span>{settings.includeBasicReversed ? "Yes" : "No"}</span>
-              </div>
-            </label>
-            <label>
-              <span>Include basic (type the answer)</span>
-              <div className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.includeBasicTypein}
-                  onChange={(e) => setSettings((s) => ({ ...s, includeBasicTypein: e.target.checked }))}
-                />
-                <span>{settings.includeBasicTypein ? "Yes" : "No"}</span>
-              </div>
-            </label>
-            <label>
-              <span>Default deck name (CSV/APKG filename)</span>
-              <input
-                value={settings.defaultDeck}
-                onChange={(e) => setSettings((s) => ({ ...s, defaultDeck: e.target.value }))}
-                placeholder="e.g., Dutch"
-              />
-            </label>
-            <label>
-              <span>CEFR</span>
-              <select value={settings.cefr} onChange={(e) => setSettings((s) => ({ ...s, cefr: e.target.value }))}>
-                <option value="A1">A1</option>
-                <option value="A2">A2</option>
-                <option value="B1">B1</option>
-                <option value="B2">B2</option>
-                <option value="C1">C1</option>
-                <option value="C2">C2</option>
-              </select>
-            </label>
-            <label>
-              <span>Profile</span>
-              <select value={settings.profile} onChange={(e) => setSettings((s) => ({ ...s, profile: e.target.value }))}>
-                <option value="strict">strict</option>
-                <option value="balanced">balanced</option>
-                <option value="exam">exam</option>
-                <option value="creative">creative</option>
-              </select>
-            </label>
-            <label>
-              <span>L1</span>
-              <select value={settings.l1} onChange={(e) => setSettings((s) => ({ ...s, l1: e.target.value }))}>
-                <option value="EN">EN</option>
-                <option value="RU">RU</option>
-                <option value="ES">ES</option>
-                <option value="DE">DE</option>
-              </select>
-            </label>
+            </div>
           </div>
           <div className="actions">
             <button className="btn" onClick={onLoadSettings} disabled={busy}>
@@ -731,8 +903,7 @@ export default function App() {
             </button>
           </div>
           <p className="hint">
-            Dev tip: leave API base empty and run the dev server with proxy to avoid CORS. For beta, use an invite token
-            (recommended). X-API-Key is admin/legacy-only.
+            Leave API base empty and run the dev server with proxy to avoid CORS. For beta, use an invite token.
           </p>
         </section>
       )}
