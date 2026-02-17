@@ -1,6 +1,10 @@
 # Vision 2.0 — Doedutch / Anki CSV Builder (Productized)
 
-*(product vision & migration plan — last updated: 2025-12-21)*
+*(product vision & migration plan — last updated: 2026-02-17)*
+
+Status note (2026-02-17):
+- Phase 0.5 baseline (invite-token auth + persisted settings + usage view) is already implemented in `api/main.py` and `web/`.
+- FastAPI remains the active API stack.
 
 ## 1) What we are building
 

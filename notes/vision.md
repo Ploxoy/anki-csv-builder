@@ -1,6 +1,10 @@
 # Vision — Doedutch / Anki CSV Builder (KISS)
 
-*(technical working doc — last updated: 2025-12-21)*
+*(technical working doc — last updated: 2026-02-17)*
+
+Status note (2026-02-17):
+- This document contains legacy planning sections from the pre-API stage.
+- Current source of truth for active status/roadmap is `notes/status.md` and `notes/tasks.md`.
 
 > Product vision and the migration plan to the next version live in `notes/vision_v2.md`.
 

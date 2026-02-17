@@ -1,6 +1,6 @@
 # API Contracts (Phase 0 targets)
 
-*(draft — align with Vision 2.0, last updated: 2025-12-21)*
+*(draft — align with Vision 2.0, last updated: 2026-02-17)*
 
 ## Auth (Phase 0)
 
