@@ -142,6 +142,52 @@ Note about `DATABASE_URL`:
 docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build db api
 ```
 
+### Synology DS224+ (Container Manager)
+
+There is a dedicated NAS deployment bundle:
+
+- `deploy/synology/docker-compose.synology.yml`
+- `deploy/synology/.env.example`
+- `deploy/synology/README.md`
+- `deploy/synology/REVERSE_PROXY.md`
+- `deploy/synology/RUNBOOK_192.168.2.123.md` (personal checklist)
+- `deploy/synology/scripts/*` (prepare / validate / smoke / update)
+
+Quick start (from NAS SSH shell):
+
+```bash
+cd /volume1/docker/anki-csv-builder/app
+git pull --ff-only
+bash deploy/synology/scripts/prepare.sh
+bash deploy/synology/scripts/validate_env.sh
+```
+
+Deploy from DSM UI:
+1. `Container Manager -> Project -> Create`
+2. Compose file: `/volume1/docker/anki-csv-builder/app/deploy/synology/docker-compose.synology.yml`
+3. Env file: `/volume1/docker/anki-csv-builder/app/deploy/synology/.env`
+4. `Deploy`
+
+Smoke check:
+
+```bash
+bash deploy/synology/scripts/smoke.sh
+```
+
+Updates:
+
+```bash
+bash deploy/synology/scripts/update.sh
+```
+
+CLI alternative:
+
+```bash
+cp deploy/synology/.env.example deploy/synology/.env
+# fill secrets in deploy/synology/.env
+docker compose -f deploy/synology/docker-compose.synology.yml --env-file deploy/synology/.env up -d --build
+```
+
 ## Minimal Web UI (React + Vite)
 
 The minimal UI lives in `web/` and calls the FastAPI service.
