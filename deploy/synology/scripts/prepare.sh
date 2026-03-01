@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 ENV_TEMPLATE="${ROOT_DIR}/deploy/synology/.env.example"
 ENV_FILE="${ROOT_DIR}/deploy/synology/.env"
+DEFAULT_SYNO_BASE_PATH="/volume1/docker/anki-csv-builder"
 
 read_env_var() {
   local file="$1"
@@ -17,26 +18,51 @@ read_env_var() {
   printf '%s' "$value"
 }
 
-if [[ ! -f "$ENV_TEMPLATE" ]]; then
-  echo "ERROR: missing env template: $ENV_TEMPLATE" >&2
-  exit 1
-fi
-
 if [[ ! -f "$ENV_FILE" ]]; then
-  cp "$ENV_TEMPLATE" "$ENV_FILE"
-  echo "Created ${ENV_FILE} from template."
+  if [[ -f "$ENV_TEMPLATE" ]]; then
+    cp "$ENV_TEMPLATE" "$ENV_FILE"
+    echo "Created ${ENV_FILE} from template."
+  else
+    cat >"$ENV_FILE" <<EOF
+# Base path on Synology shared folder (create it first)
+SYNO_BASE_PATH=${DEFAULT_SYNO_BASE_PATH}
+
+# Optional helper value for smoke checks (can stay empty)
+# NAS_IP=192.168.1.20
+
+# Service ports exposed from NAS
+API_PORT=8000
+WEB_PORT=5173
+
+# Postgres
+POSTGRES_DB=ankicards
+POSTGRES_USER=ankicards
+POSTGRES_PASSWORD=change-this-db-password
+
+# API auth
+API_REQUIRE_SHARED_SECRET=1
+API_SHARED_SECRET=change-this-admin-secret
+
+# Provider keys (server-side only)
+OPENAI_API_KEY=sk-...
+ELEVENLABS_API_KEY=
+EOF
+    echo "Template missing; created ${ENV_FILE} from built-in defaults."
+  fi
 else
   echo "Using existing ${ENV_FILE}."
 fi
 
 SYNO_BASE_PATH="$(read_env_var "$ENV_FILE" "SYNO_BASE_PATH")"
 if [[ -z "$SYNO_BASE_PATH" ]]; then
-  SYNO_BASE_PATH="$(read_env_var "$ENV_TEMPLATE" "SYNO_BASE_PATH")"
+  if [[ -f "$ENV_TEMPLATE" ]]; then
+    SYNO_BASE_PATH="$(read_env_var "$ENV_TEMPLATE" "SYNO_BASE_PATH")"
+  fi
 fi
 
 if [[ -z "$SYNO_BASE_PATH" ]]; then
-  echo "ERROR: SYNO_BASE_PATH is empty in ${ENV_FILE}" >&2
-  exit 1
+  SYNO_BASE_PATH="$DEFAULT_SYNO_BASE_PATH"
+  echo "WARN: SYNO_BASE_PATH is empty, using default ${DEFAULT_SYNO_BASE_PATH}"
 fi
 
 mkdir -p "${SYNO_BASE_PATH}/pgdata" "${SYNO_BASE_PATH}/cache" "${SYNO_BASE_PATH}/logs"
