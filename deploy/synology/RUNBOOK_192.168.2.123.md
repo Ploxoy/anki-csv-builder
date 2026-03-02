@@ -95,7 +95,54 @@ What `update.sh` does:
 2. `docker compose ... up -d --build`
 3. post-update smoke check
 
-## 5) Quick diagnostics
+## 5) Gentle mode (reduce idle activity)
+
+Edit:
+
+```bash
+cd /volume1/docker/anki-csv-builder/app
+vi deploy/synology/.env
+```
+
+Recommended values:
+
+```env
+DOCKER_LOG_MAX_SIZE=10m
+DOCKER_LOG_MAX_FILE=3
+DB_HEALTHCHECK_INTERVAL=180s
+API_HEALTHCHECK_INTERVAL=240s
+```
+
+Apply:
+
+```bash
+docker compose -f deploy/synology/docker-compose.synology.yml --env-file deploy/synology/.env up -d
+```
+
+## 6) Sleep mode
+
+Warm sleep (DB stays up):
+
+```bash
+cd /volume1/docker/anki-csv-builder/app
+bash deploy/synology/scripts/sleep.sh warm
+```
+
+Deep sleep (all containers stopped):
+
+```bash
+bash deploy/synology/scripts/sleep.sh deep
+```
+
+Wake:
+
+```bash
+bash deploy/synology/scripts/wake.sh
+```
+
+For automation, schedule these commands in DSM Task Scheduler.
+
+## 7) Quick diagnostics
 
 On NAS:
 
@@ -110,7 +157,7 @@ Common fixes:
 - API errors with running containers: verify `OPENAI_API_KEY` and `API_SHARED_SECRET`.
 - DB not healthy: verify `POSTGRES_PASSWORD` and write permissions on `/volume1/docker/anki-csv-builder/pgdata`.
 
-## 6) Stage 2 (later, internet access)
+## 8) Stage 2 (later, internet access)
 
 After LAN is stable, configure reverse proxy + TLS:
 - `deploy/synology/REVERSE_PROXY.md`

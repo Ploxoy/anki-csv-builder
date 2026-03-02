@@ -91,7 +91,48 @@ UI smoke scenario:
 2. add 1-2 words,
 3. run `Generate -> Preview -> Export CSV`.
 
-## 6) Update cycle (`git pull`)
+## 6) Gentle mode (lower NAS background activity)
+
+This stack is tuned for NAS-friendly defaults:
+- API access logs are disabled (`uvicorn --no-access-log`),
+- docker logs are rotated (`DOCKER_LOG_MAX_SIZE`, `DOCKER_LOG_MAX_FILE`),
+- healthchecks are less frequent (`DB_HEALTHCHECK_*`, `API_HEALTHCHECK_*`).
+
+You can tune these in `deploy/synology/.env`.
+
+For even quieter behavior, increase:
+- `DB_HEALTHCHECK_INTERVAL` (for example `180s`),
+- `API_HEALTHCHECK_INTERVAL` (for example `240s`).
+
+Then apply changes:
+
+```bash
+docker compose -f deploy/synology/docker-compose.synology.yml --env-file deploy/synology/.env up -d
+```
+
+## 7) Sleep mode (manual or scheduled)
+
+Warm sleep (keep DB running, stop API+Web):
+
+```bash
+bash deploy/synology/scripts/sleep.sh warm
+```
+
+Deep sleep (stop all services):
+
+```bash
+bash deploy/synology/scripts/sleep.sh deep
+```
+
+Wake up:
+
+```bash
+bash deploy/synology/scripts/wake.sh
+```
+
+Tip: run these scripts from DSM Task Scheduler for night/off-hours.
+
+## 8) Update cycle (`git pull`)
 
 From NAS repo root:
 
@@ -109,7 +150,7 @@ If you prefer manual update in DSM UI:
 2. in Project: Rebuild/Update,
 3. run smoke check again.
 
-## 7) Acceptance checklist
+## 9) Acceptance checklist
 
 - Cold start: `db`, `api`, `web` all running.
 - Health: `/health` is reachable after container restart.
@@ -118,7 +159,7 @@ If you prefer manual update in DSM UI:
 - Secrets sanity: wrong `OPENAI_API_KEY` does not crash containers, only generation fails.
 - Update path: `git pull` + rebuild works with no manual compose edits.
 
-## 8) Troubleshooting
+## 10) Troubleshooting
 
 - Ports busy (`5173` / `8000`):
   - change `WEB_PORT` / `API_PORT` in `deploy/synology/.env`, redeploy.
@@ -129,7 +170,7 @@ If you prefer manual update in DSM UI:
   - verify `POSTGRES_PASSWORD`,
   - verify write access to `${SYNO_BASE_PATH}/pgdata`.
 
-## 9) Stage 2: internet access (later)
+## 11) Stage 2: internet access (later)
 
 When LAN deployment is stable, follow:
 - [`REVERSE_PROXY.md`](./REVERSE_PROXY.md)

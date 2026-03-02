@@ -159,7 +159,7 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 - `deploy/synology/README.md`
 - `deploy/synology/REVERSE_PROXY.md`
 - `deploy/synology/RUNBOOK_192.168.2.123.md` (персональный чеклист)
-- `deploy/synology/scripts/*` (prepare / validate / smoke / update)
+- `deploy/synology/scripts/*` (prepare / validate / smoke / update / sleep / wake)
 
 Быстрый запуск (через SSH на NAS):
 

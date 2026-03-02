@@ -151,7 +151,7 @@ There is a dedicated NAS deployment bundle:
 - `deploy/synology/README.md`
 - `deploy/synology/REVERSE_PROXY.md`
 - `deploy/synology/RUNBOOK_192.168.2.123.md` (personal checklist)
-- `deploy/synology/scripts/*` (prepare / validate / smoke / update)
+- `deploy/synology/scripts/*` (prepare / validate / smoke / update / sleep / wake)
 
 Quick start (from NAS SSH shell):
 
