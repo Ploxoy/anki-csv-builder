@@ -50,6 +50,7 @@ Required values in `deploy/synology/.env`:
 
 Optional:
 - `ELEVENLABS_API_KEY`
+- `PUBLIC_DOMAIN` / `ASUS_DDNS_HOST` (Stage 2 internet access)
 
 ## 4) Deploy via DSM Container Manager (UI path)
 
@@ -174,5 +175,10 @@ If you prefer manual update in DSM UI:
 
 When LAN deployment is stable, follow:
 - [`REVERSE_PROXY.md`](./REVERSE_PROXY.md)
+- [`CLOUDFLARE_TUNNEL.md`](./CLOUDFLARE_TUNNEL.md) (fallback for CGNAT)
 
-This covers DSM reverse proxy, Let's Encrypt TLS, and exposure hardening.
+Useful helper scripts:
+- `bash deploy/synology/scripts/check_wan_mode.sh <WAN_IP_FROM_ASUS>`
+- `bash deploy/synology/scripts/check_public_endpoints.sh app.doedutch.nl`
+
+This covers gate check (public IPv4 vs CGNAT), DSM reverse proxy, Let's Encrypt TLS, and exposure hardening.

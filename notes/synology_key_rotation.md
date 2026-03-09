@@ -27,7 +27,7 @@ docker compose -f deploy/synology/docker-compose.synology.yml --env-file deploy/
 4. Проверить health и логи:
 
 ```bash
-curl -fsS http://192.168.2.123:8000/health
+curl -fsS http://192.168.2.10:8000/health
 docker compose -f deploy/synology/docker-compose.synology.yml --env-file deploy/synology/.env logs --tail=100 api
 ```
 

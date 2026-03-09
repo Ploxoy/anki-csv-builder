@@ -355,24 +355,26 @@ def _filter_text_models(model_ids: List[str]) -> List[str]:
 
 
 def _filter_openai_tts_models(model_ids: List[str]) -> List[str]:
-    ids: List[str] = []
+    discovered: List[str] = []
     for mid in model_ids:
         low = mid.lower()
         if "tts" not in low:
             continue
         if any(blocked in low for blocked in ("transcribe", "whisper", "realtime", "asr")):
             continue
-        ids.append(mid)
+        discovered.append(mid)
 
-    ordered: List[str] = []
+    discovered_unique = sorted(set(discovered))
+    if discovered_unique:
+        return discovered_unique
+
+    # Fallback only when dynamic model listing is unavailable.
+    fallback: List[str] = []
     for value in [AUDIO_TTS_MODEL, AUDIO_TTS_FALLBACK, "gpt-4o-mini-tts", "gpt-4o-tts", "tts-1", "tts-1-hd"]:
         clean = (value or "").strip()
-        if clean and clean not in ordered:
-            ordered.append(clean)
-    for mid in sorted(set(ids)):
-        if mid not in ordered:
-            ordered.append(mid)
-    return ordered
+        if clean and clean not in fallback:
+            fallback.append(clean)
+    return fallback
 
 
 @app.get("/health")

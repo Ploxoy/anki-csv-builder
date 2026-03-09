@@ -119,6 +119,7 @@ function mapServerSettings(base: Settings, payload: UserSettingsResponse): Setti
 }
 
 const STARTER_INPUT = "aanraken\tiets voelen\tto touch\nbegrijpen\tsnappen wat iets betekent\tto understand";
+const TTS_OPTIONS_AUTO_REFRESH_MS = 3 * 60 * 1000;
 
 export default function App() {
   const loadedSettings = useMemo<Settings>(() => ({ ...DEFAULT_SETTINGS, ...loadJson(SETTINGS_KEY, DEFAULT_SETTINGS) }), []);
@@ -143,6 +144,7 @@ export default function App() {
   const [audioRunSummary, setAudioRunSummary] = useState<AudioRunSummary | null>(null);
   const [ttsOptions, setTtsOptions] = useState<TTSOptionsResponse | null>(null);
   const [ttsOptionsBusy, setTtsOptionsBusy] = useState(false);
+  const [ttsOptionsLoadedAt, setTtsOptionsLoadedAt] = useState<number | null>(null);
   const [notices, setNotices] = useState<ScopedNotices>({
     generate: { ...EMPTY_NOTICES.generate },
     settings: { ...EMPTY_NOTICES.settings },
@@ -296,6 +298,18 @@ export default function App() {
     void onLoadTtsOptions(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.userToken, settings.apiBase]);
+
+  useEffect(() => {
+    if (!settings.userToken.trim()) return;
+    if (ttsOptionsBusy) return;
+    const ageMs = ttsOptionsLoadedAt == null ? Number.POSITIVE_INFINITY : Date.now() - ttsOptionsLoadedAt;
+    const delayMs = Math.max(5000, TTS_OPTIONS_AUTO_REFRESH_MS - ageMs);
+    const timer = window.setTimeout(() => {
+      void onLoadTtsOptions(true);
+    }, delayMs);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.userToken, settings.apiBase, ttsOptionsBusy, ttsOptionsLoadedAt]);
 
   function apiHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -501,6 +515,9 @@ export default function App() {
       if (!silent) setSettingsNotice("access", "warning", "Invite token is required to load TTS options.");
       return;
     }
+    if (ttsOptionsBusy) {
+      return;
+    }
     if (!silent) {
       setNotices((prev) => withSettingsNotice(prev, "generation", null));
       setNotices((prev) => withSettingsNotice(prev, "audio", null));
@@ -517,6 +534,7 @@ export default function App() {
       }
       const payload = data as TTSOptionsResponse;
       setTtsOptions(payload);
+      setTtsOptionsLoadedAt(Date.now());
 
       setSettings((current) => {
         const currentProvider = (current.audioProvider || "").trim().toLowerCase();
@@ -540,7 +558,7 @@ export default function App() {
       });
 
       if (!silent) {
-        setSettingsNotice("audio", "success", "TTS models and voices loaded.");
+        setSettingsNotice("audio", "success", "Model and voice lists were refreshed.");
       }
     } catch (e: any) {
       if (!silent) {

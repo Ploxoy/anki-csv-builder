@@ -144,7 +144,7 @@ export function SettingsTab({
         <div className="section-head">
           <h3>Generation defaults</h3>
           <button className="btn tiny" type="button" onClick={onReloadTtsOptions} disabled={ttsOptionsBusy || busy}>
-            {ttsOptionsBusy ? "Loading..." : "Reload model list"}
+            {ttsOptionsBusy ? "Loading..." : "Reload models & voices"}
           </button>
         </div>
 
@@ -296,7 +296,9 @@ export function SettingsTab({
           </label>
         </div>
 
-        {availableAudioModelOptions.length === 0 && <p className="hint subtle">Reload model list to fetch available TTS models.</p>}
+        {availableAudioModelOptions.length === 0 && (
+          <p className="hint subtle">Reload models & voices to fetch available TTS models. The list also refreshes automatically.</p>
+        )}
         <Notice notice={notices.audio} />
       </section>
 

@@ -1,59 +1,121 @@
-# Synology Reverse Proxy + HTTPS (Stage 2)
+# Internet access: Asus DDNS + Strato DNS + DSM Reverse Proxy
 
 Use this only after LAN deployment is stable.
 
 ## Goal
 
-- Expose only HTTPS (443) to the internet.
-- Keep raw `:8000` API port private.
-- Route public traffic to web service (`:5173`) inside NAS.
+- Public endpoint: `https://app.doedutch.nl` only.
+- Keep raw ports private (`8000` API and `5173` web).
+- Support dynamic WAN IP with Asus DDNS + Strato CNAME.
 
-## 1) Domain and certificate
+## 0) Gate check: Public IPv4 vs CGNAT (must-do)
 
-1. Point your domain/subdomain A record to your public IP.
-2. In DSM, configure DDNS if needed.
-3. Open DSM -> Control Panel -> Security -> Certificate.
-4. Request Let's Encrypt certificate for your domain.
-5. Assign the new certificate to reverse proxy destination.
+1. Read WAN IPv4 in Asus UI (`WAN -> Internet Status`).
+2. Run check from NAS shell:
 
-## 2) Reverse proxy rule (DSM)
+```bash
+cd /volume1/docker/anki-csv-builder/app
+bash deploy/synology/scripts/check_wan_mode.sh <WAN_IP_FROM_ASUS>
+```
 
-Open DSM -> Control Panel -> Login Portal -> Advanced -> Reverse Proxy.
+Decision:
+- Exit `0`: direct path is supported -> continue with this file.
+- Exit `20`: likely CGNAT/double NAT -> use [`CLOUDFLARE_TUNNEL.md`](./CLOUDFLARE_TUNNEL.md).
+
+## 1) Configure Asus router (direct path)
+
+### 1.1 Enable DDNS
+
+In Asus UI:
+- `WAN -> DDNS`
+- Enable DDNS and get hostname like `<name>.asuscomm.com`.
+
+Put hostname in env for documentation consistency:
+
+```bash
+vi deploy/synology/.env
+```
+
+```env
+PUBLIC_DOMAIN=app.doedutch.nl
+ASUS_DDNS_HOST=<name>.asuscomm.com
+```
+
+### 1.2 Port forwarding
+
+In Asus UI (`WAN -> Virtual Server / Port Forwarding`):
+- TCP `443` -> `192.168.2.10:443`
+- TCP `80` -> `192.168.2.10:80` (for Let's Encrypt HTTP challenge/renewal)
+
+Do not forward:
+- `8000`
+- `5173`
+
+## 2) Configure Strato DNS
+
+For `app.doedutch.nl`:
+- create `CNAME` -> `<name>.asuscomm.com`,
+- remove conflicting `A`/`AAAA` records for `app`,
+- keep low TTL during rollout (for example `300`).
+
+Verify from shell:
+
+```bash
+dig +short app.doedutch.nl
+```
+
+Expected: resolves to DDNS target/IP (not stale A/AAAA).
+
+## 3) DSM certificate + reverse proxy
+
+### 3.1 Let's Encrypt certificate
+
+DSM:
+- `Control Panel -> Security -> Certificate`
+- Request Let's Encrypt certificate for `app.doedutch.nl`
+- Apply certificate to reverse proxy entry for this host.
+
+### 3.2 Reverse proxy rule
+
+DSM:
+- `Control Panel -> Login Portal -> Advanced -> Reverse Proxy`
 
 Create rule:
 - Source:
   - Protocol: `HTTPS`
-  - Hostname: `<your-domain>`
+  - Hostname: `app.doedutch.nl`
   - Port: `443`
 - Destination:
   - Protocol: `HTTP`
   - Hostname: `127.0.0.1`
-  - Port: `<WEB_PORT>` (default `5173`)
+  - Port: `5173`
 
-## 3) Router / firewall
+Optional hard redirect rule:
+- Source: `HTTP`, host `app.doedutch.nl`, port `80`
+- Action: redirect to HTTPS.
 
-- Forward only `443` to NAS.
-- Optional: forward `80` only for ACME HTTP challenge.
-- Do not expose `8000` and `5173` publicly.
-- In DSM Firewall, allow:
+## 4) DSM firewall and hardening
+
+- Allow inbound:
   - `443` from internet
-  - `22` only from trusted IPs (or disable SSH after setup)
+  - `80` from internet (certificate renewal; may be redirected to HTTPS)
+- Restrict `22` to trusted source IPs or disable when not needed.
+- Keep:
+  - `API_REQUIRE_SHARED_SECRET=1`
+  - strong `API_SHARED_SECRET`
+- Follow key rotation guide: `notes/synology_key_rotation.md`.
 
-## 4) Hardening checklist
+## 5) Validation (external network only)
 
-- Keep `API_REQUIRE_SHARED_SECRET=1`.
-- Use strong `API_SHARED_SECRET`.
-- Rotate secrets periodically.
-- Monitor container logs for unauthorized/failed requests.
-- Keep DSM and Container Manager updated.
+Run from LTE/5G or off-site host:
 
-## 5) Validation
+```bash
+cd /volume1/docker/anki-csv-builder/app
+bash deploy/synology/scripts/check_public_endpoints.sh app.doedutch.nl
+```
 
-From external network:
-- `https://<your-domain>/` loads the web UI.
-- Browser network calls to `/api/*` return expected responses.
-- `https://<your-domain>/api/health` responds successfully.
-
-From external network (must fail):
-- `http://<your-domain>:8000/health`
-- `http://<your-domain>:5173`
+Expected:
+- `https://app.doedutch.nl/` works,
+- `https://app.doedutch.nl/api/health` works,
+- `http://app.doedutch.nl:8000/health` blocked,
+- `http://app.doedutch.nl:5173/` blocked.

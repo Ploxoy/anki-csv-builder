@@ -44,6 +44,8 @@ POSTGRES_PASSWORD="$(read_env_var "$ENV_FILE" "POSTGRES_PASSWORD")"
 API_SHARED_SECRET="$(read_env_var "$ENV_FILE" "API_SHARED_SECRET")"
 OPENAI_API_KEY="$(read_env_var "$ENV_FILE" "OPENAI_API_KEY")"
 ELEVENLABS_API_KEY="$(read_env_var "$ENV_FILE" "ELEVENLABS_API_KEY")"
+PUBLIC_DOMAIN="$(read_env_var "$ENV_FILE" "PUBLIC_DOMAIN")"
+ASUS_DDNS_HOST="$(read_env_var "$ENV_FILE" "ASUS_DDNS_HOST")"
 
 require_present "SYNO_BASE_PATH" "$SYNO_BASE_PATH"
 require_present "API_PORT" "$API_PORT"
@@ -77,6 +79,14 @@ fi
 
 if [[ -z "$ELEVENLABS_API_KEY" ]]; then
   echo "INFO: ELEVENLABS_API_KEY is empty (allowed)."
+fi
+
+if [[ -z "$PUBLIC_DOMAIN" ]]; then
+  echo "INFO: PUBLIC_DOMAIN is empty (internet stage not configured yet)."
+fi
+
+if [[ -n "$PUBLIC_DOMAIN" && -z "$ASUS_DDNS_HOST" ]]; then
+  echo "WARN: ASUS_DDNS_HOST is empty while PUBLIC_DOMAIN is set."
 fi
 
 if [[ ! -d "${SYNO_BASE_PATH}/pgdata" || ! -d "${SYNO_BASE_PATH}/cache" || ! -d "${SYNO_BASE_PATH}/logs" ]]; then

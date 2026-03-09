@@ -143,3 +143,22 @@ def test_api_tts_does_not_retry_validation_error(
     assert calls["count"] == 1
     assert result.audios[0].status == "failed"
     assert result.summary.failed == 1
+
+
+def test_filter_openai_tts_models_returns_live_discovered_list() -> None:
+    models = [
+        "gpt-4o-mini-tts",
+        "gpt-4o-tts",
+        "gpt-4o-mini-tts",
+        "gpt-5",
+        "whisper-1",
+        "gpt-4o-transcribe",
+    ]
+    filtered = api_main._filter_openai_tts_models(models)
+    assert filtered == ["gpt-4o-mini-tts", "gpt-4o-tts"]
+
+
+def test_filter_openai_tts_models_uses_fallback_when_discovery_empty() -> None:
+    filtered = api_main._filter_openai_tts_models([])
+    assert filtered
+    assert api_main.AUDIO_TTS_MODEL in filtered

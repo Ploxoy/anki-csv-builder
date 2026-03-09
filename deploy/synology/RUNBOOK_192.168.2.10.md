@@ -1,8 +1,8 @@
-# Runbook (Synology DS224+) — 192.168.2.123
+# Runbook (Synology DS224+) — 192.168.2.10
 
 Target:
-- NAS IP: `192.168.2.123`
-- SSH user: `VKotenol`
+- NAS IP: `192.168.2.10`
+- SSH user: `VKotenok`
 - App path on NAS: `/volume1/docker/anki-csv-builder/app`
 
 ## 1) First-time setup (one time)
@@ -10,7 +10,7 @@ Target:
 From your local machine:
 
 ```bash
-ssh VKotenol@192.168.2.123
+ssh VKotenok@192.168.2.10
 ```
 
 On NAS:
@@ -34,6 +34,8 @@ Required values in `.env`:
 - `POSTGRES_PASSWORD` (strong)
 - `API_SHARED_SECRET` (strong)
 - `OPENAI_API_KEY` (real key)
+- `PUBLIC_DOMAIN=app.doedutch.nl`
+- `ASUS_DDNS_HOST=<name>.asuscomm.com` (for direct path)
 - optional `ELEVENLABS_API_KEY`
 
 Validate:
@@ -58,19 +60,19 @@ In DSM:
 From local machine:
 
 ```bash
-curl -fsS http://192.168.2.123:8000/health
-curl -fsS http://192.168.2.123:5173/ > /dev/null && echo "web ok"
+curl -fsS http://192.168.2.10:8000/health
+curl -fsS http://192.168.2.10:5173/ > /dev/null && echo "web ok"
 ```
 
 From NAS (inside repo):
 
 ```bash
 cd /volume1/docker/anki-csv-builder/app
-bash deploy/synology/scripts/smoke.sh 192.168.2.123
+bash deploy/synology/scripts/smoke.sh 192.168.2.10
 ```
 
 UI check:
-1. Open `http://192.168.2.123:5173`
+1. Open `http://192.168.2.10:5173`
 2. Generate 1-2 cards
 3. Preview
 4. Export CSV
@@ -80,7 +82,7 @@ UI check:
 From local machine:
 
 ```bash
-ssh VKotenol@192.168.2.123
+ssh VKotenok@192.168.2.10
 ```
 
 On NAS:
@@ -157,7 +159,58 @@ Common fixes:
 - API errors with running containers: verify `OPENAI_API_KEY` and `API_SHARED_SECRET`.
 - DB not healthy: verify `POSTGRES_PASSWORD` and write permissions on `/volume1/docker/anki-csv-builder/pgdata`.
 
-## 8) Stage 2 (later, internet access)
+## 8) Stage 2 (internet access)
 
-After LAN is stable, configure reverse proxy + TLS:
-- `deploy/synology/REVERSE_PROXY.md`
+Gate check (must pass for direct routing):
+
+```bash
+cd /volume1/docker/anki-csv-builder/app
+bash deploy/synology/scripts/check_wan_mode.sh <WAN_IP_FROM_ASUS>
+```
+
+If exit code is `0`:
+1. Configure Asus DDNS and port forwarding (`80`, `443`) to `192.168.2.10`.
+2. At Strato create `CNAME`:
+   - `app.doedutch.nl -> <name>.asuscomm.com`
+3. In DSM issue Let's Encrypt cert for `app.doedutch.nl`.
+4. In DSM create reverse proxy:
+   - `HTTPS app.doedutch.nl:443 -> HTTP 127.0.0.1:5173`.
+
+If exit code is `20`:
+- use Cloudflare fallback guide:
+  - `deploy/synology/CLOUDFLARE_TUNNEL.md`
+
+External validation (run from LTE/5G):
+
+```bash
+cd /volume1/docker/anki-csv-builder/app
+bash deploy/synology/scripts/check_public_endpoints.sh app.doedutch.nl
+```
+
+## 9) Windows LAN deploy pipeline (PowerShell, update-only)
+
+From a Windows machine in LAN:
+
+```powershell
+pwsh -File .\deploy\synology\Deploy-FromLan.ps1
+```
+
+Default target values:
+- `NasHost=192.168.2.10`
+- `NasUser=VKotenok`
+- `ProjectPath=/volume1/docker/anki-csv-builder/app`
+- `Branch=dev`
+- `SshKeyPath=~/.ssh/id_ed25519`
+
+Example with explicit key path:
+
+```powershell
+pwsh -File .\deploy\synology\Deploy-FromLan.ps1 -SshKeyPath "C:\Users\<you>\.ssh\id_ed25519"
+```
+
+What pipeline does:
+1. Local preflight (`ssh` in PATH, key exists, SSH ping).
+2. Remote update (`git fetch/checkout/pull --ff-only`).
+3. Env validation + `docker compose up -d --build`.
+4. Remote smoke check + compose status.
+5. Local HTTP checks (`/health`, web UI) with retry window.

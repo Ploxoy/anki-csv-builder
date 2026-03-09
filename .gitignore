@@ -76,6 +76,7 @@ anki_cards.csv
 .env
 .env.*
 !deploy/synology/.env.example
+!deploy/synology/.env.cloudflare.example
 secrets/
 
 # --- Node / web UI ---
