@@ -160,6 +160,7 @@ Tune in `.env`:
 - `WAKER_IDLE_STOP=1`
 - `WAKER_IDLE_MINUTES=60`
 - `WAKER_START_TIMEOUT_SECONDS=120`
+- `WAKER_PROXY_TIMEOUT_SECONDS=600` (recommended for large generation batches)
 
 Operational note:
 - the first request after sleep can take 10-90 seconds; during wake-up client may receive `503`, then refresh.
@@ -220,6 +221,9 @@ If you prefer manual update in DSM UI:
 - Web loads, API requests fail:
   - inspect API logs and key:
   - `docker compose -f deploy/synology/docker-compose.synology.yml --env-file deploy/synology/.env logs -f api`
+- HTTP 504 near the end of long generation:
+  - verify `WAKER_PROXY_TIMEOUT_SECONDS` is at least `600` in `deploy/synology/.env`,
+  - rebuild/restart stack so nginx + waker timeout changes are applied.
 - DB not healthy:
   - verify `POSTGRES_PASSWORD`,
   - verify write access to `${SYNO_BASE_PATH}/pgdata`.

@@ -26,7 +26,7 @@ IDLE_MINUTES = max(1, int(os.getenv("WAKER_IDLE_MINUTES", "60")))
 IDLE_CHECK_SECONDS = max(10, int(os.getenv("WAKER_IDLE_CHECK_SECONDS", "30")))
 START_TIMEOUT_SECONDS = max(10, int(os.getenv("WAKER_START_TIMEOUT_SECONDS", "120")))
 TOUCH_FLUSH_SECONDS = max(5, int(os.getenv("WAKER_TOUCH_FLUSH_SECONDS", "15")))
-PROXY_TIMEOUT_SECONDS = max(5, int(os.getenv("WAKER_PROXY_TIMEOUT_SECONDS", "120")))
+PROXY_TIMEOUT_SECONDS = max(5, int(os.getenv("WAKER_PROXY_TIMEOUT_SECONDS", "600")))
 IDLE_STOP_ENABLED = os.getenv("WAKER_IDLE_STOP", "1").strip().lower() in {"1", "true", "yes", "on"}
 STATE_FILE = Path(os.getenv("WAKER_STATE_FILE", "/state/last_access.txt"))
 
