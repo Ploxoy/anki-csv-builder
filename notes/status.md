@@ -32,6 +32,7 @@
   - Добавлены one-command install сценарии: `deploy/synology/scripts/install.sh` (NAS) и `deploy/synology/scripts/install.ps1` (Windows -> SSH sync + remote install).
   - Скрипты `sleep.sh` / `wake.sh` / `update.sh` переведены на общий helper `deploy/synology/scripts/docker_cmd.sh` для DSM-окружений с нестандартным `PATH`.
   - Введён hotfix таймаутов для длинных запусков: `WAKER_PROXY_TIMEOUT_SECONDS=600` + таймауты в `web/deploy/nginx.synology.conf`, чтобы снизить HTTP 504 при длинной генерации.
+- **Resolved long-run 504 (2026-03-30)**: подтверждён успешный запуск длинного списка (52 записи, audio off). Корневая причина была составной: один длинный HTTP-запрос `/api/generate` и неприменённый deploy (compose не выполнялся из-за `docker.sock` permissions без `sudo`). Исправление: batched text-generation в `web/src/App.tsx` + перезапуск стека через `sudo`.
 
 ## Свежие изменения (февраль 2026)
 - Deep UI Rework v1 (web): интерфейс переведён на light theme по `notes/Doedutch_UI_Guide.md`, логика вкладок сохранена (`Generate / Settings / Admin`).
@@ -108,10 +109,10 @@
 - **Каталог ElevenLabs**: фильтр по NL может вернуть мало голосов — отображаем fallback, но хорошо бы добавить режим «все голоса».
 - **Качество TTS**: OpenAI даёт надёжный baseline, но голоса звучат плоско; ElevenLabs выразительнее, однако требует отдельного биллинга по токенам/месяцам, и оба провайдера иногда читают отдельные слова с англоязычным акцентом.
 - **AnkiWeb + Chrome forced dark mode**: если в Chrome включён «auto dark theme for sites»/`chrome://flags/#enable-force-dark`, встроенный CSS AnkiWeb перекрашивает контент в белый, и наши cloze/def поля становятся невидимыми. Решение: отключить forced dark (или использовать стандартный режим/Edge). В шаблоны вмешиваться не планируем.
-- **Новый инцидент после внедрения sleep/wake**: после добавления `waker`/power-save режимов появилась новая ошибка в продовом сценарии (не закрыта; требуется отдельный post-mortem с точным trace, условиями воспроизведения и финальным фиксом).
+- **Инцидент 504 после внедрения sleep/wake (закрыт)**: проблема подтверждена и закрыта; длинный список теперь проходит успешно после применения batched `/api/generate` и корректного `sudo`-перезапуска контейнеров.
 
 ## Следующие шаги (предлагаемые)
-1. **Разобрать новый инцидент после sleep/wake**: зафиксировать текст ошибки, где возникает (web/api/waker/nginx), и собрать минимальный сценарий воспроизведения.
+1. **Мониторинг после фикса 504**: на ближайших прогонах держать контроль за длинными списками (>50 строк), проверять отсутствие 504 и целостность usage/events.
 2. **Проверить timeout hotfix end-to-end**: подтвердить, что `WAKER_PROXY_TIMEOUT_SECONDS=600` и nginx timeout реально применились после rebuild/restart.
 3. **Прогнать end-to-end Windows pipeline в LAN**: `Deploy-FromLan.ps1` на реальном ключе/пользователе, зафиксировать типовые ошибки (SSH key, branch drift, compose health).
 4. **Internet stage production-check**: после стабилизации LAN пройти `check_wan_mode.sh` + выбранный путь (direct или Cloudflare Tunnel), затем `check_public_endpoints.sh` с внешней сети.

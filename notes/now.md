@@ -1,6 +1,6 @@
 # Now — Anki CSV Builder
 
-Updated: 2026-03-30T13:41:26
+Updated: 2026-03-30T14:47:01
 
 ## Quick pointers
 - notes/status.md (project status)
@@ -16,11 +16,11 @@ Updated: 2026-03-30T13:41:26
 
 ## Recent commits
 ```
+88fccca multithreadintg
 3d11f55 time outs fix
 c47b3af power sfe modes
 37c4a79 deploy pipline
 8904787  implement silent mode
-b1f594c deploy docs
 ```
 
 ## Status (head)
@@ -59,12 +59,12 @@ b1f594c deploy docs
   - Добавлены one-command install сценарии: `deploy/synology/scripts/install.sh` (NAS) и `deploy/synology/scripts/install.ps1` (Windows -> SSH sync + remote install).
   - Скрипты `sleep.sh` / `wake.sh` / `update.sh` переведены на общий helper `deploy/synology/scripts/docker_cmd.sh` для DSM-окружений с нестандартным `PATH`.
   - Введён hotfix таймаутов для длинных запусков: `WAKER_PROXY_TIMEOUT_SECONDS=600` + таймауты в `web/deploy/nginx.synology.conf`, чтобы снизить HTTP 504 при длинной генерации.
+- **Resolved long-run 504 (2026-03-30)**: подтверждён успешный запуск длинного списка (52 записи, audio off). Корневая причина была составной: один длинный HTTP-запрос `/api/generate` и неприменённый deploy (compose не выполнялся из-за `docker.sock` permissions без `sudo`). Исправление: batched text-generation в `web/src/App.tsx` + перезапуск стека через `sudo`.
 
 ## Свежие изменения (февраль 2026)
 - Deep UI Rework v1 (web): интерфейс переведён на light theme по `notes/Doedutch_UI_Guide.md`, логика вкладок сохранена (`Generate / Settings / Admin`).
 - `web/src/App.tsx` декомпозирован на `AppShell`, табовые фичи (`GenerateTab/SettingsTab/AdminTab`), `Notice` и `ProgressPanel`; добавлены `web/src/lib/uiState.ts` и `web/src/lib/messages.ts`.
 - Сообщения/ошибки изолированы по вкладкам и секциям (scoped notices), убрано глобальное смешивание статусов между Generate/Settings/Admin.
-- В Generate оставлен один primary action, flow перестроен в явную последовательность `Input → Run → Review → Export`.
 ```
 
 ## Tasks (head)
@@ -99,7 +99,7 @@ b1f594c deploy docs
 - [x] D3 — Power-save layer на Synology: добавлены `waker` + `socket-proxy` (auto sleep/wake, front-door на WEB_PORT), новые env-параметры `WAKER_IDLE_*` и статус `/_waker/status`.
 - [x] D4 — One-command install для Synology: `deploy/synology/scripts/install.sh` (NAS) и `deploy/synology/scripts/install.ps1` (Windows -> SSH sync + remote install), плюс унификация docker-вызовов через `deploy/synology/scripts/docker_cmd.sh`.
 - [x] D5 — Timeout hotfix для длинных запусков: `WAKER_PROXY_TIMEOUT_SECONDS=600` + timeout в `web/deploy/nginx.synology.conf` (снижение риска HTTP 504 на длинной генерации).
-- [ ] D6 — Новый инцидент после внедрения sleep/wake: собрать точный trace и шаги воспроизведения, определить корневую причину и закрыть фикс.
+- [x] D6 — Инцидент после внедрения sleep/wake закрыт: проблема 504 на длинной text-generation воспроизводилась при одном длинном `/api/generate`; исправлено батчевой генерацией в `web/src/App.tsx` + корректным `sudo`-перезапуском контейнеров на Synology; подтверждён успешный прогон длинного списка (52 записи, audio off).
 
 ## 🧪 Beta readiness (Phase 0.5)
 - [x] B1 — Invite-token auth v0: `/api/admin/invite` (admin) + `Authorization: Bearer <token>` (user), без Supabase.
@@ -113,13 +113,13 @@ b1f594c deploy docs
 
 ## Session scratchpad
 - What I changed:
-- Updated `notes/status.md` to 2026-03-30 and added Synology power-save changes (`waker`, `socket-proxy`, install scripts, timeout hotfix).
-- Updated `notes/tasks.md` with D3/D4/D5 completed and D6 open (new error after sleep/wake integration).
+- Updated `notes/tasks.md`: marked D6 as completed (504 incident closed).
+- Updated `notes/status.md`: added closure note for long-run 504 and switched next-step #1 to monitoring.
 - Regenerated this file via `python scripts/update_context.py`.
 - Why:
-- Restore current project memory after March 30 work and explicitly capture the new blocker.
+- Capture that long list generation now works in production conditions after deploy + web batching fix.
 - Next steps:
-- Capture exact error text + location (`web`/`api`/`waker`/`nginx`) and add reproducible scenario for D6.
-- Verify timeout hotfix (`WAKER_PROXY_TIMEOUT_SECONDS=600` + nginx timeouts) on real long-running generation.
+- Monitor a few additional long runs (>50 rows) to confirm stability and usage consistency.
+- Keep Synology deploy path with `sudo` for compose operations to avoid false-positive "updated but not rebuilt" states.
 - Open questions:
-- Precise new error details are not yet recorded in notes (message/stack trace + trigger conditions).
+- None critical; incident is currently considered resolved based on successful long-list run.
