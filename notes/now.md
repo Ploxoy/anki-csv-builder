@@ -1,6 +1,6 @@
 # Now — Anki CSV Builder
 
-Updated: 2026-03-09T07:17:08
+Updated: 2026-03-30T13:41:26
 
 ## Quick pointers
 - notes/status.md (project status)
@@ -16,18 +16,18 @@ Updated: 2026-03-09T07:17:08
 
 ## Recent commits
 ```
+3d11f55 time outs fix
+c47b3af power sfe modes
 37c4a79 deploy pipline
 8904787  implement silent mode
 b1f594c deploy docs
-03f7086 synology deploy
-e995c31 feat(web): deep UI rework v1 with scoped tab notices
 ```
 
 ## Status (head)
 ```
 # Status — Anki CSV Builder
 
-*(обновлено: 2026-03-09)*
+*(обновлено: 2026-03-30)*
 
 ## Кратко
 - MVP закрывает генерацию NL карточек с CSV/APKG экспортом, пакетной обработкой и базовой панелью диагностики.
@@ -53,18 +53,18 @@ e995c31 feat(web): deep UI rework v1 with scoped tab notices
 - **Web TTS options UX**: `Reload model list` в web теперь обновляет и text-модели, и TTS-модели/голоса из backend; добавлен тихий авто-refresh списка по мере работы backend.
 - **API TTS options**: `_filter_openai_tts_models` сначала возвращает live-discovered список, fallback к дефолтным моделям используется только если discovery недоступен/пуст.
 - **Тесты**: расширен `tests/test_api_tts.py` (покрытие фильтра TTS-моделей).
+- **Synology power-save stack (2026-03-30)**:
+  - Добавлен front-door сервис `waker` + `socket-proxy` в `deploy/synology/docker-compose.synology.yml` для авто-пробуждения и авто-сна (`WAKER_IDLE_*`).
+  - `web` теперь публикуется через `waker`, добавлен статус-эндпойнт `/_waker/status`.
+  - Добавлены one-command install сценарии: `deploy/synology/scripts/install.sh` (NAS) и `deploy/synology/scripts/install.ps1` (Windows -> SSH sync + remote install).
+  - Скрипты `sleep.sh` / `wake.sh` / `update.sh` переведены на общий helper `deploy/synology/scripts/docker_cmd.sh` для DSM-окружений с нестандартным `PATH`.
+  - Введён hotfix таймаутов для длинных запусков: `WAKER_PROXY_TIMEOUT_SECONDS=600` + таймауты в `web/deploy/nginx.synology.conf`, чтобы снизить HTTP 504 при длинной генерации.
 
 ## Свежие изменения (февраль 2026)
 - Deep UI Rework v1 (web): интерфейс переведён на light theme по `notes/Doedutch_UI_Guide.md`, логика вкладок сохранена (`Generate / Settings / Admin`).
 - `web/src/App.tsx` декомпозирован на `AppShell`, табовые фичи (`GenerateTab/SettingsTab/AdminTab`), `Notice` и `ProgressPanel`; добавлены `web/src/lib/uiState.ts` и `web/src/lib/messages.ts`.
 - Сообщения/ошибки изолированы по вкладкам и секциям (scoped notices), убрано глобальное смешивание статусов между Generate/Settings/Admin.
 - В Generate оставлен один primary action, flow перестроен в явную последовательность `Input → Run → Review → Export`.
-- В Settings добавлен `dirty state` с `Save / Revert / Reload`, блоки переупорядочены (`Access`, `Generation defaults`, `Audio defaults`, `Export defaults`).
-- В Admin усилена структура: `User management` + `Admin usage`, читаемая таблица пользователей и локальная карточка invite/rotate с copy-action.
-- Зафиксирован checkpoint `e7f8e94`: merged scope по web+api (export endpoints, dynamic TTS options, resilient audio flow).
-- TTS Reliability/UX hardening в FastAPI + web:
-  - `/api/tts` теперь возвращает clip-level `status` (`ok|failed|cached`) и `error` для failed-клипов.
-  - В synthesis-пайплайне добавлен один автоматический retry только для транзитных ошибок (`429/5xx/timeout`) с backoff; валидационные ошибки не ретраятся.
 ```
 
 ## Tasks (head)
@@ -96,6 +96,10 @@ e995c31 feat(web): deep UI rework v1 with scoped tab notices
 - [x] N5 — Добавить авто-актуализацию model/voice list в web: тихий периодический refresh настроек TTS при активном токене, чтобы backend-изменения подхватывались без ручного клика (`web/src/App.tsx`).
 - [x] D1 — Synology internet-stage toolkit: gate-check/reachability скрипты (`check_wan_mode.sh`, `check_public_endpoints.sh`), direct path docs (`REVERSE_PROXY.md`) и Cloudflare fallback (`CLOUDFLARE_TUNNEL.md`, `docker-compose.cloudflared.yml`).
 - [x] D2 — Windows LAN deployment pipeline: `deploy/synology/Deploy-FromLan.ps1` (SSH-key preflight, `git pull --ff-only`, `validate_env`, `compose up --build`, smoke + local health retries) + обновлён runbook `RUNBOOK_192.168.2.10.md`.
+- [x] D3 — Power-save layer на Synology: добавлены `waker` + `socket-proxy` (auto sleep/wake, front-door на WEB_PORT), новые env-параметры `WAKER_IDLE_*` и статус `/_waker/status`.
+- [x] D4 — One-command install для Synology: `deploy/synology/scripts/install.sh` (NAS) и `deploy/synology/scripts/install.ps1` (Windows -> SSH sync + remote install), плюс унификация docker-вызовов через `deploy/synology/scripts/docker_cmd.sh`.
+- [x] D5 — Timeout hotfix для длинных запусков: `WAKER_PROXY_TIMEOUT_SECONDS=600` + timeout в `web/deploy/nginx.synology.conf` (снижение риска HTTP 504 на длинной генерации).
+- [ ] D6 — Новый инцидент после внедрения sleep/wake: собрать точный trace и шаги воспроизведения, определить корневую причину и закрыть фикс.
 
 ## 🧪 Beta readiness (Phase 0.5)
 - [x] B1 — Invite-token auth v0: `/api/admin/invite` (admin) + `Authorization: Bearer <token>` (user), без Supabase.
@@ -105,21 +109,17 @@ e995c31 feat(web): deep UI rework v1 with scoped tab notices
 - [x] B5 — Admin в web: создавать инвайты, листать пользователей, блок/разблок, ротация токена, просмотр usage по user_id.
 
 ## 🚀 Productization (vNext)
-- [ ] A1 — Auth: Google login через Supabase Auth, `user_id` во всех запросах.
-- [ ] A2 — Persist settings: хранить настройки пользователя в Postgres (без артефактов/истории).
-- [ ] A3 — Budget ledger (EUR): usage → raw cost → charged cost (tiered markup), лимит max words/run, min balance precheck.
-- [ ] A4 — Payments: Stripe top-ups + webhook endpoint (Railway/FastAPI).
 ```
 
 ## Session scratchpad
 - What I changed:
-- Updated `notes/status.md` with March 2026 changes (Synology deploy toolkit, Cloudflare fallback, Windows LAN PowerShell pipeline, TTS model list refresh behavior).
-- Updated `notes/tasks.md` with completed deployment items `D1` and `D2`.
-- Regenerated this context file via `python scripts/update_context.py`.
+- Updated `notes/status.md` to 2026-03-30 and added Synology power-save changes (`waker`, `socket-proxy`, install scripts, timeout hotfix).
+- Updated `notes/tasks.md` with D3/D4/D5 completed and D6 open (new error after sleep/wake integration).
+- Regenerated this file via `python scripts/update_context.py`.
 - Why:
-- Keep project notes aligned with actual deployment/tooling state before continuing internet rollout.
+- Restore current project memory after March 30 work and explicitly capture the new blocker.
 - Next steps:
-- Run `deploy/synology/Deploy-FromLan.ps1` from Windows host with real SSH key and fix any environment-specific issues found in first run.
-- Proceed with internet-stage gate check and external reachability validation.
+- Capture exact error text + location (`web`/`api`/`waker`/`nginx`) and add reproducible scenario for D6.
+- Verify timeout hotfix (`WAKER_PROXY_TIMEOUT_SECONDS=600` + nginx timeouts) on real long-running generation.
 - Open questions:
-- None.
+- Precise new error details are not yet recorded in notes (message/stack trace + trigger conditions).

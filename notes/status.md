@@ -1,6 +1,6 @@
 # Status — Anki CSV Builder
 
-*(обновлено: 2026-03-09)*
+*(обновлено: 2026-03-30)*
 
 ## Кратко
 - MVP закрывает генерацию NL карточек с CSV/APKG экспортом, пакетной обработкой и базовой панелью диагностики.
@@ -26,6 +26,12 @@
 - **Web TTS options UX**: `Reload model list` в web теперь обновляет и text-модели, и TTS-модели/голоса из backend; добавлен тихий авто-refresh списка по мере работы backend.
 - **API TTS options**: `_filter_openai_tts_models` сначала возвращает live-discovered список, fallback к дефолтным моделям используется только если discovery недоступен/пуст.
 - **Тесты**: расширен `tests/test_api_tts.py` (покрытие фильтра TTS-моделей).
+- **Synology power-save stack (2026-03-30)**:
+  - Добавлен front-door сервис `waker` + `socket-proxy` в `deploy/synology/docker-compose.synology.yml` для авто-пробуждения и авто-сна (`WAKER_IDLE_*`).
+  - `web` теперь публикуется через `waker`, добавлен статус-эндпойнт `/_waker/status`.
+  - Добавлены one-command install сценарии: `deploy/synology/scripts/install.sh` (NAS) и `deploy/synology/scripts/install.ps1` (Windows -> SSH sync + remote install).
+  - Скрипты `sleep.sh` / `wake.sh` / `update.sh` переведены на общий helper `deploy/synology/scripts/docker_cmd.sh` для DSM-окружений с нестандартным `PATH`.
+  - Введён hotfix таймаутов для длинных запусков: `WAKER_PROXY_TIMEOUT_SECONDS=600` + таймауты в `web/deploy/nginx.synology.conf`, чтобы снизить HTTP 504 при длинной генерации.
 
 ## Свежие изменения (февраль 2026)
 - Deep UI Rework v1 (web): интерфейс переведён на light theme по `notes/Doedutch_UI_Guide.md`, логика вкладок сохранена (`Generate / Settings / Admin`).
@@ -102,22 +108,25 @@
 - **Каталог ElevenLabs**: фильтр по NL может вернуть мало голосов — отображаем fallback, но хорошо бы добавить режим «все голоса».
 - **Качество TTS**: OpenAI даёт надёжный baseline, но голоса звучат плоско; ElevenLabs выразительнее, однако требует отдельного биллинга по токенам/месяцам, и оба провайдера иногда читают отдельные слова с англоязычным акцентом.
 - **AnkiWeb + Chrome forced dark mode**: если в Chrome включён «auto dark theme for sites»/`chrome://flags/#enable-force-dark`, встроенный CSS AnkiWeb перекрашивает контент в белый, и наши cloze/def поля становятся невидимыми. Решение: отключить forced dark (или использовать стандартный режим/Edge). В шаблоны вмешиваться не планируем.
+- **Новый инцидент после внедрения sleep/wake**: после добавления `waker`/power-save режимов появилась новая ошибка в продовом сценарии (не закрыта; требуется отдельный post-mortem с точным trace, условиями воспроизведения и финальным фиксом).
 
 ## Следующие шаги (предлагаемые)
-1. **Прогнать end-to-end Windows pipeline в LAN**: `Deploy-FromLan.ps1` на реальном ключе/пользователе, зафиксировать типовые ошибки (SSH key, branch drift, compose health).
-2. **Internet stage production-check**: после стабилизации LAN пройти `check_wan_mode.sh` + выбранный путь (direct или Cloudflare Tunnel), затем `check_public_endpoints.sh` с внешней сети.
-3. **Users + персональные настройки + учёт usage (Phase 0.5, без платежей)**: invite-token auth (admin создаёт инвайты, пользователи ходят с `Authorization: Bearer ...`), settings/usage в Postgres, read-only просмотр usage.
-4. **Максимально упростить интерфейс**: сделать “happy path” в web UI (Generate → Preview → Export) и держать Streamlit как legacy/dev-панель до миграции.
-5. **Фиксировать контракт данных между UI и core**: описать state/DTO (в т.ч. `generation_section`) для дальнейших рефакторингов без регрессий.
-6. **Дожать preview UX**: решить политику для ручного снятия `error` после редактирования (когда запись считать исправленной и экспортируемой).
-7. **N2 (ElevenLabs UX)**: intentionally deferred на неопределённый срок; вероятен внешний фактор (изменения ElevenLabs API), вернуться после стабилизации API-контракта.
-8. **TTS-опыт**: curated список голосов, предпрослушка, быстрые метки качества/акцента.
-9. **Streaming/async для TTS**: прогресс по каждому запросу (очередь/asyncio — по необходимости).
-10. **Обновление прайс-листа**: автоматизировать/проверять `config/pricing.py` при появлении новых моделей и дублировать краткую инструкцию в README.
-11. **SQLite cache (фича-флаг)**: подготовить слой, но не включать по умолчанию.
-12. **Standalone launcher**: `setup_env.bat/.sh` + `run_app` сценарии (без dev-контейнера) для “non-dev” запуска.
-13. **Vision 2.0**: держать актуальным `notes/vision_v2.md`.
-14. **Multi-provider (post-MVP)**: добавлять альтернативы только при strict JSON + usage + прозрачной тарификации.
+1. **Разобрать новый инцидент после sleep/wake**: зафиксировать текст ошибки, где возникает (web/api/waker/nginx), и собрать минимальный сценарий воспроизведения.
+2. **Проверить timeout hotfix end-to-end**: подтвердить, что `WAKER_PROXY_TIMEOUT_SECONDS=600` и nginx timeout реально применились после rebuild/restart.
+3. **Прогнать end-to-end Windows pipeline в LAN**: `Deploy-FromLan.ps1` на реальном ключе/пользователе, зафиксировать типовые ошибки (SSH key, branch drift, compose health).
+4. **Internet stage production-check**: после стабилизации LAN пройти `check_wan_mode.sh` + выбранный путь (direct или Cloudflare Tunnel), затем `check_public_endpoints.sh` с внешней сети.
+5. **Users + персональные настройки + учёт usage (Phase 0.5, без платежей)**: invite-token auth (admin создаёт инвайты, пользователи ходят с `Authorization: Bearer ...`), settings/usage в Postgres, read-only просмотр usage.
+6. **Максимально упростить интерфейс**: сделать “happy path” в web UI (Generate → Preview → Export) и держать Streamlit как legacy/dev-панель до миграции.
+7. **Фиксировать контракт данных между UI и core**: описать state/DTO (в т.ч. `generation_section`) для дальнейших рефакторингов без регрессий.
+8. **Дожать preview UX**: решить политику для ручного снятия `error` после редактирования (когда запись считать исправленной и экспортируемой).
+9. **N2 (ElevenLabs UX)**: intentionally deferred на неопределённый срок; вероятен внешний фактор (изменения ElevenLabs API), вернуться после стабилизации API-контракта.
+10. **TTS-опыт**: curated список голосов, предпрослушка, быстрые метки качества/акцента.
+11. **Streaming/async для TTS**: прогресс по каждому запросу (очередь/asyncio — по необходимости).
+12. **Обновление прайс-листа**: автоматизировать/проверять `config/pricing.py` при появлении новых моделей и дублировать краткую инструкцию в README.
+13. **SQLite cache (фича-флаг)**: подготовить слой, но не включать по умолчанию.
+14. **Standalone launcher**: `setup_env.bat/.sh` + `run_app` сценарии (без dev-контейнера) для “non-dev” запуска.
+15. **Vision 2.0**: держать актуальным `notes/vision_v2.md`.
+16. **Multi-provider (post-MVP)**: добавлять альтернативы только при strict JSON + usage + прозрачной тарификации.
 
 ## Проверка окружения (smoke)
 1. `pip install -r requirements.txt`

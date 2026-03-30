@@ -581,10 +581,24 @@ export default function App() {
     const totalRows = parsed.items.length;
     const audioRequested = settings.generateAudio;
     const textProgressCap = audioRequested ? 72 : 94;
-    const expectedMs = Math.max(3000, totalRows * 1300);
     const startedAt = Date.now();
     const WAITING_PROVIDER_MS = 4000;
+    const TEXT_BATCH_SIZE = totalRows > 40 ? 6 : totalRows > 20 ? 8 : 10;
     let progressTimer: number | null = null;
+    let generatedRows = 0;
+
+    const refreshUsageSilently = async () => {
+      try {
+        const usageUrl = `${settings.apiBase || ""}/api/usage?limit=50`;
+        const usageRes = await fetch(usageUrl, { method: "GET", headers: apiHeaders() });
+        const usageData = (await usageRes.json().catch(() => null)) as any;
+        if (usageRes.ok) {
+          setUsage(usageData as UsageListResponse);
+        }
+      } catch {
+        // Silent refresh: ignore errors.
+      }
+    };
 
     const updateProgressMeta = (patch: Partial<GenerateProgressMeta>) => {
       setGenerateProgressMeta((prev) => ({
@@ -615,54 +629,144 @@ export default function App() {
       elapsedMs: 0,
     });
 
-    progressTimer = window.setInterval(() => {
-      const elapsedMs = Date.now() - startedAt;
-      const predicted = Math.min(textProgressCap, 6 + (elapsedMs / expectedMs) * Math.max(1, textProgressCap - 6));
-      setGenerateProgress((prev) => (predicted > prev ? predicted : prev));
-      setGenerateProgressLabel(`Generating cards... ${Math.round(predicted)}%`);
-      const estimatedDone =
-        totalRows > 0 ? Math.min(totalRows, Math.round((predicted / Math.max(textProgressCap, 1)) * totalRows)) : 0;
-      updateProgressMeta({
-        stage: "text",
-        done: estimatedDone,
-        total: totalRows,
-        batchIndex: 0,
-        batchTotal: 0,
-        waitingProvider: false,
-        elapsedMs,
-      });
-    }, 220);
-
     try {
       const runId = generateRunId();
-      const req: GenerateRequest = {
-        run_id: runId,
-        prompt_version: settings.promptVersion,
-        provider: settings.provider,
-        model: settings.model,
-        cefr: settings.cefr,
-        profile: settings.profile,
-        l1: settings.l1,
-        temperature: tempParsed.ratio,
-        items: parsed.items,
-      };
-
       const url = `${settings.apiBase || ""}/api/generate`;
       const headers = apiHeaders();
+      const totalTextBatches = Math.max(1, Math.ceil(totalRows / TEXT_BATCH_SIZE));
+      const mergedItems: GenerateResponse["items"] = [];
+      let mergedElapsedMs = 0;
+      let lastPayload: GenerateResponse | null = null;
 
-      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
-      const data = (await res.json().catch(() => null)) as any;
-      if (!res.ok) {
-        throw new Error(apiErrorText(data, res.status));
+      for (let offset = 0; offset < totalRows; offset += TEXT_BATCH_SIZE) {
+        const batchIndex = Math.floor(offset / TEXT_BATCH_SIZE) + 1;
+        const batchItems = parsed.items.slice(offset, offset + TEXT_BATCH_SIZE);
+        const doneBefore = mergedItems.length;
+        const batchStartedAt = Date.now();
+
+        const baseProgress = Math.min(
+          textProgressCap,
+          6 + (doneBefore / Math.max(totalRows, 1)) * Math.max(1, textProgressCap - 6)
+        );
+        const batchCapProgress = Math.min(
+          textProgressCap,
+          6 + ((doneBefore + batchItems.length * 0.9) / Math.max(totalRows, 1)) * Math.max(1, textProgressCap - 6)
+        );
+        const progressSpan = Math.max(0.5, batchCapProgress - baseProgress);
+        let waitingProgress = baseProgress;
+
+        setGenerateProgress((prev) => (baseProgress > prev ? baseProgress : prev));
+        setGenerateProgressLabel(`Generating cards: ${doneBefore}/${totalRows}. Batch ${batchIndex}/${totalTextBatches} in progress...`);
+        updateProgressMeta({
+          stage: "text",
+          done: doneBefore,
+          total: totalRows,
+          batchIndex,
+          batchTotal: totalTextBatches,
+          waitingProvider: false,
+          elapsedMs: Date.now() - startedAt,
+        });
+
+        if (progressTimer != null) {
+          window.clearInterval(progressTimer);
+          progressTimer = null;
+        }
+
+        progressTimer = window.setInterval(() => {
+          const step = Math.max(0.08, progressSpan / 18);
+          waitingProgress = Math.min(batchCapProgress, waitingProgress + step);
+          const waitingProvider = Date.now() - batchStartedAt >= WAITING_PROVIDER_MS;
+          const ratio = Math.max(0, Math.min(1, (waitingProgress - baseProgress) / progressSpan));
+          const estimatedDone = Math.min(totalRows, doneBefore + Math.round(ratio * batchItems.length * 0.9));
+
+          setGenerateProgress((prev) => (waitingProgress > prev ? waitingProgress : prev));
+          setGenerateProgressLabel(
+            `Generating cards: ${doneBefore}/${totalRows}. Batch ${batchIndex}/${totalTextBatches} in progress${
+              waitingProvider ? " (waiting provider...)" : ""
+            }...`
+          );
+          updateProgressMeta({
+            stage: "text",
+            done: estimatedDone,
+            total: totalRows,
+            batchIndex,
+            batchTotal: totalTextBatches,
+            waitingProvider,
+            elapsedMs: Date.now() - startedAt,
+          });
+        }, 350);
+
+        const req: GenerateRequest = {
+          run_id: runId,
+          prompt_version: settings.promptVersion,
+          provider: settings.provider,
+          model: settings.model,
+          cefr: settings.cefr,
+          profile: settings.profile,
+          l1: settings.l1,
+          temperature: tempParsed.ratio,
+          items: batchItems,
+        };
+
+        try {
+          const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
+          const data = (await res.json().catch(() => null)) as any;
+          if (!res.ok) {
+            throw new Error(`Batch ${batchIndex}/${totalTextBatches}: ${apiErrorText(data, res.status)}`);
+          }
+
+          const batchPayload = data as GenerateResponse;
+          lastPayload = batchPayload;
+          mergedElapsedMs += Number(batchPayload.timing?.elapsed_ms || 0);
+          mergedItems.push(...(Array.isArray(batchPayload.items) ? batchPayload.items : []));
+          generatedRows = mergedItems.length;
+
+          const partialPayload: GenerateResponse = {
+            ...batchPayload,
+            run_id: runId,
+            items: [...mergedItems],
+            timing: {
+              elapsed_ms: mergedElapsedMs > 0 ? mergedElapsedMs : Date.now() - startedAt,
+            },
+          };
+          setResponse(partialPayload);
+
+          const textProgress = Math.min(
+            textProgressCap,
+            6 + (generatedRows / Math.max(totalRows, 1)) * Math.max(1, textProgressCap - 6)
+          );
+          setGenerateProgress((prev) => (textProgress > prev ? textProgress : prev));
+          setGenerateProgressLabel(`Text ready: ${generatedRows}/${totalRows}. Batch ${batchIndex}/${totalTextBatches} complete.`);
+          updateProgressMeta({
+            stage: "text",
+            done: generatedRows,
+            total: totalRows,
+            batchIndex,
+            batchTotal: totalTextBatches,
+            waitingProvider: false,
+            elapsedMs: Date.now() - startedAt,
+          });
+        } finally {
+          if (progressTimer != null) {
+            window.clearInterval(progressTimer);
+            progressTimer = null;
+          }
+        }
       }
 
-      let payload = data as GenerateResponse;
+      if (!lastPayload) {
+        throw new Error("No generate response payload returned by API.");
+      }
+
+      let payload: GenerateResponse = {
+        ...lastPayload,
+        run_id: runId,
+        items: mergedItems,
+        timing: {
+          elapsed_ms: mergedElapsedMs > 0 ? mergedElapsedMs : Date.now() - startedAt,
+        },
+      };
       setResponse(payload);
-
-      if (progressTimer != null) {
-        window.clearInterval(progressTimer);
-        progressTimer = null;
-      }
 
       setGenerateProgress(textProgressCap);
       setGenerateProgressLabel(`Text ready: ${payload.items.length}/${totalRows}.`);
@@ -670,8 +774,8 @@ export default function App() {
         stage: "text",
         done: payload.items.length,
         total: totalRows,
-        batchIndex: 0,
-        batchTotal: 0,
+        batchIndex: totalTextBatches,
+        batchTotal: totalTextBatches,
         waitingProvider: false,
         elapsedMs: Date.now() - startedAt,
       });
@@ -892,12 +996,34 @@ export default function App() {
         waitingProvider: false,
         elapsedMs: Date.now() - startedAt,
       });
+
+      await refreshUsageSilently();
       setGenerateNotice("run", "success", `Generation completed: ${payload.items.length}/${totalRows} row(s).`);
     } catch (e: any) {
-      setGenerateNotice("run", "error", e?.message || String(e));
-      setGenerateProgress(0);
-      setGenerateProgressLabel("");
-      setGenerateProgressMeta(null);
+      await refreshUsageSilently();
+      const detail = e?.message || String(e);
+      const suffix = generatedRows > 0 ? ` Processed ${generatedRows}/${totalRows} row(s) before failure.` : "";
+      setGenerateNotice("run", "error", `${detail}${suffix}`);
+
+      if (generatedRows <= 0) {
+        setGenerateProgress(0);
+        setGenerateProgressLabel("");
+        setGenerateProgressMeta(null);
+      } else {
+        const partialProgress = Math.min(
+          textProgressCap,
+          6 + (generatedRows / Math.max(totalRows, 1)) * Math.max(1, textProgressCap - 6)
+        );
+        setGenerateProgress((prev) => (partialProgress > prev ? partialProgress : prev));
+        setGenerateProgressLabel(`Stopped: ${generatedRows}/${totalRows} row(s) generated.`);
+        updateProgressMeta({
+          stage: "text",
+          done: generatedRows,
+          total: totalRows,
+          waitingProvider: false,
+          elapsedMs: Date.now() - startedAt,
+        });
+      }
     } finally {
       if (progressTimer != null) {
         window.clearInterval(progressTimer);
