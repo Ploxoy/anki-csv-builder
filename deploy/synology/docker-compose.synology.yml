@@ -1,6 +1,43 @@
 services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.1.1
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: "${DOCKER_LOG_MAX_FILE:-3}"
+    environment:
+      CONTAINERS: 1
+      POST: 1
+      PING: 1
+      EVENTS: 0
+      IMAGES: 0
+      NETWORKS: 0
+      NODES: 0
+      SERVICES: 0
+      SYSTEM: 0
+      TASKS: 0
+      VOLUMES: 0
+      INFO: 0
+      VERSION: 0
+      AUTH: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      DISTRIBUTION: 0
+      EXEC: 0
+      GRPC: 0
+      PLUGINS: 0
+      SECRETS: 0
+      SESSION: 0
+      SWARM: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
   db:
     image: postgres:16-alpine
+    container_name: anki_db
     restart: unless-stopped
     logging:
       driver: json-file
@@ -20,6 +57,7 @@ services:
       retries: ${DB_HEALTHCHECK_RETRIES:-3}
 
   api:
+    container_name: anki_api
     build:
       context: ../..
       dockerfile: Dockerfile.api
@@ -58,6 +96,7 @@ services:
         condition: service_healthy
 
   web:
+    container_name: anki_web
     build:
       context: ../..
       dockerfile: web/deploy/Dockerfile.synology
@@ -67,7 +106,33 @@ services:
       options:
         max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
         max-file: "${DOCKER_LOG_MAX_FILE:-3}"
-    ports:
-      - "${WEB_PORT:-5173}:80"
     depends_on:
       - api
+
+  waker:
+    build:
+      context: ../..
+      dockerfile: deploy/synology/waker/Dockerfile
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: "${DOCKER_LOG_MAX_FILE:-3}"
+    environment:
+      WAKER_DOCKER_API_BASE: http://socket-proxy:2375
+      WAKER_TARGET_BASE: http://anki_web:80
+      WAKER_SERVICE_ORDER: anki_db,anki_api,anki_web
+      WAKER_IDLE_STOP: ${WAKER_IDLE_STOP:-1}
+      WAKER_IDLE_MINUTES: ${WAKER_IDLE_MINUTES:-60}
+      WAKER_IDLE_CHECK_SECONDS: ${WAKER_IDLE_CHECK_SECONDS:-30}
+      WAKER_START_TIMEOUT_SECONDS: ${WAKER_START_TIMEOUT_SECONDS:-120}
+      WAKER_TOUCH_FLUSH_SECONDS: ${WAKER_TOUCH_FLUSH_SECONDS:-15}
+      WAKER_PROXY_TIMEOUT_SECONDS: ${WAKER_PROXY_TIMEOUT_SECONDS:-120}
+      WAKER_LOG_LEVEL: ${WAKER_LOG_LEVEL:-info}
+    ports:
+      - "${WEB_PORT:-5173}:8080"
+    volumes:
+      - ${SYNO_BASE_PATH}/waker:/state
+    depends_on:
+      - socket-proxy

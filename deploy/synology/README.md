@@ -27,7 +27,42 @@ git clone <repo_url> app
 cd app
 ```
 
-## 3) Prepare `.env` and persistent folders
+## 3) One-command install (recommended)
+
+From repo root on NAS:
+
+```bash
+cd /volume1/docker/anki-csv-builder/app
+bash deploy/synology/scripts/install.sh
+```
+
+`install.sh` will:
+- keep existing `deploy/synology/.env` intact (default behavior),
+- create `.env` from `.env.example` only if `.env` is missing,
+- prepare persistent folders, validate env, start/rebuild services, and run smoke check.
+
+If you intentionally want to recreate `.env` from template:
+
+```bash
+bash deploy/synology/scripts/install.sh --force-env
+```
+
+Windows + PowerShell (run from your local machine):
+
+```powershell
+cd D:\github\anki\dev\anki-csv-builder
+powershell -ExecutionPolicy Bypass -File .\deploy\synology\scripts\install.ps1 `
+  -Nas "VKotenok@192.168.2.10" `
+  -LocalRepoPath "D:\github\anki\dev\anki-csv-builder" `
+  -RemoteAppPath "/volume1/docker/anki-csv-builder/app"
+```
+
+Notes:
+- by default `install.ps1` syncs project files and keeps remote `deploy/synology/.env`,
+- to skip file sync and only re-run remote install use `-SkipSync`,
+- to recreate remote `.env` from template use `-ForceEnv`.
+
+## 4) Prepare `.env` and persistent folders (manual path)
 
 Run helper scripts from repo root on NAS:
 
@@ -52,7 +87,7 @@ Optional:
 - `ELEVENLABS_API_KEY`
 - `PUBLIC_DOMAIN` / `ASUS_DDNS_HOST` (Stage 2 internet access)
 
-## 4) Deploy via DSM Container Manager (UI path)
+## 5) Deploy via DSM Container Manager (UI path)
 
 1. Open **Container Manager** -> **Project** -> **Create**.
 2. Choose **Create project from docker-compose file**.
@@ -61,6 +96,8 @@ Optional:
 4. Environment file:
    - `/volume1/docker/anki-csv-builder/app/deploy/synology/.env`
 5. Deploy and wait until services are running:
+   - `socket-proxy`
+   - `waker`
    - `db`
    - `api`
    - `web`
@@ -69,11 +106,12 @@ Notes:
 - first build can take several minutes on DS224+,
 - images are built locally on NAS (no registry required).
 
-## 5) LAN access and smoke checks
+## 6) LAN access and smoke checks
 
 Default endpoints:
 - Web UI: `http://<NAS_IP>:5173`
 - API health: `http://<NAS_IP>:8000/health`
+- Waker status: `http://<NAS_IP>:5173/_waker/status`
 
 Quick smoke from NAS shell:
 
@@ -92,12 +130,13 @@ UI smoke scenario:
 2. add 1-2 words,
 3. run `Generate -> Preview -> Export CSV`.
 
-## 6) Gentle mode (lower NAS background activity)
+## 7) Gentle mode (lower NAS background activity)
 
 This stack is tuned for NAS-friendly defaults:
 - API access logs are disabled (`uvicorn --no-access-log`),
 - docker logs are rotated (`DOCKER_LOG_MAX_SIZE`, `DOCKER_LOG_MAX_FILE`),
 - healthchecks are less frequent (`DB_HEALTHCHECK_*`, `API_HEALTHCHECK_*`).
+- auto-idle sleep is handled by `waker` (`WAKER_*`).
 
 You can tune these in `deploy/synology/.env`.
 
@@ -111,7 +150,21 @@ Then apply changes:
 docker compose -f deploy/synology/docker-compose.synology.yml --env-file deploy/synology/.env up -d
 ```
 
-## 7) Sleep mode (manual or scheduled)
+## 8) Sleep mode (auto + manual fallback)
+
+Automatic mode is enabled by default:
+- after `WAKER_IDLE_MINUTES` of no web traffic, `waker` stops `db+api+web`,
+- first new request to web port wakes services automatically.
+
+Tune in `.env`:
+- `WAKER_IDLE_STOP=1`
+- `WAKER_IDLE_MINUTES=60`
+- `WAKER_START_TIMEOUT_SECONDS=120`
+
+Operational note:
+- the first request after sleep can take 10-90 seconds; during wake-up client may receive `503`, then refresh.
+
+Manual mode is still available:
 
 Warm sleep (keep DB running, stop API+Web):
 
@@ -119,7 +172,7 @@ Warm sleep (keep DB running, stop API+Web):
 bash deploy/synology/scripts/sleep.sh warm
 ```
 
-Deep sleep (stop all services):
+Deep sleep (stop `db+api+web`, keep `waker` alive for auto-wake):
 
 ```bash
 bash deploy/synology/scripts/sleep.sh deep
@@ -133,7 +186,7 @@ bash deploy/synology/scripts/wake.sh
 
 Tip: run these scripts from DSM Task Scheduler for night/off-hours.
 
-## 8) Update cycle (`git pull`)
+## 9) Update cycle (`git pull`)
 
 From NAS repo root:
 
@@ -151,7 +204,7 @@ If you prefer manual update in DSM UI:
 2. in Project: Rebuild/Update,
 3. run smoke check again.
 
-## 9) Acceptance checklist
+## 10) Acceptance checklist
 
 - Cold start: `db`, `api`, `web` all running.
 - Health: `/health` is reachable after container restart.
@@ -160,7 +213,7 @@ If you prefer manual update in DSM UI:
 - Secrets sanity: wrong `OPENAI_API_KEY` does not crash containers, only generation fails.
 - Update path: `git pull` + rebuild works with no manual compose edits.
 
-## 10) Troubleshooting
+## 11) Troubleshooting
 
 - Ports busy (`5173` / `8000`):
   - change `WEB_PORT` / `API_PORT` in `deploy/synology/.env`, redeploy.
@@ -171,7 +224,7 @@ If you prefer manual update in DSM UI:
   - verify `POSTGRES_PASSWORD`,
   - verify write access to `${SYNO_BASE_PATH}/pgdata`.
 
-## 11) Stage 2: internet access (later)
+## 12) Stage 2: internet access (later)
 
 When LAN deployment is stable, follow:
 - [`REVERSE_PROXY.md`](./REVERSE_PROXY.md)

@@ -39,6 +39,7 @@ ASUS_DDNS_HOST=
 
 # Service ports exposed from NAS
 API_PORT=8000
+# WEB_PORT is handled by waker
 WEB_PORT=5173
 
 # Postgres
@@ -53,6 +54,15 @@ API_SHARED_SECRET=change-this-admin-secret
 # Provider keys (server-side only)
 OPENAI_API_KEY=sk-...
 ELEVENLABS_API_KEY=
+
+# Auto sleep/wake (waker)
+WAKER_IDLE_STOP=1
+WAKER_IDLE_MINUTES=60
+WAKER_IDLE_CHECK_SECONDS=30
+WAKER_START_TIMEOUT_SECONDS=120
+WAKER_TOUCH_FLUSH_SECONDS=15
+WAKER_PROXY_TIMEOUT_SECONDS=120
+WAKER_LOG_LEVEL=info
 EOF
     echo "Template missing; created ${ENV_FILE} from built-in defaults."
   fi
@@ -73,11 +83,13 @@ if [[ -z "$SYNO_BASE_PATH" ]]; then
 fi
 
 mkdir -p "${SYNO_BASE_PATH}/pgdata" "${SYNO_BASE_PATH}/cache" "${SYNO_BASE_PATH}/logs"
+mkdir -p "${SYNO_BASE_PATH}/waker"
 
 echo "Prepared persistent directories:"
 echo "  - ${SYNO_BASE_PATH}/pgdata"
 echo "  - ${SYNO_BASE_PATH}/cache"
 echo "  - ${SYNO_BASE_PATH}/logs"
+echo "  - ${SYNO_BASE_PATH}/waker"
 echo
 echo "Next:"
 echo "  1) edit ${ENV_FILE}"

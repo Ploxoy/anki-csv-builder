@@ -1,6 +1,6 @@
 # Status — Anki CSV Builder
 
-*(обновлено: 2026-02-17)*
+*(обновлено: 2026-03-09)*
 
 ## Кратко
 - MVP закрывает генерацию NL карточек с CSV/APKG экспортом, пакетной обработкой и базовой панелью диагностики.
@@ -16,7 +16,16 @@
   - ElevenLabs: динамическая загрузка голосов по `ELEVENLABS_API_KEY`, фильтр по NL, spoken_language=nl, экспоненциальный бэк-офф на 429.
   - Голос хранится помодульно (`audio_voice_map`), переключение провайдера не сбрасывает выбор.
 - **Secrets**: `OPENAI_API_KEY` и `ELEVENLABS_API_KEY` подтягиваются из secrets/env при старте, без ручного ввода.
-- **Тесты**: `pytest` (29 тестов) зелёный.
+- **Тесты**: `pytest` зелёный, включая свежие проверки API-контрактов TTS.
+
+## Свежие изменения (март 2026)
+- **Synology deploy/docs**: обновлён пакет деплоя для NAS — `deploy/synology/REVERSE_PROXY.md` (gate-check public IP vs CGNAT), `deploy/synology/CLOUDFLARE_TUNNEL.md` (fallback), `deploy/synology/docker-compose.cloudflared.yml`, шаблон `deploy/synology/.env.cloudflare.example`.
+- **Проверочные скрипты**: добавлены `deploy/synology/scripts/check_wan_mode.sh` и `deploy/synology/scripts/check_public_endpoints.sh` для верификации internet-stage.
+- **Runbook**: зафиксирован персональный чеклист `deploy/synology/RUNBOOK_192.168.2.10.md` c актуальным пользователем `VKotenok` и шагами внешнего доступа.
+- **Windows/LAN pipeline**: добавлен `deploy/synology/Deploy-FromLan.ps1` (update-only) — SSH preflight, `git fetch/checkout/pull --ff-only`, `validate_env`, `docker compose up --build`, smoke + локальные HTTP health-checks с retry.
+- **Web TTS options UX**: `Reload model list` в web теперь обновляет и text-модели, и TTS-модели/голоса из backend; добавлен тихий авто-refresh списка по мере работы backend.
+- **API TTS options**: `_filter_openai_tts_models` сначала возвращает live-discovered список, fallback к дефолтным моделям используется только если discovery недоступен/пуст.
+- **Тесты**: расширен `tests/test_api_tts.py` (покрытие фильтра TTS-моделей).
 
 ## Свежие изменения (февраль 2026)
 - Deep UI Rework v1 (web): интерфейс переведён на light theme по `notes/Doedutch_UI_Guide.md`, логика вкладок сохранена (`Generate / Settings / Admin`).
@@ -95,18 +104,20 @@
 - **AnkiWeb + Chrome forced dark mode**: если в Chrome включён «auto dark theme for sites»/`chrome://flags/#enable-force-dark`, встроенный CSS AnkiWeb перекрашивает контент в белый, и наши cloze/def поля становятся невидимыми. Решение: отключить forced dark (или использовать стандартный режим/Edge). В шаблоны вмешиваться не планируем.
 
 ## Следующие шаги (предлагаемые)
-1. **Users + персональные настройки + учёт usage (Phase 0.5, без платежей)**: invite-token auth (admin создаёт инвайты, пользователи ходят с `Authorization: Bearer ...`), settings/usage в Postgres, read-only просмотр usage.
-2. **Максимально упростить интерфейс**: сделать “happy path” в web UI (Generate → Preview → Export) и держать Streamlit как legacy/dev-панель до миграции.
-3. **Фиксировать контракт данных между UI и core**: описать state/DTO (в т.ч. `generation_section`) для дальнейших рефакторингов без регрессий.
-4. **Дожать preview UX**: решить политику для ручного снятия `error` после редактирования (когда запись считать исправленной и экспортируемой).
-5. **N2 (ElevenLabs UX)**: intentionally deferred на неопределённый срок; вероятен внешний фактор (изменения ElevenLabs API), вернуться после стабилизации API-контракта.
-6. **TTS-опыт**: curated список голосов, предпрослушка, быстрые метки качества/акцента.
-7. **Streaming/async для TTS**: прогресс по каждому запросу (очередь/asyncio — по необходимости).
-8. **Обновление прайс-листа**: автоматизировать/проверять `config/pricing.py` при появлении новых моделей и дублировать краткую инструкцию в README.
-9. **SQLite cache (фича-флаг)**: подготовить слой, но не включать по умолчанию.
-10. **Standalone launcher**: `setup_env.bat/.sh` + `run_app` сценарии (без dev-контейнера) для “non-dev” запуска.
-11. **Vision 2.0**: держать актуальным `notes/vision_v2.md`.
-12. **Multi-provider (post-MVP)**: добавлять альтернативы только при strict JSON + usage + прозрачной тарификации.
+1. **Прогнать end-to-end Windows pipeline в LAN**: `Deploy-FromLan.ps1` на реальном ключе/пользователе, зафиксировать типовые ошибки (SSH key, branch drift, compose health).
+2. **Internet stage production-check**: после стабилизации LAN пройти `check_wan_mode.sh` + выбранный путь (direct или Cloudflare Tunnel), затем `check_public_endpoints.sh` с внешней сети.
+3. **Users + персональные настройки + учёт usage (Phase 0.5, без платежей)**: invite-token auth (admin создаёт инвайты, пользователи ходят с `Authorization: Bearer ...`), settings/usage в Postgres, read-only просмотр usage.
+4. **Максимально упростить интерфейс**: сделать “happy path” в web UI (Generate → Preview → Export) и держать Streamlit как legacy/dev-панель до миграции.
+5. **Фиксировать контракт данных между UI и core**: описать state/DTO (в т.ч. `generation_section`) для дальнейших рефакторингов без регрессий.
+6. **Дожать preview UX**: решить политику для ручного снятия `error` после редактирования (когда запись считать исправленной и экспортируемой).
+7. **N2 (ElevenLabs UX)**: intentionally deferred на неопределённый срок; вероятен внешний фактор (изменения ElevenLabs API), вернуться после стабилизации API-контракта.
+8. **TTS-опыт**: curated список голосов, предпрослушка, быстрые метки качества/акцента.
+9. **Streaming/async для TTS**: прогресс по каждому запросу (очередь/asyncio — по необходимости).
+10. **Обновление прайс-листа**: автоматизировать/проверять `config/pricing.py` при появлении новых моделей и дублировать краткую инструкцию в README.
+11. **SQLite cache (фича-флаг)**: подготовить слой, но не включать по умолчанию.
+12. **Standalone launcher**: `setup_env.bat/.sh` + `run_app` сценарии (без dev-контейнера) для “non-dev” запуска.
+13. **Vision 2.0**: держать актуальным `notes/vision_v2.md`.
+14. **Multi-provider (post-MVP)**: добавлять альтернативы только при strict JSON + usage + прозрачной тарификации.
 
 ## Проверка окружения (smoke)
 1. `pip install -r requirements.txt`

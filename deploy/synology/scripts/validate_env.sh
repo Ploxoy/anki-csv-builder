@@ -89,7 +89,7 @@ if [[ -n "$PUBLIC_DOMAIN" && -z "$ASUS_DDNS_HOST" ]]; then
   echo "WARN: ASUS_DDNS_HOST is empty while PUBLIC_DOMAIN is set."
 fi
 
-if [[ ! -d "${SYNO_BASE_PATH}/pgdata" || ! -d "${SYNO_BASE_PATH}/cache" || ! -d "${SYNO_BASE_PATH}/logs" ]]; then
+if [[ ! -d "${SYNO_BASE_PATH}/pgdata" || ! -d "${SYNO_BASE_PATH}/cache" || ! -d "${SYNO_BASE_PATH}/logs" || ! -d "${SYNO_BASE_PATH}/waker" ]]; then
   echo "ERROR: persistent directories are missing under ${SYNO_BASE_PATH}" >&2
   echo "Run: bash deploy/synology/scripts/prepare.sh" >&2
   exit 1
