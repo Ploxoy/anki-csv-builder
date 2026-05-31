@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
@@ -44,6 +45,10 @@ from core.api_schemas import (
     TTSResponse,
     TTSAudio,
     TTSSummary,
+    GenerateJobCreateResponse,
+    GenerateJobStatusResponse,
+    GenerateJobWorkerRequest,
+    GenerateJobWorkerResponse,
 )
 from core.generation import GenerationSettings, generate_card
 from core.llm_clients import create_client
@@ -96,6 +101,12 @@ from core.db import (
     resolve_user_id_from_token,
     set_user_status,
     upsert_user_settings,
+    create_generation_job,
+    get_generation_job,
+    claim_generation_job,
+    update_generation_job_progress,
+    complete_generation_job,
+    fail_generation_job,
 )
 
 
@@ -533,6 +544,100 @@ def api_usage(
     return _make_usage_response(user_id=user_id, rows=rows)
 
 
+def _generate_one_item(
+    *,
+    client: Any,
+    payload: GenerateRequest,
+    item: Any,
+    idx: int,
+    l1_code: str,
+    l1_meta: Dict[str, Any],
+    signal_usage: Dict[str, int],
+    signal_last: Any,
+) -> tuple[GenerateItemResult, Dict[str, Any], Dict[str, int], Any]:
+    row = {
+        "woord": item.woord,
+        "def_nl": item.def_nl or "",
+        "translation": item.translation or "",
+    }
+    settings = GenerationSettings(
+        model=payload.model,
+        provider=payload.provider or "openai",
+        L1_code=l1_code,
+        L1_name=l1_meta.get("name", l1_code),
+        level=payload.cefr,
+        profile=payload.profile,
+        temperature=payload.temperature,
+        max_output_tokens=payload.max_output_tokens,
+        signalword_seed=idx,
+    )
+    result = generate_card(
+        client=client,
+        row=row,
+        settings=settings,
+        signalword_groups=SIGNALWORD_GROUPS,
+        signalwords_b1=SIGNALWORDS_B1,
+        signalwords_b2_plus=SIGNALWORDS_B2_PLUS,
+        signal_usage=signal_usage,
+        signal_last=signal_last,
+    )
+    next_usage = result.signal_usage or signal_usage
+    next_last = result.signal_last or signal_last
+    card = result.card
+    meta = card.get("meta") or {}
+    status = _status_from_card(card)
+    out_item = GenerateItemResult(
+        id=item.id,
+        status=status,  # type: ignore[arg-type]
+        card=card if status in {"ok", "repaired"} else None,
+        error=card.get("error") or None,
+        usage=_usage_from_meta(meta),
+    )
+    return out_item, card, next_usage, next_last
+
+
+def _finalize_generate_response(
+    *,
+    payload: GenerateRequest,
+    run_id: str,
+    results_cards: List[Dict[str, Any]],
+    items_out: List[GenerateItemResult],
+    signal_usage: Dict[str, int],
+    signal_last: Any,
+    started: float,
+    user_id: str,
+) -> GenerateResponse:
+    elapsed = time.time() - started
+    run_stats = {
+        "elapsed": elapsed,
+        "batches": 1,
+        "items": len(results_cards),
+        "start_ts": started,
+        "transient": 0,
+    }
+    state: Dict[str, Any] = {
+        "results": results_cards,
+        "sig_usage": signal_usage,
+        "sig_last": signal_last,
+        "audio_summary": {},
+        "run_stats": run_stats,
+    }
+    run_report = build_run_report(SimpleNamespace(**state))
+    try:
+        log_usage_events(user_id=user_id, run_id=run_id or "", events=run_report.get("usage_events", []))
+    except Exception:
+        pass
+    return GenerateResponse(
+        run_id=run_id,
+        prompt_version=payload.prompt_version,
+        provider=payload.provider,
+        model=payload.model,
+        items=items_out,
+        run_report=run_report,
+        timing={"elapsed_ms": int(elapsed * 1000)},
+    )
+
+
 @app.post("/api/generate", response_model=GenerateResponse)
 def api_generate(
     payload: GenerateRequest,
@@ -550,94 +655,320 @@ def api_generate(
 
     signal_usage: Dict[str, int] = {}
     signal_last = None
-
     results_cards: List[Dict[str, Any]] = []
     items_out: List[GenerateItemResult] = []
-
     started = time.time()
     for idx, item in enumerate(payload.items):
-        row = {
-            "woord": item.woord,
-            "def_nl": item.def_nl or "",
-            "translation": item.translation or "",
-        }
-        settings = GenerationSettings(
-            model=payload.model,
-            provider=payload.provider or "openai",
-            L1_code=l1_code,
-            L1_name=l1_meta.get("name", l1_code),
-            level=payload.cefr,
-            profile=payload.profile,
-            temperature=payload.temperature,
-            max_output_tokens=payload.max_output_tokens,
-            signalword_seed=idx,
-        )
-
         try:
-            result = generate_card(
+            out_item, card, signal_usage, signal_last = _generate_one_item(
                 client=client,
-                row=row,
-                settings=settings,
-                signalword_groups=SIGNALWORD_GROUPS,
-                signalwords_b1=SIGNALWORDS_B1,
-                signalwords_b2_plus=SIGNALWORDS_B2_PLUS,
+                payload=payload,
+                item=item,
+                idx=idx,
+                l1_code=l1_code,
+                l1_meta=l1_meta,
                 signal_usage=signal_usage,
                 signal_last=signal_last,
             )
         except AuthenticationError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-        signal_usage = result.signal_usage or signal_usage
-        signal_last = result.signal_last or signal_last
-        card = result.card
+        items_out.append(out_item)
         results_cards.append(card)
 
-        meta = card.get("meta") or {}
-        status = _status_from_card(card)
-        items_out.append(
-            GenerateItemResult(
-                id=item.id,
-                status=status,  # type: ignore[arg-type]
-                card=card if status in {"ok", "repaired"} else None,
-                error=card.get("error") or None,
-                usage=_usage_from_meta(meta),
-            )
+    return _finalize_generate_response(
+        payload=payload,
+        run_id=payload.run_id or "",
+        results_cards=results_cards,
+        items_out=items_out,
+        signal_usage=signal_usage,
+        signal_last=signal_last,
+        started=started,
+        user_id=user_id,
+    )
+
+
+@app.post("/api/jobs/generate", response_model=GenerateJobCreateResponse)
+def api_create_generate_job(
+    payload: GenerateRequest,
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> GenerateJobCreateResponse:
+    ok_db, reason = db_status()
+    if not ok_db:
+        raise HTTPException(status_code=503, detail=reason)
+    user_id = _require_user(request, x_api_key)
+    run_id = (payload.run_id or "").strip() or str(uuid.uuid4())
+    payload_data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    payload_data["run_id"] = run_id
+    total_items = len(payload.items or [])
+    job_id = create_generation_job(
+        user_id=user_id,
+        run_id=run_id,
+        payload=payload_data,
+        total_items=total_items,
+    )
+    if not job_id:
+        raise HTTPException(status_code=500, detail="Failed to create generation job")
+    return GenerateJobCreateResponse(job_id=job_id, run_id=run_id, status="queued")
+
+
+@app.get("/api/jobs/generate/{job_id}", response_model=GenerateJobStatusResponse)
+def api_get_generate_job(
+    job_id: str,
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> GenerateJobStatusResponse:
+    ok_db, reason = db_status()
+    if not ok_db:
+        raise HTTPException(status_code=503, detail=reason)
+    user_id = _require_user(request, x_api_key)
+    job = get_generation_job(job_id=job_id, user_id=user_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    result_payload = None
+    if job.get("status") == "done":
+        result_raw = job.get("result_json") or {}
+        if isinstance(result_raw, dict) and result_raw:
+            try:
+                result_payload = GenerateResponse(**result_raw)
+            except Exception:
+                result_payload = None
+    return GenerateJobStatusResponse(
+        job_id=job["id"],
+        run_id=job["run_id"],
+        status=job["status"],
+        processed_items=int(job.get("processed_items") or 0),
+        total_items=int(job.get("total_items") or 0),
+        error=(job.get("error_text") or None),
+        result=result_payload,
+        updated_at=job.get("updated_at"),
+    )
+
+
+@app.post("/api/jobs/generate/worker", response_model=GenerateJobWorkerResponse)
+def api_generate_worker(
+    payload: GenerateJobWorkerRequest,
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> GenerateJobWorkerResponse:
+    ok_db, reason = db_status()
+    if not ok_db:
+        raise HTTPException(status_code=503, detail=reason)
+    auth_header = (request.headers.get("Authorization") or "").strip()
+    cron_secret = (os.getenv("CRON_SECRET") or "").strip()
+    cron_authorized = bool(
+        cron_secret
+        and auth_header.startswith("Bearer ")
+        and hmac.compare_digest(auth_header[len("Bearer ") :].strip(), cron_secret)
+    )
+    user_id: str | None = None
+    if not cron_authorized:
+        user_id = _require_user(request, x_api_key)
+
+    stale_seconds = int(os.getenv("GENERATE_JOB_STALE_SECONDS", "300") or "300")
+    default_max_items = int(os.getenv("GENERATE_JOB_MAX_ITEMS_PER_WORKER", "2") or "2")
+    max_items = max(1, min(int(payload.max_items or default_max_items), 20))
+
+    claimed = claim_generation_job(
+        user_id=user_id if not cron_authorized else None,
+        job_id=(payload.job_id or None),
+        stale_seconds=stale_seconds,
+    )
+    if not claimed:
+        return GenerateJobWorkerResponse(
+            processed=False,
+            message="No queued/runnable jobs",
         )
 
-    elapsed = time.time() - started
-    run_stats = {
-        "elapsed": elapsed,
-        "batches": 1,
-        "items": len(results_cards),
-        "start_ts": started,
-        "transient": 0,
-    }
-
-    # Build a fake state compatible with run_report
-    state: Dict[str, Any] = {
-        "results": results_cards,
-        "sig_usage": signal_usage,
-        "sig_last": signal_last,
-        "audio_summary": {},
-        "run_stats": run_stats,
-    }
-    run_report = build_run_report(SimpleNamespace(**state))
-
-    # Persist usage events if DB configured
+    job_id = claimed["id"]
+    run_id = claimed["run_id"]
+    job_owner_id = str(claimed.get("user_id") or user_id or "")
     try:
-        log_usage_events(user_id=user_id, run_id=payload.run_id or "", events=run_report.get("usage_events", []))
-    except Exception:
-        pass
+        request_payload = GenerateRequest(**(claimed.get("payload_json") or {}))
+    except Exception as exc:
+        fail_generation_job(job_id=job_id, error_text=f"Invalid payload: {exc}")
+        return GenerateJobWorkerResponse(
+            processed=True,
+            job_id=job_id,
+            status="failed",
+            processed_items=int(claimed.get("processed_items") or 0),
+            total_items=int(claimed.get("total_items") or 0),
+            message="Job payload is invalid",
+        )
 
-    return GenerateResponse(
-        run_id=payload.run_id or "",
-        prompt_version=payload.prompt_version,
-        provider=payload.provider,
-        model=payload.model,
-        items=items_out,
-        run_report=run_report,
-        timing={"elapsed_ms": int(elapsed * 1000)},
+    l1_code = (request_payload.l1 or "").strip().upper()
+    l1_meta = L1_LANGS.get(l1_code)
+    if not l1_meta:
+        fail_generation_job(job_id=job_id, error_text=f"Unsupported l1={request_payload.l1!r}")
+        return GenerateJobWorkerResponse(
+            processed=True,
+            job_id=job_id,
+            status="failed",
+            processed_items=int(claimed.get("processed_items") or 0),
+            total_items=int(claimed.get("total_items") or 0),
+            message="Unsupported L1 language",
+        )
+
+    state = claimed.get("state_json") or {}
+    processed_items = int(claimed.get("processed_items") or 0)
+    total_items = int(claimed.get("total_items") or len(request_payload.items or []))
+    total_items = max(total_items, len(request_payload.items or []))
+
+    items_out_raw = state.get("items_out") if isinstance(state.get("items_out"), list) else []
+    results_cards = state.get("results_cards") if isinstance(state.get("results_cards"), list) else []
+    signal_usage = state.get("signal_usage") if isinstance(state.get("signal_usage"), dict) else {}
+    signal_last = state.get("signal_last")
+    started_epoch = float(state.get("started_epoch") or time.time())
+
+    try:
+        client = _openai_client_or_500()
+    except HTTPException as exc:
+        fail_generation_job(job_id=job_id, error_text=str(exc.detail), state=state, processed_items=processed_items)
+        return GenerateJobWorkerResponse(
+            processed=True,
+            job_id=job_id,
+            status="failed",
+            processed_items=processed_items,
+            total_items=total_items,
+            message=str(exc.detail),
+        )
+
+    if processed_items >= total_items:
+        existing = get_generation_job(job_id=job_id, user_id=(None if cron_authorized else user_id))
+        status = (existing or {}).get("status", "running")
+        return GenerateJobWorkerResponse(
+            processed=True,
+            job_id=job_id,
+            status=status,
+            processed_items=processed_items,
+            total_items=total_items,
+            message="Job already processed",
+        )
+
+    end_index = min(total_items, processed_items + max_items)
+    for idx in range(processed_items, end_index):
+        item = request_payload.items[idx]
+        try:
+            out_item, card, signal_usage, signal_last = _generate_one_item(
+                client=client,
+                payload=request_payload,
+                item=item,
+                idx=idx,
+                l1_code=l1_code,
+                l1_meta=l1_meta,
+                signal_usage=signal_usage,
+                signal_last=signal_last,
+            )
+        except AuthenticationError as exc:
+            fail_generation_job(
+                job_id=job_id,
+                error_text=str(exc),
+                state={
+                    "items_out": items_out_raw,
+                    "results_cards": results_cards,
+                    "signal_usage": signal_usage,
+                    "signal_last": signal_last,
+                    "started_epoch": started_epoch,
+                },
+                processed_items=idx,
+            )
+            return GenerateJobWorkerResponse(
+                processed=True,
+                job_id=job_id,
+                status="failed",
+                processed_items=idx,
+                total_items=total_items,
+                message=str(exc),
+            )
+        except Exception as exc:
+            fail_generation_job(
+                job_id=job_id,
+                error_text=f"Generation failed at item {idx + 1}: {exc}",
+                state={
+                    "items_out": items_out_raw,
+                    "results_cards": results_cards,
+                    "signal_usage": signal_usage,
+                    "signal_last": signal_last,
+                    "started_epoch": started_epoch,
+                },
+                processed_items=idx,
+            )
+            return GenerateJobWorkerResponse(
+                processed=True,
+                job_id=job_id,
+                status="failed",
+                processed_items=idx,
+                total_items=total_items,
+                message=str(exc),
+            )
+
+        items_out_raw.append(out_item.model_dump() if hasattr(out_item, "model_dump") else out_item.dict())
+        results_cards.append(card)
+        processed_items = idx + 1
+
+    new_state = {
+        "items_out": items_out_raw,
+        "results_cards": results_cards,
+        "signal_usage": signal_usage,
+        "signal_last": signal_last,
+        "started_epoch": started_epoch,
+    }
+
+    if processed_items < total_items:
+        update_generation_job_progress(
+            job_id=job_id,
+            processed_items=processed_items,
+            state=new_state,
+        )
+        return GenerateJobWorkerResponse(
+            processed=True,
+            job_id=job_id,
+            status="running",
+            processed_items=processed_items,
+            total_items=total_items,
+            message="Progress saved",
+        )
+
+    items_out: List[GenerateItemResult] = []
+    for raw in items_out_raw:
+        try:
+            items_out.append(GenerateItemResult(**raw))
+        except Exception:
+            pass
+    response_payload = _finalize_generate_response(
+        payload=request_payload,
+        run_id=run_id,
+        results_cards=results_cards,
+        items_out=items_out,
+        signal_usage=signal_usage,
+        signal_last=signal_last,
+        started=started_epoch,
+        user_id=job_owner_id,
     )
+    result_data = response_payload.model_dump() if hasattr(response_payload, "model_dump") else response_payload.dict()
+    complete_generation_job(
+        job_id=job_id,
+        result=result_data,
+        processed_items=processed_items,
+    )
+    return GenerateJobWorkerResponse(
+        processed=True,
+        job_id=job_id,
+        status="done",
+        processed_items=processed_items,
+        total_items=total_items,
+        message="Job completed",
+    )
+
+
+@app.get("/api/jobs/generate/worker", response_model=GenerateJobWorkerResponse)
+def api_generate_worker_cron(
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    max_items: int | None = None,
+) -> GenerateJobWorkerResponse:
+    payload = GenerateJobWorkerRequest(job_id=None, max_items=max_items)
+    return api_generate_worker(payload=payload, request=request, x_api_key=x_api_key)
 
 
 @app.post("/api/export/csv", response_model=ExportFileResponse)

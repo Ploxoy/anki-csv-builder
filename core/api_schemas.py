@@ -195,6 +195,37 @@ class GenerateResponse(BaseModel):
     timing: Dict[str, Any]
 
 
+class GenerateJobCreateResponse(BaseModel):
+    job_id: str
+    run_id: str
+    status: Literal["queued", "running", "done", "failed"]
+
+
+class GenerateJobStatusResponse(BaseModel):
+    job_id: str
+    run_id: str
+    status: Literal["queued", "running", "done", "failed"]
+    processed_items: int = 0
+    total_items: int = 0
+    error: Optional[str] = None
+    result: Optional[GenerateResponse] = None
+    updated_at: Optional[str] = None
+
+
+class GenerateJobWorkerRequest(BaseModel):
+    job_id: Optional[str] = None
+    max_items: Optional[int] = None
+
+
+class GenerateJobWorkerResponse(BaseModel):
+    processed: bool
+    job_id: Optional[str] = None
+    status: Optional[Literal["queued", "running", "done", "failed"]] = None
+    processed_items: int = 0
+    total_items: int = 0
+    message: Optional[str] = None
+
+
 # ---------- Export ----------
 
 class ExportCard(BaseModel):

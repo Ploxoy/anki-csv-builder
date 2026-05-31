@@ -62,6 +62,23 @@ export type GenerateResponse = {
   timing: { elapsed_ms: number };
 };
 
+export type GenerateJobCreateResponse = {
+  job_id: string;
+  run_id: string;
+  status: "queued" | "running" | "done" | "failed";
+};
+
+export type GenerateJobStatusResponse = {
+  job_id: string;
+  run_id: string;
+  status: "queued" | "running" | "done" | "failed";
+  processed_items: number;
+  total_items: number;
+  error?: string | null;
+  result?: GenerateResponse | null;
+  updated_at?: string | null;
+};
+
 export type ExportDeckRequest = {
   run_id?: string;
   l1: string;

@@ -33,6 +33,11 @@
   - Скрипты `sleep.sh` / `wake.sh` / `update.sh` переведены на общий helper `deploy/synology/scripts/docker_cmd.sh` для DSM-окружений с нестандартным `PATH`.
   - Введён hotfix таймаутов для длинных запусков: `WAKER_PROXY_TIMEOUT_SECONDS=600` + таймауты в `web/deploy/nginx.synology.conf`, чтобы снизить HTTP 504 при длинной генерации.
 - **Resolved long-run 504 (2026-03-30)**: подтверждён успешный запуск длинного списка (52 записи, audio off). Корневая причина была составной: один длинный HTTP-запрос `/api/generate` и неприменённый deploy (compose не выполнялся из-за `docker.sock` permissions без `sudo`). Исправление: batched text-generation в `web/src/App.tsx` + перезапуск стека через `sudo`.
+- **Vercel Plan C foundation (2026-05-31)**:
+  - В API добавлены async endpoints для генерации: `POST /api/jobs/generate`, `GET /api/jobs/generate/{job_id}`, `POST/GET /api/jobs/generate/worker`.
+  - В Postgres добавлена очередь `generation_jobs` (payload/state/result/progress) и helper-функции в `core/db.py`.
+  - Web `onGenerate` переведён на job-пайплайн (enqueue + worker tick + poll status) с fallback на старый sync `/api/generate`, если job-endpoints недоступны.
+  - Для Vercel добавлены `vercel.json`, `api/index.py`, `api/requirements.txt` (единая FastAPI функция + SPA build + cron route для worker).
 
 ## Свежие изменения (февраль 2026)
 - Deep UI Rework v1 (web): интерфейс переведён на light theme по `notes/Doedutch_UI_Guide.md`, логика вкладок сохранена (`Generate / Settings / Admin`).

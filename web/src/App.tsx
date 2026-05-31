@@ -7,6 +7,8 @@ import {
   ExportFileResponse,
   GenerateRequest,
   GenerateResponse,
+  GenerateJobCreateResponse,
+  GenerateJobStatusResponse,
   InviteCreateResponse,
   TTSOptionsResponse,
   TTSRequest,
@@ -632,11 +634,79 @@ export default function App() {
     try {
       const runId = generateRunId();
       const url = `${settings.apiBase || ""}/api/generate`;
+      const jobsCreateUrl = `${settings.apiBase || ""}/api/jobs/generate`;
+      const jobsWorkerUrl = `${settings.apiBase || ""}/api/jobs/generate/worker`;
       const headers = apiHeaders();
+      const useAsyncGenerate = (window.localStorage.getItem("use_async_generate") || "1").trim() !== "0";
+      let asyncGenerateEnabled = useAsyncGenerate;
       const totalTextBatches = Math.max(1, Math.ceil(totalRows / TEXT_BATCH_SIZE));
       const mergedItems: GenerateResponse["items"] = [];
       let mergedElapsedMs = 0;
       let lastPayload: GenerateResponse | null = null;
+      const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+      const runBatchViaJobQueue = async (
+        req: GenerateRequest,
+        batchIndex: number,
+        doneBefore: number,
+        batchSize: number
+      ): Promise<GenerateResponse> => {
+        const createdRes = await fetch(jobsCreateUrl, { method: "POST", headers, body: JSON.stringify(req) });
+        const createdData = (await createdRes.json().catch(() => null)) as any;
+        if (!createdRes.ok) {
+          throw new Error(`Batch ${batchIndex}/${totalTextBatches}: ${apiErrorText(createdData, createdRes.status)}`);
+        }
+        const created = createdData as GenerateJobCreateResponse;
+        if (!created?.job_id) {
+          throw new Error(`Batch ${batchIndex}/${totalTextBatches}: job_id was not returned by API.`);
+        }
+        const jobId = created.job_id;
+        const pollDeadline = Date.now() + 15 * 60 * 1000;
+        let lastStatus: GenerateJobStatusResponse | null = null;
+        while (Date.now() < pollDeadline) {
+          await fetch(jobsWorkerUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ job_id: jobId, max_items: 2 }),
+          }).catch(() => null);
+
+          const statusRes = await fetch(`${jobsCreateUrl}/${encodeURIComponent(jobId)}`, {
+            method: "GET",
+            headers,
+          });
+          const statusData = (await statusRes.json().catch(() => null)) as any;
+          if (!statusRes.ok) {
+            throw new Error(`Batch ${batchIndex}/${totalTextBatches}: ${apiErrorText(statusData, statusRes.status)}`);
+          }
+          const status = statusData as GenerateJobStatusResponse;
+          lastStatus = status;
+          const processed = Math.max(0, Math.min(batchSize, status.processed_items || 0));
+          const doneNow = Math.min(totalRows, doneBefore + processed);
+          updateProgressMeta({
+            stage: "text",
+            done: doneNow,
+            total: totalRows,
+            batchIndex,
+            batchTotal: totalTextBatches,
+            waitingProvider: status.status === "running",
+            elapsedMs: Date.now() - startedAt,
+          });
+          if (status.status === "done") {
+            if (!status.result) {
+              throw new Error(`Batch ${batchIndex}/${totalTextBatches}: completed without result payload.`);
+            }
+            return status.result;
+          }
+          if (status.status === "failed") {
+            throw new Error(
+              `Batch ${batchIndex}/${totalTextBatches}: ${status.error || "generation job failed on server"}`
+            );
+          }
+          await sleep(450);
+        }
+        const suffix = lastStatus?.status ? ` (last status: ${lastStatus.status})` : "";
+        throw new Error(`Batch ${batchIndex}/${totalTextBatches}: timeout while waiting for job${suffix}.`);
+      };
 
       for (let offset = 0; offset < totalRows; offset += TEXT_BATCH_SIZE) {
         const batchIndex = Math.floor(offset / TEXT_BATCH_SIZE) + 1;
@@ -709,13 +779,33 @@ export default function App() {
         };
 
         try {
-          const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
-          const data = (await res.json().catch(() => null)) as any;
-          if (!res.ok) {
-            throw new Error(`Batch ${batchIndex}/${totalTextBatches}: ${apiErrorText(data, res.status)}`);
+          let batchPayload: GenerateResponse;
+          if (asyncGenerateEnabled) {
+            try {
+              batchPayload = await runBatchViaJobQueue(req, batchIndex, doneBefore, batchItems.length);
+            } catch (jobErr: any) {
+              const msg = String(jobErr?.message || jobErr || "");
+              if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+                asyncGenerateEnabled = false;
+                setGenerateNotice("run", "warning", "Async generate endpoints are unavailable; falling back to sync mode.");
+                const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
+                const data = (await res.json().catch(() => null)) as any;
+                if (!res.ok) {
+                  throw new Error(`Batch ${batchIndex}/${totalTextBatches}: ${apiErrorText(data, res.status)}`);
+                }
+                batchPayload = data as GenerateResponse;
+              } else {
+                throw jobErr;
+              }
+            }
+          } else {
+            const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
+            const data = (await res.json().catch(() => null)) as any;
+            if (!res.ok) {
+              throw new Error(`Batch ${batchIndex}/${totalTextBatches}: ${apiErrorText(data, res.status)}`);
+            }
+            batchPayload = data as GenerateResponse;
           }
-
-          const batchPayload = data as GenerateResponse;
           lastPayload = batchPayload;
           mergedElapsedMs += Number(batchPayload.timing?.elapsed_ms || 0);
           mergedItems.push(...(Array.isArray(batchPayload.items) ? batchPayload.items : []));

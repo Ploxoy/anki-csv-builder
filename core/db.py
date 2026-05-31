@@ -65,10 +65,41 @@ CREATE TABLE IF NOT EXISTS users (
 );
 """
 
+GENERATION_JOBS_TABLE = """
+CREATE TABLE IF NOT EXISTS generation_jobs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    payload_json JSONB NOT NULL,
+    state_json JSONB,
+    result_json JSONB,
+    error_text TEXT,
+    total_items INT NOT NULL DEFAULT 0,
+    processed_items INT NOT NULL DEFAULT 0,
+    attempt_count INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ
+);
+"""
+
 # Helpful index for lookups in /api/usage.
 USAGE_EVENTS_USER_CREATED_IDX = """
 CREATE INDEX IF NOT EXISTS usage_events_user_created_at_idx
 ON usage_events (user_id, created_at DESC);
+"""
+
+GENERATION_JOBS_USER_CREATED_IDX = """
+CREATE INDEX IF NOT EXISTS generation_jobs_user_created_at_idx
+ON generation_jobs (user_id, created_at DESC);
+"""
+
+GENERATION_JOBS_STATUS_CREATED_IDX = """
+CREATE INDEX IF NOT EXISTS generation_jobs_status_created_at_idx
+ON generation_jobs (status, created_at ASC);
 """
 
 
@@ -85,7 +116,10 @@ def _get_conn():
             cur.execute(USAGE_EVENTS_TABLE)
             cur.execute(USERS_TABLE)
             cur.execute(USER_SETTINGS_TABLE)
+            cur.execute(GENERATION_JOBS_TABLE)
             cur.execute(USAGE_EVENTS_USER_CREATED_IDX)
+            cur.execute(GENERATION_JOBS_USER_CREATED_IDX)
+            cur.execute(GENERATION_JOBS_STATUS_CREATED_IDX)
         return conn
     except Exception as exc:  # pragma: no cover - runtime env
         logger.error("Failed to connect or init schema: %s", exc)
@@ -445,6 +479,264 @@ def rotate_user_token(user_id: str) -> str | None:
     except Exception as exc:  # pragma: no cover - runtime env
         logger.error("Failed to rotate token: %s", exc)
         return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def create_generation_job(*, user_id: str, run_id: str, payload: Mapping[str, Any], total_items: int) -> str | None:
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        job_id = str(uuid.uuid4())
+        payload_json = json.dumps(dict(payload or {}), ensure_ascii=False)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO generation_jobs (
+                    id, user_id, run_id, status, payload_json, total_items, processed_items, updated_at, heartbeat_at
+                )
+                VALUES (%s, %s, %s, 'queued', %s::jsonb, %s, 0, now(), now())
+                """,
+                (job_id, user_id, run_id, payload_json, int(total_items or 0)),
+            )
+        return job_id
+    except Exception as exc:
+        logger.error("Failed to create generation job: %s", exc)
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_generation_job(*, job_id: str, user_id: str | None = None) -> dict[str, Any] | None:
+    if not job_id:
+        return None
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        sql = """
+            SELECT id, user_id, run_id, status, payload_json, state_json, result_json, error_text,
+                   total_items, processed_items, attempt_count, created_at, updated_at, started_at, finished_at, heartbeat_at
+            FROM generation_jobs
+            WHERE id=%s
+        """
+        params: list[Any] = [job_id]
+        if user_id:
+            sql += " AND user_id=%s"
+            params.append(user_id)
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        if not row:
+            return None
+        def _json(val: Any) -> dict[str, Any]:
+            if isinstance(val, dict):
+                return val
+            if isinstance(val, str):
+                try:
+                    loaded = json.loads(val)
+                    return loaded if isinstance(loaded, dict) else {}
+                except Exception:
+                    return {}
+            return {}
+        def _ts(val: Any) -> str | None:
+            if isinstance(val, datetime):
+                return val.isoformat()
+            if val is None:
+                return None
+            return str(val)
+        return {
+            "id": row[0],
+            "user_id": row[1],
+            "run_id": row[2],
+            "status": row[3],
+            "payload_json": _json(row[4]),
+            "state_json": _json(row[5]),
+            "result_json": _json(row[6]),
+            "error_text": row[7],
+            "total_items": int(row[8] or 0),
+            "processed_items": int(row[9] or 0),
+            "attempt_count": int(row[10] or 0),
+            "created_at": _ts(row[11]),
+            "updated_at": _ts(row[12]),
+            "started_at": _ts(row[13]),
+            "finished_at": _ts(row[14]),
+            "heartbeat_at": _ts(row[15]),
+        }
+    except Exception as exc:
+        logger.error("Failed to get generation job: %s", exc)
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def claim_generation_job(*, user_id: str | None = None, job_id: str | None = None, stale_seconds: int = 300) -> dict[str, Any] | None:
+    conn = _get_conn()
+    if conn is None:
+        return None
+    stale_seconds = max(30, int(stale_seconds or 300))
+    try:
+        filters = ["j.status='queued' OR (j.status='running' AND j.heartbeat_at < now() - (%s || ' seconds')::interval)"]
+        params: list[Any] = [stale_seconds]
+        if user_id:
+            filters.append("j.user_id=%s")
+            params.append(user_id)
+        if job_id:
+            filters.append("j.id=%s")
+            params.append(job_id)
+        where_sql = " AND ".join(f"({f})" for f in filters)
+
+        sql = f"""
+            WITH candidate AS (
+                SELECT j.id
+                FROM generation_jobs j
+                WHERE {where_sql}
+                ORDER BY j.created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE generation_jobs j
+            SET status='running',
+                started_at=COALESCE(j.started_at, now()),
+                updated_at=now(),
+                heartbeat_at=now(),
+                attempt_count=j.attempt_count + 1
+            FROM candidate
+            WHERE j.id=candidate.id
+            RETURNING j.id
+        """
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        if not row:
+            return None
+        return get_generation_job(job_id=str(row[0]))
+    except Exception as exc:
+        logger.error("Failed to claim generation job: %s", exc)
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def update_generation_job_progress(
+    *,
+    job_id: str,
+    processed_items: int,
+    state: Mapping[str, Any],
+) -> bool:
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        state_json = json.dumps(dict(state or {}), ensure_ascii=False)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE generation_jobs
+                SET processed_items=%s,
+                    state_json=%s::jsonb,
+                    status='running',
+                    updated_at=now(),
+                    heartbeat_at=now()
+                WHERE id=%s
+                """,
+                (int(processed_items or 0), state_json, job_id),
+            )
+            return cur.rowcount > 0
+    except Exception as exc:
+        logger.error("Failed to update generation job progress: %s", exc)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def complete_generation_job(*, job_id: str, result: Mapping[str, Any], processed_items: int) -> bool:
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        result_json = json.dumps(dict(result or {}), ensure_ascii=False)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE generation_jobs
+                SET status='done',
+                    result_json=%s::jsonb,
+                    processed_items=%s,
+                    updated_at=now(),
+                    finished_at=now(),
+                    heartbeat_at=now(),
+                    error_text=NULL
+                WHERE id=%s
+                """,
+                (result_json, int(processed_items or 0), job_id),
+            )
+            return cur.rowcount > 0
+    except Exception as exc:
+        logger.error("Failed to complete generation job: %s", exc)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def fail_generation_job(*, job_id: str, error_text: str, state: Mapping[str, Any] | None = None, processed_items: int | None = None) -> bool:
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        state_payload = json.dumps(dict(state or {}), ensure_ascii=False) if state is not None else None
+        with conn.cursor() as cur:
+            if state_payload is not None and processed_items is not None:
+                cur.execute(
+                    """
+                    UPDATE generation_jobs
+                    SET status='failed',
+                        error_text=%s,
+                        state_json=%s::jsonb,
+                        processed_items=%s,
+                        updated_at=now(),
+                        finished_at=now(),
+                        heartbeat_at=now()
+                    WHERE id=%s
+                    """,
+                    (error_text, state_payload, int(processed_items), job_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE generation_jobs
+                    SET status='failed',
+                        error_text=%s,
+                        updated_at=now(),
+                        finished_at=now(),
+                        heartbeat_at=now()
+                    WHERE id=%s
+                    """,
+                    (error_text, job_id),
+                )
+            return cur.rowcount > 0
+    except Exception as exc:
+        logger.error("Failed to fail generation job: %s", exc)
+        return False
     finally:
         try:
             conn.close()
