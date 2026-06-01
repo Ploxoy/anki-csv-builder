@@ -133,6 +133,15 @@ def build_run_report(state: Any) -> RunReport:
     completion_chars_final_total = 0
     raw_trimmed_total = 0
     instructions_truncated = 0
+    cache_diag_requests = 0
+    cache_key_attached = 0
+    cache_key_removed = 0
+    cache_retention_removed = 0
+    cacheable_prefix_count = 0
+    cache_prefix_tokens_sum = 0
+    cache_prefix_tokens_max = 0
+    cache_prefix_hashes: Counter[str] = Counter()
+    cache_retentions: Counter[str] = Counter()
 
     def _model_usage(model_name: str) -> Dict[str, int]:
         if not model_name:
@@ -246,13 +255,32 @@ def build_run_report(state: Any) -> RunReport:
             repair_schema_removed += 1
 
         req = meta.get("request") or {}
-        if isinstance(req, dict):
+        if isinstance(req, dict) and req:
+            cache_diag_requests += 1
             if req.get("response_format_used"):
                 schema_attempted += 1
             if int(req.get("retries", 0) or 0) > 0:
                 retries += 1
             if bool(req.get("instructions_truncated")):
                 instructions_truncated += 1
+            if req.get("prompt_cache_key"):
+                cache_key_attached += 1
+            if bool(req.get("prompt_cache_key_removed")):
+                cache_key_removed += 1
+            if bool(req.get("prompt_cache_retention_removed")):
+                cache_retention_removed += 1
+            prefix_est_tokens = int(req.get("cache_prefix_estimated_tokens", 0) or 0)
+            if prefix_est_tokens > 0:
+                cache_prefix_tokens_sum += prefix_est_tokens
+                cache_prefix_tokens_max = max(cache_prefix_tokens_max, prefix_est_tokens)
+            if bool(req.get("cache_prefix_cacheable")):
+                cacheable_prefix_count += 1
+            prefix_hash = req.get("cache_prefix_hash")
+            if isinstance(prefix_hash, str) and prefix_hash:
+                cache_prefix_hashes[prefix_hash] += 1
+            retention = req.get("prompt_cache_retention")
+            if isinstance(retention, str) and retention:
+                cache_retentions[retention] += 1
             cached_primary = int(req.get("cached_tokens", 0) or 0)
             prompt_primary = int(req.get("prompt_tokens", 0) or 0)
             completion_primary = int(req.get("completion_tokens", 0) or 0)
@@ -372,6 +400,9 @@ def build_run_report(state: Any) -> RunReport:
     repair_rate_value = repairs / total if total else 0.0
     errored_rate = errored / total if total else 0.0
     flagged_rate = flagged / total if total else 0.0
+    cache_prefix_tokens_avg = (
+        cache_prefix_tokens_sum / cache_diag_requests if cache_diag_requests else 0.0
+    )
 
     audio_cost_by_model: Dict[str, Dict[str, Optional[float]]] = {}
     audio_total_cost = 0.0
@@ -504,6 +535,17 @@ def build_run_report(state: Any) -> RunReport:
         },
         "prompting": {
             "instructions_truncated": instructions_truncated,
+            "cache_diagnostics": {
+                "requests": cache_diag_requests,
+                "cache_key_attached": cache_key_attached,
+                "cache_key_removed_by_sdk": cache_key_removed,
+                "cache_retention_removed_by_sdk": cache_retention_removed,
+                "prefix_cacheable_requests": cacheable_prefix_count,
+                "prefix_est_tokens_avg": cache_prefix_tokens_avg,
+                "prefix_est_tokens_max": cache_prefix_tokens_max,
+                "prefix_hash_unique": len(cache_prefix_hashes),
+                "retentions": dict(cache_retentions),
+            },
         },
         "tokens": {
             "prompt": prompt_total,
@@ -572,4 +614,3 @@ def ensure_run_report(state: Any) -> RunReport:
     if not isinstance(report, dict):
         return build_run_report(state)
     return report
-

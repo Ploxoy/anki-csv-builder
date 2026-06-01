@@ -125,6 +125,14 @@ def _env_flag(name: str, default: bool = True) -> bool:
     return default
 
 
+def _env_text(name: str) -> str | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    value = raw.strip()
+    return value or None
+
+
 @app.on_event("startup")
 def _warn_if_auth_disabled() -> None:
     if not _env_flag("API_REQUIRE_SHARED_SECRET", default=True):
@@ -577,6 +585,8 @@ def _generate_one_item(
         temperature=payload.temperature,
         max_output_tokens=payload.max_output_tokens,
         signalword_seed=idx,
+        prompt_version=payload.prompt_version,
+        prompt_cache_retention=_env_text("OPENAI_PROMPT_CACHE_RETENTION"),
     )
     result = generate_card(
         client=client,

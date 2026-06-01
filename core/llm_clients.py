@@ -27,6 +27,8 @@ except Exception:  # pragma: no cover - openai may not be installed in test env
 logger = logging.getLogger(__name__)
 _RF_WARNED_MODELS: set[str] = set()
 _TEMP_WARNED_MODELS: set[str] = set()
+_CACHE_KEY_WARNED_MODELS: set[str] = set()
+_CACHE_RETENTION_WARNED_MODELS: set[str] = set()
 
 def create_client(api_key: Optional[str]) -> Any:
     """Create and return an OpenAI client instance or None if SDK unavailable.
@@ -110,6 +112,8 @@ def send_responses_request(
     response_format: Optional[Dict] = None,
     max_output_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
+    prompt_cache_key: Optional[str] = None,
+    prompt_cache_retention: Optional[str] = None,
     retries: int = 2,
     backoff_base: float = 0.5,
     warn: bool = True,
@@ -150,10 +154,16 @@ def send_responses_request(
         kwargs["max_output_tokens"] = max_output_tokens
     if temperature is not None:
         kwargs["temperature"] = temperature
+    if prompt_cache_key:
+        kwargs["prompt_cache_key"] = prompt_cache_key
+    if prompt_cache_retention:
+        kwargs["prompt_cache_retention"] = prompt_cache_retention
 
     metadata: Dict[str, Any] = {
         "response_format_removed": False,
         "temperature_removed": False,
+        "prompt_cache_key_removed": False,
+        "prompt_cache_retention_removed": False,
         "retries": 0,
         "cached_tokens": 0,
         "prompt_tokens": 0,
@@ -211,18 +221,37 @@ def send_responses_request(
                     metadata["response_format_removed"] = True
                     metadata["response_format_error"] = str(exc)
                     handled = True
+            if ("prompt_cache_key" in msg and "unsupported parameter" in msg) or (
+                "prompt_cache_key" in msg and "unexpected keyword" in msg
+            ):
+                if "prompt_cache_key" in kwargs:
+                    if warn and model not in _CACHE_KEY_WARNED_MODELS:
+                        logger.warning(
+                            "Model %s rejected prompt_cache_key parameter: %s",
+                            model,
+                            exc,
+                        )
+                        _CACHE_KEY_WARNED_MODELS.add(model)
+                    kwargs.pop("prompt_cache_key", None)
+                    metadata["prompt_cache_key_removed"] = True
+                    handled = True
+            if ("prompt_cache_retention" in msg and "unsupported parameter" in msg) or (
+                "prompt_cache_retention" in msg and "unexpected keyword" in msg
+            ):
+                if "prompt_cache_retention" in kwargs:
+                    if warn and model not in _CACHE_RETENTION_WARNED_MODELS:
+                        logger.warning(
+                            "Model %s rejected prompt_cache_retention parameter: %s",
+                            model,
+                            exc,
+                        )
+                        _CACHE_RETENTION_WARNED_MODELS.add(model)
+                    kwargs.pop("prompt_cache_retention", None)
+                    metadata["prompt_cache_retention_removed"] = True
+                    handled = True
             if handled:
-                try:
-                    resp = client.responses.create(**kwargs)
-                    metadata["retries"] = attempt
-                    metadata["elapsed_ms"] = int((time.perf_counter() - started_total) * 1000)
-                    usage = getattr(resp, "usage", None)
-                    if usage is not None:
-                        metadata.update(_extract_usage_tokens(usage))
-                    return resp, metadata
-                except Exception as exc2:
-                    last_exc = exc2
-                    # fall through to retry/backoff if transient
+                # Retry immediately with downgraded kwargs on the same attempt.
+                continue
 
             # Transient error handling (naive): retry on common transient keywords or 429/5xx
             transient = False

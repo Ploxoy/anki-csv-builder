@@ -104,6 +104,9 @@ def test_generate_card_with_parsed_response(monkeypatch, dummy_row, settings):
     assert req_meta["cached_tokens"] == 900
     assert req_meta["prompt_tokens"] == 0
     assert req_meta["completion_tokens"] == 0
+    assert isinstance(req_meta["prompt_cache_key"], str) and req_meta["prompt_cache_key"].startswith("doedutch:card:")
+    assert isinstance(req_meta["cache_prefix_hash"], str) and len(req_meta["cache_prefix_hash"]) == 16
+    assert req_meta["cache_prefix_estimated_tokens"] > 0
 
 
 def test_generate_card_repair_from_text(monkeypatch, dummy_row, settings):

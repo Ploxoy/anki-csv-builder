@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.run_report import build_run_report, reset_run_report
+from core.run_report import build_run_report, reset_run_report
 
 
 def _card(meta: dict, error: str = "") -> dict:
@@ -38,6 +38,11 @@ def test_build_run_report_aggregates_metrics() -> None:
                     "prompt_tokens": 400,
                     "completion_tokens": 120,
                     "total_tokens": 520,
+                    "prompt_cache_key": "doedutch:card:aaaa",
+                    "cache_prefix_hash": "abc123",
+                    "cache_prefix_estimated_tokens": 1200,
+                    "cache_prefix_cacheable": True,
+                    "prompt_cache_retention": "24h",
                 },
             }
         ),
@@ -61,6 +66,13 @@ def test_build_run_report_aggregates_metrics() -> None:
                         "prompt_tokens": 500,
                         "completion_tokens": 150,
                         "total_tokens": 650,
+                        "prompt_cache_key": "doedutch:card:bbbb",
+                        "prompt_cache_key_removed": True,
+                        "prompt_cache_retention_removed": True,
+                        "cache_prefix_hash": "abc123",
+                        "cache_prefix_estimated_tokens": 1200,
+                        "cache_prefix_cacheable": True,
+                        "prompt_cache_retention": "24h",
                     },
                 },
                 error="validation_failed: missing collocations",
@@ -113,6 +125,14 @@ def test_build_run_report_aggregates_metrics() -> None:
     assert report["response_format"]["schema_removed"] == 1
     assert report["response_format"]["temperature_removed"] == 1
     assert report["response_format"]["repair_schema_removed"] == 1
+    cache_diag = report["prompting"]["cache_diagnostics"]
+    assert cache_diag["requests"] == 2
+    assert cache_diag["cache_key_attached"] == 2
+    assert cache_diag["cache_key_removed_by_sdk"] == 1
+    assert cache_diag["cache_retention_removed_by_sdk"] == 1
+    assert cache_diag["prefix_cacheable_requests"] == 2
+    assert cache_diag["prefix_hash_unique"] == 1
+    assert cache_diag["retentions"] == {"24h": 2}
     tokens = report["tokens"]
     assert tokens["cached"] == 1500
     assert tokens["prompt"] == 900

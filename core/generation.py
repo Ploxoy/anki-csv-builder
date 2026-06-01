@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import random
 import re
 from dataclasses import dataclass
@@ -47,6 +48,8 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 RAW_RESPONSE_MAX_LEN = 1500
+PROMPT_CACHE_MIN_TOKENS = 1024
+PROMPT_CACHE_CHARS_PER_TOKEN = 4
 _CARD_TEXT_FIELDS = [
     "L2_cloze",
     "L1_sentence",
@@ -83,6 +86,8 @@ class GenerationSettings:
     signalword_count: int = 3
     signalword_seed: Optional[int] = None
     allow_response_format: bool = True
+    prompt_version: str = "p0"
+    prompt_cache_retention: Optional[str] = None
 
 
 @dataclass
@@ -271,6 +276,42 @@ def _trim_text(text: str, limit: int = RAW_RESPONSE_MAX_LEN) -> tuple[str, bool]
     return text[:limit] + "...", True
 
 
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return (len(text) + (PROMPT_CACHE_CHARS_PER_TOKEN - 1)) // PROMPT_CACHE_CHARS_PER_TOKEN
+
+
+def _resolve_prompt_cache_retention(retention: Optional[str]) -> Optional[str]:
+    if retention is None:
+        retention = os.getenv("OPENAI_PROMPT_CACHE_RETENTION")
+    value = (retention or "").strip().lower()
+    if value in {"in_memory", "24h"}:
+        return value
+    return None
+
+
+def _build_prompt_cache_key(
+    *,
+    settings: GenerationSettings,
+    prefix_hash: str,
+) -> str:
+    namespace = (os.getenv("PROMPT_CACHE_NAMESPACE") or "doedutch").strip() or "doedutch"
+    payload = {
+        "kind": "card_generation",
+        "provider": settings.provider,
+        "model": settings.model,
+        "prompt_version": settings.prompt_version,
+        "l1": settings.L1_code,
+        "cefr": settings.level,
+        "profile": settings.profile,
+        "schema": bool(settings.allow_response_format),
+        "prefix_hash": prefix_hash,
+    }
+    digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"{namespace}:card:{digest[:24]}"
+
+
 def generate_card(
     client: Any,
     row: Dict[str, Any],
@@ -385,6 +426,17 @@ def generate_card(
         "DATA_JSON:\n"
     )
 
+    prompt_prefix = instructions + "\n\n" + shared_header
+    prompt_prefix_hash = hashlib.sha1(prompt_prefix.encode("utf-8")).hexdigest()
+    prompt_prefix_chars = len(prompt_prefix)
+    prompt_prefix_estimated_tokens = _estimate_tokens(prompt_prefix)
+    prompt_prefix_cacheable = prompt_prefix_estimated_tokens >= PROMPT_CACHE_MIN_TOKENS
+    prompt_cache_key = _build_prompt_cache_key(
+        settings=settings,
+        prefix_hash=prompt_prefix_hash,
+    )
+    prompt_cache_retention = _resolve_prompt_cache_retention(settings.prompt_cache_retention)
+
     input_text = shared_header + json.dumps(payload, ensure_ascii=False)
 
     def _finalize_with_error(
@@ -447,6 +499,15 @@ def generate_card(
         "instructions_truncated": _instr_trim,
         "input_text": _input_short,
         "input_text_truncated": _input_trim,
+        "prompt_cache_key": prompt_cache_key,
+        "prompt_cache_retention": prompt_cache_retention,
+        "prompt_cache_key_removed": False,
+        "prompt_cache_retention_removed": False,
+        "cache_prefix_hash": prompt_prefix_hash[:16],
+        "cache_prefix_chars": prompt_prefix_chars,
+        "cache_prefix_estimated_tokens": prompt_prefix_estimated_tokens,
+        "cache_prefix_cacheable": prompt_prefix_cacheable,
+        "cache_min_tokens": PROMPT_CACHE_MIN_TOKENS,
         "elapsed_ms": 0,
         "repair_elapsed_ms": 0,
         "total_elapsed_ms": 0,
@@ -466,6 +527,8 @@ def generate_card(
             response_format=rf_param,
             max_output_tokens=settings.max_output_tokens,
             temperature=settings.temperature,
+            prompt_cache_key=prompt_cache_key,
+            prompt_cache_retention=prompt_cache_retention,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception(
@@ -630,6 +693,8 @@ def generate_card(
     # post-call: note if schema was removed by SDK
     request_info["response_format_removed"] = send_meta.get("response_format_removed", False)
     request_info["temperature_removed"] = send_meta.get("temperature_removed", False)
+    request_info["prompt_cache_key_removed"] = send_meta.get("prompt_cache_key_removed", False)
+    request_info["prompt_cache_retention_removed"] = send_meta.get("prompt_cache_retention_removed", False)
     request_info["retries"] = send_meta.get("retries", 0)
     request_info["cached_tokens"] = send_meta.get("cached_tokens", 0)
     request_info["prompt_tokens"] = send_meta.get("prompt_tokens", 0)

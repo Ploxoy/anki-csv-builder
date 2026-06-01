@@ -98,3 +98,30 @@ def test_send_request_retries_transient_error(monkeypatch: pytest.MonkeyPatch) -
     assert response.ok is True
     assert meta["retries"] == 2
     assert len(client.responses.calls) == 3
+
+
+def test_send_request_drops_prompt_cache_params_when_rejected() -> None:
+    client = _client_with([
+        RuntimeError("Unsupported parameter: 'prompt_cache_key'"),
+        RuntimeError("Unsupported parameter: 'prompt_cache_retention'"),
+        SimpleNamespace(ok=True, usage={"prompt_tokens_details": {"cached_tokens": 256}, "input_tokens": 800, "output_tokens": 50}),
+    ])
+
+    response, meta = llm.send_responses_request(
+        client=client,
+        model="gpt-test",
+        instructions="instr",
+        input_text="payload",
+        prompt_cache_key="doedutch:card:test",
+        prompt_cache_retention="24h",
+    )
+
+    assert response.ok is True
+    assert meta["prompt_cache_key_removed"] is True
+    assert meta["prompt_cache_retention_removed"] is True
+    assert meta["cached_tokens"] == 256
+    assert len(client.responses.calls) == 3
+    assert "prompt_cache_key" in client.responses.calls[0]
+    assert "prompt_cache_key" not in client.responses.calls[1]
+    assert "prompt_cache_retention" in client.responses.calls[1]
+    assert "prompt_cache_retention" not in client.responses.calls[2]
