@@ -767,7 +767,7 @@ def api_generate_worker(
     if not cron_authorized:
         user_id = _require_user(request, x_api_key)
 
-    stale_seconds = int(os.getenv("GENERATE_JOB_STALE_SECONDS", "300") or "300")
+    stale_seconds = int(os.getenv("GENERATE_JOB_STALE_SECONDS", "90") or "90")
     default_max_items = int(os.getenv("GENERATE_JOB_MAX_ITEMS_PER_WORKER", "2") or "2")
     max_items = max(1, min(int(payload.max_items or default_max_items), 20))
 
@@ -907,6 +907,20 @@ def api_generate_worker(
         items_out_raw.append(out_item.model_dump() if hasattr(out_item, "model_dump") else out_item.dict())
         results_cards.append(card)
         processed_items = idx + 1
+
+        # Persist heartbeat/progress after each item so long-running serverless
+        # invocations can be safely resumed without waiting for stale timeout.
+        update_generation_job_progress(
+            job_id=job_id,
+            processed_items=processed_items,
+            state={
+                "items_out": items_out_raw,
+                "results_cards": results_cards,
+                "signal_usage": signal_usage,
+                "signal_last": signal_last,
+                "started_epoch": started_epoch,
+            },
+        )
 
     new_state = {
         "items_out": items_out_raw,
