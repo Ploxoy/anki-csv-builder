@@ -71,7 +71,12 @@ def _extract_usage_tokens(usage: Any) -> Dict[str, int]:
         completion_val = usage.get("output_tokens", usage.get("completion_tokens"))
         total_val = usage.get("total_tokens")
         prompt_details = usage.get("prompt_tokens_details") or {}
-        cached_val = usage.get("cached_tokens", prompt_details.get("cached_tokens"))
+        input_details = usage.get("input_tokens_details") or {}
+        cached_val = usage.get("cached_tokens")
+        if cached_val is None:
+            cached_val = prompt_details.get("cached_tokens")
+        if cached_val is None:
+            cached_val = input_details.get("cached_tokens")
     else:
         prompt_val = getattr(usage, "input_tokens", None)
         if prompt_val is None:
@@ -87,6 +92,12 @@ def _extract_usage_tokens(usage: Any) -> Dict[str, int]:
                 cached_val = prompt_details.get("cached_tokens")
             else:
                 cached_val = getattr(prompt_details, "cached_tokens", None)
+        if cached_val is None:
+            input_details = getattr(usage, "input_tokens_details", None)
+            if isinstance(input_details, dict):
+                cached_val = input_details.get("cached_tokens")
+            else:
+                cached_val = getattr(input_details, "cached_tokens", None)
 
     prompt_tokens = _coerce(prompt_val)
     completion_tokens = _coerce(completion_val)

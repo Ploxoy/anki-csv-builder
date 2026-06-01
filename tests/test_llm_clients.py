@@ -78,6 +78,33 @@ def test_send_request_drops_response_format_when_text_rejected(monkeypatch: pyte
     assert "text" not in client.responses.calls[1]
 
 
+def test_send_request_reads_cached_tokens_from_input_tokens_details() -> None:
+    client = _client_with([
+        SimpleNamespace(
+            ok=True,
+            usage={
+                "input_tokens": 400,
+                "output_tokens": 20,
+                "total_tokens": 420,
+                "input_tokens_details": {"cached_tokens": 300},
+            },
+        ),
+    ])
+
+    response, meta = llm.send_responses_request(
+        client=client,
+        model="gpt-test",
+        instructions="instr",
+        input_text="payload",
+    )
+
+    assert response.ok is True
+    assert meta["cached_tokens"] == 300
+    assert meta["prompt_tokens"] == 400
+    assert meta["completion_tokens"] == 20
+    assert meta["total_tokens"] == 420
+
+
 def test_send_request_retries_transient_error(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client_with([
         RuntimeError("rate limit 429"),
