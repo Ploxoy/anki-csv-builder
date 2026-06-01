@@ -11,6 +11,8 @@ import os
 import logging
 import hashlib
 import secrets
+import time
+import threading
 import uuid
 from datetime import datetime
 from typing import Iterable, Mapping, Any
@@ -21,6 +23,33 @@ except Exception:  # pragma: no cover - optional dependency
     psycopg = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+_SCHEMA_READY = False
+_SCHEMA_LOCK = threading.Lock()
+
+
+def _db_url() -> str:
+    """Resolve DB URL from primary and common integration env names."""
+    return (
+        os.getenv("DATABASE_URL")
+        or os.getenv("POSTGRES_URL")
+        or os.getenv("POSTGRES_PRISMA_URL")
+        or ""
+    ).strip()
+
+
+def _db_connect_retries() -> int:
+    try:
+        return max(1, int(os.getenv("DB_CONNECT_RETRIES", "3")))
+    except Exception:
+        return 3
+
+
+def _db_connect_timeout() -> float:
+    try:
+        return max(1.0, float(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "8")))
+    except Exception:
+        return 8.0
 
 USAGE_EVENTS_TABLE = """
 CREATE TABLE IF NOT EXISTS usage_events (
@@ -104,26 +133,51 @@ ON generation_jobs (status, created_at ASC);
 
 
 def _get_conn():
-    db_url = os.getenv("DATABASE_URL")
+    global _SCHEMA_READY
+    db_url = _db_url()
     if not db_url:
         return None
     if psycopg is None:
         logger.warning("psycopg is not installed; skipping DB logging")
         return None
-    try:
-        conn = psycopg.connect(db_url, autocommit=True)
-        with conn.cursor() as cur:
-            cur.execute(USAGE_EVENTS_TABLE)
-            cur.execute(USERS_TABLE)
-            cur.execute(USER_SETTINGS_TABLE)
-            cur.execute(GENERATION_JOBS_TABLE)
-            cur.execute(USAGE_EVENTS_USER_CREATED_IDX)
-            cur.execute(GENERATION_JOBS_USER_CREATED_IDX)
-            cur.execute(GENERATION_JOBS_STATUS_CREATED_IDX)
-        return conn
-    except Exception as exc:  # pragma: no cover - runtime env
-        logger.error("Failed to connect or init schema: %s", exc)
-        return None
+    retries = _db_connect_retries()
+    timeout_seconds = _db_connect_timeout()
+    last_error = None
+
+    for attempt in range(1, retries + 1):
+        conn = None
+        try:
+            conn = psycopg.connect(
+                db_url,
+                autocommit=True,
+                connect_timeout=timeout_seconds,
+            )
+            if not _SCHEMA_READY:
+                with _SCHEMA_LOCK:
+                    if not _SCHEMA_READY:
+                        with conn.cursor() as cur:
+                            cur.execute(USAGE_EVENTS_TABLE)
+                            cur.execute(USERS_TABLE)
+                            cur.execute(USER_SETTINGS_TABLE)
+                            cur.execute(GENERATION_JOBS_TABLE)
+                            cur.execute(USAGE_EVENTS_USER_CREATED_IDX)
+                            cur.execute(GENERATION_JOBS_USER_CREATED_IDX)
+                            cur.execute(GENERATION_JOBS_STATUS_CREATED_IDX)
+                        _SCHEMA_READY = True
+            return conn
+        except Exception as exc:  # pragma: no cover - runtime env
+            last_error = exc
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            if attempt < retries:
+                backoff = min(2.0, 0.35 * attempt)
+                time.sleep(backoff)
+
+    logger.error("Failed to connect or init schema: %s", last_error)
+    return None
 
 
 def db_status() -> tuple[bool, str]:
@@ -131,7 +185,7 @@ def db_status() -> tuple[bool, str]:
 
     Used by Phase 0.5 endpoints where persistence is required.
     """
-    if not os.getenv("DATABASE_URL"):
+    if not _db_url():
         return False, "DATABASE_URL is not set"
     if psycopg is None:
         return False, "psycopg is not installed (install psycopg[binary])"
