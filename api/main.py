@@ -239,6 +239,11 @@ def _status_from_card(card: Dict[str, Any]) -> str:
 
 def _usage_from_meta(meta: Dict[str, Any]) -> UsageEvent:
     req = meta.get("request") or {}
+    elapsed_raw = req.get("total_elapsed_ms", req.get("elapsed_ms"))
+    try:
+        elapsed_ms = int(elapsed_raw) if elapsed_raw is not None else None
+    except Exception:
+        elapsed_ms = None
     return UsageEvent(
         provider=meta.get("provider", "unknown") or "unknown",
         model=meta.get("model", "unknown") or "unknown",
@@ -247,14 +252,14 @@ def _usage_from_meta(meta: Dict[str, Any]) -> UsageEvent:
         cached_tokens=int(req.get("cached_tokens", 0) or 0),
         audio_chars=None,
         audio_tokens=None,
-        seconds=None,
+        seconds=(elapsed_ms / 1000.0) if elapsed_ms else None,
         raw_cost_usd=None,
         raw_cost_eur=None,
         charged_cost_eur=None,
         markup_tier=None,
         markup_multiplier=None,
         request_id=None,
-        elapsed_ms=None,
+        elapsed_ms=elapsed_ms,
     )
 
 

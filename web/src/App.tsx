@@ -638,7 +638,13 @@ export default function App() {
       const jobsWorkerUrl = `${settings.apiBase || ""}/api/jobs/generate/worker`;
       const headers = apiHeaders();
       const useAsyncGenerate = (window.localStorage.getItem("use_async_generate") || "1").trim() !== "0";
-      let asyncGenerateEnabled = useAsyncGenerate;
+      // For small runs, synchronous mode is usually faster on Vercel because it avoids
+      // queue polling + extra DB/auth roundtrips.
+      const preferSyncForSmallRuns = totalRows <= 12;
+      let asyncGenerateEnabled = useAsyncGenerate && !preferSyncForSmallRuns;
+      if (useAsyncGenerate && preferSyncForSmallRuns) {
+        setGenerateNotice("run", "info", "Small run detected: using direct mode for lower latency.");
+      }
       const totalTextBatches = Math.max(1, Math.ceil(totalRows / TEXT_BATCH_SIZE));
       const mergedItems: GenerateResponse["items"] = [];
       let mergedElapsedMs = 0;

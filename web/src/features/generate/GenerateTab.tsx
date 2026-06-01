@@ -317,6 +317,9 @@ export function GenerateTab({
                     <span className={`status-pill ${item.status}`}>{item.status}</span>
                     <div className="result-main">
                       <div className="result-id">#{item.id}</div>
+                      {item.usage?.elapsed_ms != null && (
+                        <p className="hint subtle">row latency: {item.usage.elapsed_ms} ms</p>
+                      )}
                       {item.error && <p className="error-line">{item.error}</p>}
                       {item.card && (
                         <details>

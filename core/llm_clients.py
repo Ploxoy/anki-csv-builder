@@ -152,12 +152,16 @@ def send_responses_request(
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
+        "elapsed_ms": 0,
     }
+
+    started_total = time.perf_counter()
 
     while attempt <= retries:
         try:
             resp = client.responses.create(**kwargs)
             metadata["retries"] = attempt
+            metadata["elapsed_ms"] = int((time.perf_counter() - started_total) * 1000)
             usage = getattr(resp, "usage", None)
             if usage is not None:
                 metadata.update(_extract_usage_tokens(usage))
@@ -204,6 +208,7 @@ def send_responses_request(
                 try:
                     resp = client.responses.create(**kwargs)
                     metadata["retries"] = attempt
+                    metadata["elapsed_ms"] = int((time.perf_counter() - started_total) * 1000)
                     usage = getattr(resp, "usage", None)
                     if usage is not None:
                         metadata.update(_extract_usage_tokens(usage))

@@ -447,6 +447,9 @@ def generate_card(
         "instructions_truncated": _instr_trim,
         "input_text": _input_short,
         "input_text_truncated": _input_trim,
+        "elapsed_ms": 0,
+        "repair_elapsed_ms": 0,
+        "total_elapsed_ms": 0,
     }
 
     try:
@@ -531,6 +534,7 @@ def generate_card(
     repair_attempted = False
     repair_raw = ""
     repair_trimmed = False
+    repair_elapsed_ms = 0
     allow_schema_next = settings.allow_response_format and not send_meta.get("response_format_removed", False)
 
     if problems_initial:
@@ -563,6 +567,7 @@ def generate_card(
             repair_length = len(repair_full or "")
             repair_raw, repair_trimmed = _trim_text(repair_full)
             parsed_repair = get_response_parsed(repair_resp) or extract_json_block(repair_full)
+            repair_elapsed_ms = int(repair_meta.get("elapsed_ms", 0) or 0)
         except Exception:
             parsed_repair = {}
 
@@ -573,6 +578,7 @@ def generate_card(
                 "total_tokens": int(repair_meta.get("total_tokens", 0) or 0),
                 "cached_tokens": int(repair_meta.get("cached_tokens", 0) or 0),
                 "retries": int(repair_meta.get("retries", 0) or 0),
+                "elapsed_ms": int(repair_meta.get("elapsed_ms", 0) or 0),
             }
         if parsed_repair:
             for key in [
@@ -629,6 +635,9 @@ def generate_card(
     request_info["prompt_tokens"] = send_meta.get("prompt_tokens", 0)
     request_info["completion_tokens"] = send_meta.get("completion_tokens", 0)
     request_info["total_tokens"] = send_meta.get("total_tokens", 0)
+    request_info["elapsed_ms"] = int(send_meta.get("elapsed_ms", 0) or 0)
+    request_info["repair_elapsed_ms"] = int(repair_elapsed_ms or 0)
+    request_info["total_elapsed_ms"] = int(request_info["elapsed_ms"] + request_info["repair_elapsed_ms"])
     instr_hash = hashlib.sha1(instructions.encode("utf-8")).hexdigest()
     logger.debug(
         "Prompt usage model=%s level=%s profile=%s woord=%s hash=%s prompt=%d completion=%d total=%d cached=%d",
