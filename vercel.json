@@ -24,7 +24,7 @@
   "crons": [
     {
       "path": "/api/jobs/generate/worker",
-      "schedule": "*/1 * * * *"
+      "schedule": "03 * * * *"
     }
   ]
 }
