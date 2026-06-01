@@ -651,7 +651,7 @@ export default function App() {
         doneBefore: number,
         batchSize: number
       ): Promise<GenerateResponse> => {
-        const workerChunkSize = Math.max(2, Math.min(batchSize, 10));
+        const workerChunkSize = Math.max(1, Math.min(batchSize, 4));
         const createdRes = await fetch(jobsCreateUrl, { method: "POST", headers, body: JSON.stringify(req) });
         const createdData = (await createdRes.json().catch(() => null)) as any;
         if (!createdRes.ok) {
@@ -665,11 +665,21 @@ export default function App() {
         const pollDeadline = Date.now() + 15 * 60 * 1000;
         let lastStatus: GenerateJobStatusResponse | null = null;
         while (Date.now() < pollDeadline) {
-          await fetch(jobsWorkerUrl, {
+          const workerRes = await fetch(jobsWorkerUrl, {
             method: "POST",
             headers,
             body: JSON.stringify({ job_id: jobId, max_items: workerChunkSize }),
           }).catch(() => null);
+          if (workerRes) {
+            const workerData = (await workerRes.json().catch(() => null)) as any;
+            if (!workerRes.ok) {
+              throw new Error(`Batch ${batchIndex}/${totalTextBatches}: ${apiErrorText(workerData, workerRes.status)}`);
+            }
+            const workerStatus = String(workerData?.status || "").toLowerCase();
+            if (workerStatus === "failed") {
+              throw new Error(`Batch ${batchIndex}/${totalTextBatches}: ${workerData?.message || "worker failed"}`);
+            }
+          }
 
           const statusRes = await fetch(`${jobsCreateUrl}/${encodeURIComponent(jobId)}`, {
             method: "GET",
@@ -703,7 +713,7 @@ export default function App() {
               `Batch ${batchIndex}/${totalTextBatches}: ${status.error || "generation job failed on server"}`
             );
           }
-          await sleep(900);
+          await sleep(850);
         }
         const suffix = lastStatus?.status ? ` (last status: ${lastStatus.status})` : "";
         throw new Error(`Batch ${batchIndex}/${totalTextBatches}: timeout while waiting for job${suffix}.`);
