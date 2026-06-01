@@ -166,13 +166,15 @@ def _require_user(request: Request, x_api_key: str | None) -> str:
     if not token:
         token = _extract_bearer_token(request.headers.get("Authorization"))
     if token:
+        user_id = resolve_user_id_from_token(token)
+        if user_id:
+            return user_id
+        # One fallback DB health probe helps distinguish invalid token vs DB outage
+        # without doing two DB roundtrips on every authenticated request.
         ok_db, reason = db_status()
         if not ok_db:
             raise HTTPException(status_code=503, detail=reason)
-        user_id = resolve_user_id_from_token(token)
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-        return user_id
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     if _env_flag("API_ALLOW_LEGACY_USER_ID", default=False):
         _require_api_shared_secret(x_api_key)

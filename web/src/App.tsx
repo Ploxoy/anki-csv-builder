@@ -651,6 +651,7 @@ export default function App() {
         doneBefore: number,
         batchSize: number
       ): Promise<GenerateResponse> => {
+        const workerChunkSize = Math.max(2, Math.min(batchSize, 10));
         const createdRes = await fetch(jobsCreateUrl, { method: "POST", headers, body: JSON.stringify(req) });
         const createdData = (await createdRes.json().catch(() => null)) as any;
         if (!createdRes.ok) {
@@ -667,7 +668,7 @@ export default function App() {
           await fetch(jobsWorkerUrl, {
             method: "POST",
             headers,
-            body: JSON.stringify({ job_id: jobId, max_items: 2 }),
+            body: JSON.stringify({ job_id: jobId, max_items: workerChunkSize }),
           }).catch(() => null);
 
           const statusRes = await fetch(`${jobsCreateUrl}/${encodeURIComponent(jobId)}`, {
@@ -702,7 +703,7 @@ export default function App() {
               `Batch ${batchIndex}/${totalTextBatches}: ${status.error || "generation job failed on server"}`
             );
           }
-          await sleep(450);
+          await sleep(900);
         }
         const suffix = lastStatus?.status ? ` (last status: ${lastStatus.status})` : "";
         throw new Error(`Batch ${batchIndex}/${totalTextBatches}: timeout while waiting for job${suffix}.`);
