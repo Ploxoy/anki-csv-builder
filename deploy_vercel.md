@@ -208,3 +208,61 @@ Both endpoints require `Authorization: Bearer <user_token>`.
 - Add per-user queue limits to prevent accidental overload.
 - Add structured logs for job lifecycle (`queued -> running -> done/failed`).
 
+## 10) Go-live perf preset (Hobby + Neon, 3-5 users)
+
+Use this baseline first, then tune only if needed.
+
+### 10.1 Vercel project settings
+
+- Function region: set to an EU region close to Neon DB (for example `fra1`).
+- Keep API and DB in the same region family to reduce DB roundtrip overhead.
+
+### 10.2 Environment variables
+
+Required:
+
+- `DATABASE_URL` = **real Postgres URL** (no placeholders)
+- `OPENAI_API_KEY` = active key
+- `API_SHARED_SECRET` = strong random secret
+- `API_REQUIRE_SHARED_SECRET` = `1`
+- `CRON_SECRET` = strong random secret
+
+Performance defaults:
+
+- `DB_CONNECT_RETRIES` = `1`
+- `DB_CONNECT_TIMEOUT_SECONDS` = `4`
+- `GENERATE_JOB_STALE_SECONDS` = `90`
+- `GENERATE_JOB_MAX_ITEMS_PER_WORKER` = `3`
+
+Optional:
+
+- `ELEVENLABS_API_KEY` (only if ElevenLabs is used)
+
+### 10.3 UI mode defaults
+
+- Small/medium runs (up to ~40 rows): prefer direct sync generate (lower latency).
+- Large runs: async jobs mode.
+
+Quick override in browser console:
+
+```js
+localStorage.setItem("use_async_generate", "0") // force sync
+localStorage.setItem("use_async_generate", "1") // force async
+```
+
+### 10.4 What “normal” looks like
+
+- `sum(row latency)` should be close to total `elapsed` for sync runs.
+- If `overhead >> llm sum`, time is spent in orchestration (queue/poll/auth/DB/cold starts), not in model inference.
+
+### 10.5 Smoke performance check
+
+1. Run 8 rows in sync mode (`use_async_generate=0`).
+2. Run 31 rows in sync mode.
+3. Compare:
+   - `elapsed`
+   - `llm sum`
+   - `overhead`
+4. If overhead is still large, inspect Vercel Runtime Logs:
+   - function `Start Type` (`Cold`/`Hot`)
+   - request durations for `/api/jobs/generate/worker` and `/api/jobs/generate/{id}`.

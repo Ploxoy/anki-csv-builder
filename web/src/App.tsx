@@ -640,7 +640,7 @@ export default function App() {
       const useAsyncGenerate = (window.localStorage.getItem("use_async_generate") || "1").trim() !== "0";
       // For small runs, synchronous mode is usually faster on Vercel because it avoids
       // queue polling + extra DB/auth roundtrips.
-      const preferSyncForSmallRuns = totalRows <= 12;
+      const preferSyncForSmallRuns = totalRows <= 40;
       let asyncGenerateEnabled = useAsyncGenerate && !preferSyncForSmallRuns;
       if (useAsyncGenerate && preferSyncForSmallRuns) {
         setGenerateNotice("run", "info", "Small run detected: using direct mode for lower latency.");

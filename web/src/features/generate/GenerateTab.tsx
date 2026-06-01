@@ -102,6 +102,16 @@ export function GenerateTab({
     return { total: items.length, ok, repaired, failed };
   }, [response]);
 
+  const latencyStats = useMemo(() => {
+    const totalMs = Number(response?.timing?.elapsed_ms || 0);
+    const llmMs = (response?.items || []).reduce((acc, item) => {
+      const val = Number(item.usage?.elapsed_ms || 0);
+      return Number.isFinite(val) && val > 0 ? acc + val : acc;
+    }, 0);
+    const overheadMs = Math.max(0, totalMs - llmMs);
+    return { totalMs, llmMs, overheadMs };
+  }, [response]);
+
   return (
     <div className="tab-layout">
       <section className="card">
@@ -280,7 +290,16 @@ export function GenerateTab({
               <div className="summary-item">
                 <span className="k">elapsed</span> {response.timing?.elapsed_ms} ms
               </div>
+              <div className="summary-item">
+                <span className="k">llm sum</span> {latencyStats.llmMs} ms
+              </div>
+              <div className="summary-item">
+                <span className="k">overhead</span> {latencyStats.overheadMs} ms
+              </div>
             </div>
+            <p className="hint subtle">
+              Overhead = queue/poll/auth/DB/cold-start time beyond per-row LLM latency.
+            </p>
 
             <div className="toolbar row-wrap compact-top">
               <div className="toolbar-actions">
