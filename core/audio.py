@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import tempfile
 import threading
@@ -30,17 +31,38 @@ __all__ = [
 _CLOZE_RE = re.compile(r"\{\{c[12]::(.*?)(?:::[^}]*)?\}\}")
 _WHITESPACE_RE = re.compile(r"\s+")
 
-AUDIO_CACHE_DIR = Path("cache") / "audio"
-AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+AUDIO_CACHE_DIR_ENV = "AUDIO_CACHE_DIR"
 
 
-def _disk_cache_path(key: str) -> Path:
+def _resolve_audio_cache_dir() -> Optional[Path]:
+    configured = (os.getenv(AUDIO_CACHE_DIR_ENV) or "").strip()
+    candidates: List[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+    candidates.append(Path("cache") / "audio")
+    candidates.append(Path(tempfile.gettempdir()) / "doedutch-cache" / "audio")
+
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            return candidate
+        except Exception:
+            continue
+    return None
+
+
+AUDIO_CACHE_DIR = _resolve_audio_cache_dir()
+
+
+def _disk_cache_path(key: str) -> Optional[Path]:
+    if AUDIO_CACHE_DIR is None:
+        return None
     return AUDIO_CACHE_DIR / f"{key}.bin"
 
 
 def _load_disk_cache(key: str) -> Optional[bytes]:
     path = _disk_cache_path(key)
-    if not path.exists():
+    if path is None or not path.exists():
         return None
     try:
         return path.read_bytes()
@@ -50,6 +72,8 @@ def _load_disk_cache(key: str) -> Optional[bytes]:
 
 def _store_disk_cache(key: str, data: bytes) -> None:
     path = _disk_cache_path(key)
+    if path is None:
+        return
     tmp_path = path.with_suffix(".tmp")
     try:
         tmp_path.write_bytes(data)
