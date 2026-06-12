@@ -23,6 +23,8 @@ def _dummy_request() -> Request:
 @pytest.fixture
 def patch_api_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(api_main, "_require_user", lambda request, x_api_key: "user-test")
+    monkeypatch.setattr(api_main, "load_run_media_assets", lambda **kwargs: ({}, None))
+    monkeypatch.setattr(api_main, "load_audio_assets_by_filenames", lambda **kwargs: ({}, None))
 
 
 def _payload(media_map: dict[str, str] | None = None, use_persisted_media: bool = False) -> ExportDeckRequest:
@@ -98,3 +100,31 @@ def test_api_export_apkg_uses_persisted_media(monkeypatch: pytest.MonkeyPatch, p
 
     assert isinstance(result, StreamingResponse)
     assert captured["media_files"] == {"word_fiets.mp3": b"persisted-audio"}
+
+
+def test_api_export_apkg_uses_reusable_audio_asset_by_filename(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    monkeypatch.setattr(api_main, "HAS_GENANKI", True)
+    captured: dict[str, object] = {}
+
+    def fake_build(*args, **kwargs):
+        captured["media_files"] = kwargs.get("media_files")
+        return b"apkg-bytes"
+
+    monkeypatch.setattr(api_main, "build_anki_package", fake_build)
+    monkeypatch.setattr(api_main, "load_run_media_assets", lambda **kwargs: ({}, None))
+    monkeypatch.setattr(
+        api_main,
+        "load_audio_assets_by_filenames",
+        lambda **kwargs: ({"word_fiets.mp3": b"reusable-audio"}, None),
+    )
+
+    result = api_main.api_export_apkg(
+        _payload(media_map={}, use_persisted_media=False),
+        request=_dummy_request(),
+        x_api_key=None,
+    )
+
+    assert isinstance(result, StreamingResponse)
+    assert captured["media_files"] == {"word_fiets.mp3": b"reusable-audio"}

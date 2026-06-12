@@ -65,14 +65,28 @@ function buildTtsItems(
     if (row.status !== "ok" && row.status !== "repaired") continue;
     if (opts.includeWord) {
       const word = (row.card.L2_word || "").trim();
-      if (word) items.push({ card_id: row.id, type: "word", text: word });
+      if (word && !(row.card.AudioWord || "").trim()) items.push({ card_id: row.id, type: "word", text: word });
     }
     if (opts.includeSentence) {
       const sentence = (row.card.L2_cloze || "").trim();
-      if (sentence) items.push({ card_id: row.id, type: "sentence", text: sentence });
+      if (sentence && !(row.card.AudioSentence || "").trim()) items.push({ card_id: row.id, type: "sentence", text: sentence });
     }
   }
   return items;
+}
+
+function countAttachedAudioClips(
+  generated: GenerateResponse,
+  opts: { includeWord: boolean; includeSentence: boolean }
+): number {
+  let count = 0;
+  for (const row of generated.items) {
+    if (!row.card) continue;
+    if (row.status !== "ok" && row.status !== "repaired") continue;
+    if (opts.includeWord && (row.card.AudioWord || "").trim()) count += 1;
+    if (opts.includeSentence && (row.card.AudioSentence || "").trim()) count += 1;
+  }
+  return count;
 }
 
 const EXPORT_REQUEST_SOFT_LIMIT_BYTES = 4_200_000;
@@ -661,9 +675,14 @@ export default function App() {
       // For small runs, synchronous mode is usually faster on Vercel because it avoids
       // queue polling + extra DB/auth roundtrips.
       const preferSyncForSmallRuns = totalRows <= 40;
+      const preferDirectForTextReuse = settings.reuseTextCards;
       let asyncGenerateEnabled = useAsyncGenerate && !preferSyncForSmallRuns;
       if (useAsyncGenerate && preferSyncForSmallRuns) {
         setGenerateNotice("run", "info", "Small run detected: using direct mode for lower latency.");
+      }
+      if (useAsyncGenerate && preferDirectForTextReuse) {
+        asyncGenerateEnabled = false;
+        setGenerateNotice("run", "info", "Saved-card reuse enabled: using direct mode to avoid queue overhead.");
       }
       const totalTextBatches = Math.max(1, Math.ceil(totalRows / TEXT_BATCH_SIZE));
       const mergedItems: GenerateResponse["items"] = [];
@@ -847,9 +866,20 @@ export default function App() {
             const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
             const data = (await res.json().catch(() => null)) as any;
             if (!res.ok) {
+              const canRetryAsync = useAsyncGenerate && [502, 503, 504].includes(res.status);
+              if (canRetryAsync) {
+                setGenerateNotice(
+                  "run",
+                  "warning",
+                  `Direct batch ${batchIndex}/${totalTextBatches} hit HTTP ${res.status}; retrying through job queue.`
+                );
+                batchPayload = await runBatchViaJobQueue(req, batchIndex, doneBefore, batchItems.length);
+              } else {
               throw new Error(`Batch ${batchIndex}/${totalTextBatches}: ${apiErrorText(data, res.status)}`);
+              }
+            } else {
+              batchPayload = data as GenerateResponse;
             }
-            batchPayload = data as GenerateResponse;
           }
           lastPayload = batchPayload;
           mergedElapsedMs += Number(batchPayload.timing?.elapsed_ms || 0);
@@ -937,6 +967,10 @@ export default function App() {
         });
 
         const ttsItems = buildTtsItems(payload, {
+          includeWord: settings.includeAudioWord,
+          includeSentence: settings.includeAudioSentence,
+        });
+        const attachedAudioClips = countAttachedAudioClips(payload, {
           includeWord: settings.includeAudioWord,
           includeSentence: settings.includeAudioSentence,
         });
@@ -1213,9 +1247,13 @@ export default function App() {
             setGenerateNotice("audio", "error", "Audio synthesis did not complete.", detail);
           }
         } else {
-          setAudioRunSummary({ requested: true, total: 0, ok: 0, failed: 0, errors: [], persisted: true, storedClips: 0, cachedClips: 0, durableCachedClips: 0, storedReusableAssets: 0, storageError: null, diagnostics: [] });
+          setAudioRunSummary({ requested: true, total: attachedAudioClips, ok: attachedAudioClips, failed: 0, errors: [], persisted: true, storedClips: 0, cachedClips: attachedAudioClips, durableCachedClips: attachedAudioClips, storedReusableAssets: 0, storageError: null, diagnostics: attachedAudioClips > 0 ? ["Audio synthesis skipped: selected clips were already attached to saved cards."] : [] });
           setGenerateProgress((prev) => (95 > prev ? 95 : prev));
-          setGenerateProgressLabel("Audio is enabled, but there are no clips to synthesize.");
+          setGenerateProgressLabel(
+            attachedAudioClips > 0
+              ? `Audio already attached: ${attachedAudioClips} clip(s).`
+              : "Audio is enabled, but there are no clips to synthesize."
+          );
           updateProgressMeta({
             stage: "audio",
             done: 0,
@@ -1225,7 +1263,13 @@ export default function App() {
             waitingProvider: false,
             elapsedMs: Date.now() - startedAt,
           });
-          setGenerateNotice("audio", "info", "Audio enabled, but no eligible clips were found.");
+          setGenerateNotice(
+            "audio",
+            attachedAudioClips > 0 ? "success" : "info",
+            attachedAudioClips > 0
+              ? `Audio already attached: ${attachedAudioClips} clip(s), synthesis skipped.`
+              : "Audio enabled, but no eligible clips were found."
+          );
         }
       } else {
         setAudioRunSummary({ requested: false, total: 0, ok: 0, failed: 0, errors: [], persisted: false, storedClips: 0, cachedClips: 0, durableCachedClips: 0, storedReusableAssets: 0, storageError: null, diagnostics: [] });

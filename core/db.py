@@ -820,6 +820,48 @@ def load_audio_assets(*, asset_keys: Iterable[str]) -> tuple[dict[str, dict[str,
             pass
 
 
+def load_audio_assets_by_filenames(*, filenames: Iterable[str]) -> tuple[dict[str, bytes], str | None]:
+    """Load reusable audio bytes by media filenames."""
+    names = [str(name).strip() for name in (filenames or []) if str(name).strip()]
+    if not names:
+        return {}, None
+    unique_names = sorted(set(names))
+    conn = _get_conn()
+    if conn is None:
+        return {}, "DB is unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT filename, content
+                FROM audio_assets
+                WHERE filename = ANY(%s) AND quality_status = 'ok'
+                """,
+                (unique_names,),
+            )
+            rows = cur.fetchall() or []
+        out: dict[str, bytes] = {}
+        for filename, content in rows:
+            filename_text = str(filename or "").strip()
+            if not filename_text:
+                continue
+            if isinstance(content, memoryview):
+                out[filename_text] = content.tobytes()
+            elif isinstance(content, bytearray):
+                out[filename_text] = bytes(content)
+            elif isinstance(content, bytes):
+                out[filename_text] = content
+        return out, None
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to load audio assets by filename: %s", exc)
+        return {}, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def touch_audio_assets(*, asset_keys: Iterable[str]) -> None:
     """Mark reusable assets as used without failing the caller."""
     keys = [str(key).strip() for key in (asset_keys or []) if str(key).strip()]

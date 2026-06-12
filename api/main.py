@@ -116,6 +116,7 @@ from core.db import (
     load_run_media_assets,
     store_audio_assets,
     load_audio_assets,
+    load_audio_assets_by_filenames,
     touch_audio_assets,
     store_generated_card_asset,
     load_generated_card_asset,
@@ -1519,6 +1520,12 @@ def _resolve_export_media_files(
                 filenames=missing,
             )
             media_files.update(persisted_media)
+            missing = sorted(name for name in referenced if name not in media_files)
+        if missing:
+            reusable_media, reusable_error = load_audio_assets_by_filenames(filenames=missing)
+            media_files.update(reusable_media)
+            if reusable_error and not storage_error:
+                storage_error = reusable_error
             missing = sorted(name for name in referenced if name not in media_files)
 
         if missing:
