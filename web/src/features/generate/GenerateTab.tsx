@@ -126,6 +126,15 @@ export function GenerateTab({
     return { totalMs, llmMs, overheadMs };
   }, [response]);
 
+  const textCacheStats = useMemo(
+    () => ({
+      hits: Number(response?.timing?.text_cache_hits || 0),
+      stored: Number(response?.timing?.text_assets_stored || 0),
+      errors: Number(response?.timing?.text_cache_errors || 0),
+    }),
+    [response]
+  );
+
   return (
     <div className="tab-layout">
       <section className="card">
@@ -199,6 +208,7 @@ export function GenerateTab({
           </span>
           <span className="chip">CEFR: {settings.cefr}</span>
           <span className="chip">Profile: {settings.profile}</span>
+          <span className="chip">Card reuse: {settings.reuseTextCards ? "on" : "off"}</span>
           <span className="chip">Audio: {settings.audioProvider}</span>
           <span className="chip">Deck: {settings.defaultDeck || "-"}</span>
         </div>
@@ -237,6 +247,14 @@ export function GenerateTab({
               onChange={(e) => onSettingsPatch({ includeFlagged: e.target.checked })}
             />
             <span>Force flagged rows</span>
+          </label>
+          <label className="check-tile">
+            <input
+              type="checkbox"
+              checked={settings.reuseTextCards}
+              onChange={(e) => onSettingsPatch({ reuseTextCards: e.target.checked })}
+            />
+            <span>Reuse saved cards</span>
           </label>
           <label className="check-tile">
             <input
@@ -310,10 +328,28 @@ export function GenerateTab({
               <div className="summary-item">
                 <span className="k">overhead</span> {latencyStats.overheadMs} ms
               </div>
+              <div className="summary-item">
+                <span className="k">reused saved cards</span> {textCacheStats.hits}
+              </div>
+              <div className="summary-item">
+                <span className="k">saved cards</span> {textCacheStats.stored}
+              </div>
             </div>
             <p className="hint subtle">
               Overhead = queue/poll/auth/DB/cold-start time beyond per-row LLM latency.
+              {textCacheStats.hits > 0 || textCacheStats.stored > 0 ? (
+                <>
+                  {" "}
+                  Text reuse is {settings.reuseTextCards ? "enabled" : "off"}: {textCacheStats.hits} card(s) reused,{" "}
+                  {textCacheStats.stored} saved for future runs.
+                </>
+              ) : null}
             </p>
+            {textCacheStats.errors > 0 && (
+              <div className="inline-warning">
+                Text cache had {textCacheStats.errors} storage issue(s). Results are usable, but future reuse may be incomplete.
+              </div>
+            )}
 
             <div className="toolbar row-wrap compact-top">
               <div className="toolbar-actions">

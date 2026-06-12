@@ -53,6 +53,7 @@ class UserSettings(BaseModel):
     generate_audio: bool = False
     include_audio_word: bool = True
     include_audio_sentence: bool = True
+    reuse_text_cache: bool = False
     include_basic_reversed: bool = False
     include_basic_typein: bool = False
     default_deck_name: str = "Dutch"
@@ -151,6 +152,7 @@ class GenerateItem(BaseModel):
 class GenerateFlags(BaseModel):
     force_schema: bool = True
     allow_repair: bool = True
+    reuse_text_cache: bool = False
 
 
 class GenerateRequest(BaseModel):

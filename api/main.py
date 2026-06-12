@@ -6,6 +6,7 @@ builder so that responses and billing usage match the Streamlit UI behavior.
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import io
 import json
@@ -15,7 +16,7 @@ import re
 import time
 import uuid
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import StreamingResponse
@@ -116,6 +117,9 @@ from core.db import (
     store_audio_assets,
     load_audio_assets,
     touch_audio_assets,
+    store_generated_card_asset,
+    load_generated_card_asset,
+    touch_generated_card_asset,
 )
 
 
@@ -309,6 +313,51 @@ def _usage_from_meta(meta: Dict[str, Any]) -> UsageEvent:
         request_id=None,
         elapsed_ms=elapsed_ms,
     )
+
+
+def _normalize_generation_input_text(value: str | None) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip())
+
+
+def _generation_card_asset_identity(*, payload: GenerateRequest, item: Any, l1_code: str) -> Dict[str, Any]:
+    input_json = {
+        "woord": _normalize_generation_input_text(getattr(item, "woord", "")),
+        "def_nl": _normalize_generation_input_text(getattr(item, "def_nl", "") or ""),
+        "translation": _normalize_generation_input_text(getattr(item, "translation", "") or ""),
+    }
+    settings_json = {
+        "provider": (payload.provider or "openai").strip().lower(),
+        "model": (payload.model or "").strip(),
+        "prompt_version": (payload.prompt_version or "").strip(),
+        "cefr": (payload.cefr or "").strip(),
+        "profile": (payload.profile or "").strip(),
+        "l1": (l1_code or payload.l1 or "").strip().upper(),
+        "temperature": payload.temperature,
+        "max_output_tokens": payload.max_output_tokens,
+        "force_schema": bool(getattr(payload.flags, "force_schema", True)),
+        "allow_repair": bool(getattr(payload.flags, "allow_repair", True)),
+    }
+    input_hash = hashlib.sha256(json.dumps(input_json, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    key_material = {
+        "kind": "generated-card-v1",
+        "settings": settings_json,
+        "input": input_json,
+    }
+    asset_key = hashlib.sha256(json.dumps(key_material, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    return {
+        "asset_key": asset_key,
+        "input_hash": input_hash,
+        "input_json": input_json,
+        **settings_json,
+    }
+
+
+def _card_copy_without_cache_meta(card: Mapping[str, Any]) -> Dict[str, Any]:
+    clean = dict(card or {})
+    meta = dict(clean.get("meta") or {})
+    meta.pop("text_cache", None)
+    clean["meta"] = meta
+    return clean
 
 
 def _safe_export_basename(raw: str | None, fallback: str) -> str:
@@ -601,7 +650,7 @@ def api_usage(
 
 def _generate_one_item(
     *,
-    client: Any,
+    client: Any | None,
     payload: GenerateRequest,
     item: Any,
     idx: int,
@@ -610,6 +659,45 @@ def _generate_one_item(
     signal_usage: Dict[str, int],
     signal_last: Any,
 ) -> tuple[GenerateItemResult, Dict[str, Any], Dict[str, int], Any]:
+    reuse_text_cache = bool(getattr(payload.flags, "reuse_text_cache", False))
+    asset_identity = _generation_card_asset_identity(payload=payload, item=item, l1_code=l1_code)
+    if reuse_text_cache:
+        cached_asset, cache_error = load_generated_card_asset(asset_key=asset_identity["asset_key"])
+        if cached_asset and isinstance(cached_asset.get("card_json"), dict):
+            card = dict(cached_asset["card_json"])
+            meta = dict(card.get("meta") or {})
+            meta["provider"] = payload.provider or meta.get("provider") or "openai"
+            meta["model"] = payload.model or meta.get("model") or "unknown"
+            meta["text_cache"] = {
+                "status": "hit",
+                "asset_key": asset_identity["asset_key"],
+            }
+            meta["request"] = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cached_tokens": 0,
+                "total_elapsed_ms": 0,
+            }
+            card["meta"] = meta
+            status = _status_from_card(card)
+            out_item = GenerateItemResult(
+                id=item.id,
+                status=status,  # type: ignore[arg-type]
+                card=card if status in {"ok", "repaired"} else None,
+                error=card.get("error") or None,
+                usage=_usage_from_meta(meta),
+            )
+            try:
+                touch_generated_card_asset(asset_key=asset_identity["asset_key"])
+            except Exception:
+                pass
+            return out_item, card, signal_usage, signal_last
+        if cache_error:
+            logger.info("Generated-card cache lookup skipped: %s", cache_error)
+
+    if client is None:
+        client = _openai_client_or_500()
+
     row = {
         "woord": item.woord,
         "def_nl": item.def_nl or "",
@@ -643,6 +731,31 @@ def _generate_one_item(
     card = result.card
     meta = card.get("meta") or {}
     status = _status_from_card(card)
+    if reuse_text_cache and status in {"ok", "repaired"}:
+        try:
+            cache_card = _card_copy_without_cache_meta(card)
+            stored, store_error = store_generated_card_asset(
+                asset={
+                    **asset_identity,
+                    "card_json": cache_card,
+                    "status": status,
+                }
+            )
+            meta = dict(card.get("meta") or {})
+            meta["text_cache"] = {
+                "status": "stored" if stored else "store_failed",
+                "asset_key": asset_identity["asset_key"],
+                "error": store_error,
+            }
+            card["meta"] = meta
+        except Exception as exc:
+            meta = dict(card.get("meta") or {})
+            meta["text_cache"] = {
+                "status": "store_failed",
+                "asset_key": asset_identity["asset_key"],
+                "error": str(exc),
+            }
+            card["meta"] = meta
     out_item = GenerateItemResult(
         id=item.id,
         status=status,  # type: ignore[arg-type]
@@ -680,6 +793,19 @@ def _finalize_generate_response(
         "run_stats": run_stats,
     }
     run_report = build_run_report(SimpleNamespace(**state))
+    text_cache_hits = 0
+    text_assets_stored = 0
+    text_cache_errors = 0
+    for card in results_cards:
+        meta = card.get("meta") if isinstance(card, dict) else {}
+        cache_meta = (meta or {}).get("text_cache") if isinstance(meta, dict) else {}
+        status = (cache_meta or {}).get("status") if isinstance(cache_meta, dict) else None
+        if status == "hit":
+            text_cache_hits += 1
+        elif status == "stored":
+            text_assets_stored += 1
+        elif status == "store_failed":
+            text_cache_errors += 1
     try:
         log_usage_events(user_id=user_id, run_id=run_id or "", events=run_report.get("usage_events", []))
     except Exception:
@@ -691,7 +817,12 @@ def _finalize_generate_response(
         model=payload.model,
         items=items_out,
         run_report=run_report,
-        timing={"elapsed_ms": int(elapsed * 1000)},
+        timing={
+            "elapsed_ms": int(elapsed * 1000),
+            "text_cache_hits": text_cache_hits,
+            "text_assets_stored": text_assets_stored,
+            "text_cache_errors": text_cache_errors,
+        },
     )
 
 
@@ -702,7 +833,7 @@ def api_generate(
     x_api_key: str | None = Header(None, alias="X-API-Key"),
 ) -> GenerateResponse:
     user_id = _require_user(request, x_api_key)
-    client = _openai_client_or_500()
+    client = None
 
     l1_code = (payload.l1 or "").strip().upper()
     l1_meta = L1_LANGS.get(l1_code)
@@ -877,18 +1008,7 @@ def api_generate_worker(
     signal_last = state.get("signal_last")
     started_epoch = float(state.get("started_epoch") or time.time())
 
-    try:
-        client = _openai_client_or_500()
-    except HTTPException as exc:
-        fail_generation_job(job_id=job_id, error_text=str(exc.detail), state=state, processed_items=processed_items)
-        return GenerateJobWorkerResponse(
-            processed=True,
-            job_id=job_id,
-            status="failed",
-            processed_items=processed_items,
-            total_items=total_items,
-            message=str(exc.detail),
-        )
+    client = None
 
     if processed_items >= total_items:
         existing = get_generation_job(job_id=job_id, user_id=(None if cron_authorized else user_id))
@@ -936,6 +1056,27 @@ def api_generate_worker(
                 processed_items=idx,
                 total_items=total_items,
                 message=str(exc),
+            )
+        except HTTPException as exc:
+            fail_generation_job(
+                job_id=job_id,
+                error_text=str(exc.detail),
+                state={
+                    "items_out": items_out_raw,
+                    "results_cards": results_cards,
+                    "signal_usage": signal_usage,
+                    "signal_last": signal_last,
+                    "started_epoch": started_epoch,
+                },
+                processed_items=idx,
+            )
+            return GenerateJobWorkerResponse(
+                processed=True,
+                job_id=job_id,
+                status="failed",
+                processed_items=idx,
+                total_items=total_items,
+                message=str(exc.detail),
             )
         except Exception as exc:
             fail_generation_job(

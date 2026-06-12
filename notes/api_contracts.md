@@ -30,7 +30,8 @@ Local development override:
   "guid_policy": "stable",
   "flags": {
     "force_schema": true,
-    "allow_repair": true
+    "allow_repair": true,
+    "reuse_text_cache": false
   },
   "items": [
     {
@@ -46,6 +47,9 @@ Local development override:
 Notes:
 - `l1` must be one of: `EN`, `RU`, `ES`, `DE` (case-insensitive; server normalizes to uppercase). Invalid values return HTTP 400.
 - `flags`/`guid_policy` are accepted for forward compatibility; not all fields are used by the current implementation.
+- `flags.reuse_text_cache=true` enables optional generated-card reuse. A saved card is reused only when normalized
+  input (`woord/def_nl/translation`) and generation settings (`provider/model/prompt_version/CEFR/profile/L1/temperature`)
+  match. Cache hits do not call the text provider and are reported in `timing.text_cache_hits`.
 
 **Response (200)**
 ```json
@@ -78,7 +82,12 @@ Notes:
     }
   ],
   "run_report": { "... same shape as app/run_report.py output ..." },
-  "timing": { "elapsed_ms": 8123 }
+  "timing": {
+    "elapsed_ms": 8123,
+    "text_cache_hits": 0,
+    "text_assets_stored": 1,
+    "text_cache_errors": 0
+  }
 }
 ```
 

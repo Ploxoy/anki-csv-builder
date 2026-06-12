@@ -15,6 +15,11 @@ export type GenerateRequest = {
   l1: string;
   temperature?: number | null;
   max_output_tokens?: number | null;
+  flags?: {
+    force_schema?: boolean;
+    allow_repair?: boolean;
+    reuse_text_cache?: boolean;
+  };
   items: GenerateItem[];
 };
 
@@ -59,7 +64,12 @@ export type GenerateResponse = {
   model: string;
   items: GenerateItemResult[];
   run_report: Record<string, unknown>;
-  timing: { elapsed_ms: number };
+  timing: {
+    elapsed_ms: number;
+    text_cache_hits?: number;
+    text_assets_stored?: number;
+    text_cache_errors?: number;
+  };
 };
 
 export type GenerateJobCreateResponse = {
@@ -184,6 +194,7 @@ export type UserSettings = {
   generate_audio: boolean;
   include_audio_word: boolean;
   include_audio_sentence: boolean;
+  reuse_text_cache: boolean;
   include_basic_reversed: boolean;
   include_basic_typein: boolean;
   default_deck_name: string;

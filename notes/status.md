@@ -24,8 +24,9 @@
 - **Web export UX**: фронтенд предпочитает persisted-media путь для APKG, а inline `media_map` оставляет только как fallback для локальных/малых сценариев; в Generate теперь виден статус `Server storage` для аудио.
 - **TTS diagnostics for Vercel**: `/api/tts` теперь возвращает `timing` (`elapsed_ms`, `synthesis_ms`, `storage_ms`, `cache_hits`, `unique_media_files`), а web UI показывает batch-level diagnostics для аудио. Это нужно для точного разбора долгих ElevenLabs-прогонов без больших повторных затрат.
 - **Durable TTS asset store v1**: добавлена глобальная таблица `audio_assets` и deterministic asset key по `provider/model/voice/type/text/style`. `/api/tts` сначала ищет уже готовое аудио в Postgres, cache hits возвращает как `status="cached"` и не вызывает TTS-провайдера; новые клипы сохраняются обратно в asset store.
+- **Optional generated-card reuse v1**: добавлена таблица `generated_card_assets` и флаг `reuse_text_cache`. При включении `Reuse saved cards` API переиспользует уже готовую карточку, если совпадают input (`woord/def_nl/translation`) и generation settings (`provider/model/prompt_version/CEFR/profile/L1/temperature`); UI показывает `reused saved cards` и `saved cards` в Review.
 - **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
-- **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse` и durable TTS cache-hit без вызова провайдера.
+- **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse`, durable TTS cache-hit и generated-card cache-hit без вызова провайдера.
 
 ## Свежие изменения (март 2026)
 - **Synology deploy/docs**: обновлён пакет деплоя для NAS — `deploy/synology/REVERSE_PROXY.md` (gate-check public IP vs CGNAT), `deploy/synology/CLOUDFLARE_TUNNEL.md` (fallback), `deploy/synology/docker-compose.cloudflared.yml`, шаблон `deploy/synology/.env.cloudflare.example`.

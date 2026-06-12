@@ -215,6 +215,15 @@ export function SettingsTab({
           <span>Force generate flagged rows</span>
         </label>
 
+        <label className="check-tile single">
+          <input
+            type="checkbox"
+            checked={settings.reuseTextCards}
+            onChange={(e) => onSettingsPatch({ reuseTextCards: e.target.checked })}
+          />
+          <span>Reuse saved cards when input and generation settings match</span>
+        </label>
+
         {temperatureState.error && <Notice notice={{ level: "error", message: temperatureState.error }} />}
         {temperatureState.usedLegacyScale && (
           <Notice

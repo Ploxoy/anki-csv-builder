@@ -152,6 +152,26 @@ CREATE TABLE IF NOT EXISTS audio_assets (
 );
 """
 
+GENERATED_CARD_ASSETS_TABLE = """
+CREATE TABLE IF NOT EXISTS generated_card_assets (
+    asset_key TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    cefr TEXT NOT NULL,
+    profile TEXT NOT NULL,
+    l1 TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    input_json JSONB NOT NULL,
+    card_json JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ok',
+    use_count BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at TIMESTAMPTZ
+);
+"""
+
 # Helpful index for lookups in /api/usage.
 USAGE_EVENTS_USER_CREATED_IDX = """
 CREATE INDEX IF NOT EXISTS usage_events_user_created_at_idx
@@ -176,6 +196,11 @@ ON run_media_assets (user_id, run_id, created_at DESC);
 AUDIO_ASSETS_LOOKUP_IDX = """
 CREATE INDEX IF NOT EXISTS audio_assets_lookup_idx
 ON audio_assets (provider, model, voice, text_hash, quality_status);
+"""
+
+GENERATED_CARD_ASSETS_LOOKUP_IDX = """
+CREATE INDEX IF NOT EXISTS generated_card_assets_lookup_idx
+ON generated_card_assets (provider, model, prompt_version, cefr, profile, l1, input_hash);
 """
 
 
@@ -209,11 +234,13 @@ def _get_conn():
                             cur.execute(GENERATION_JOBS_TABLE)
                             cur.execute(RUN_MEDIA_ASSETS_TABLE)
                             cur.execute(AUDIO_ASSETS_TABLE)
+                            cur.execute(GENERATED_CARD_ASSETS_TABLE)
                             cur.execute(USAGE_EVENTS_USER_CREATED_IDX)
                             cur.execute(GENERATION_JOBS_USER_CREATED_IDX)
                             cur.execute(GENERATION_JOBS_STATUS_CREATED_IDX)
                             cur.execute(RUN_MEDIA_ASSETS_USER_RUN_IDX)
                             cur.execute(AUDIO_ASSETS_LOOKUP_IDX)
+                            cur.execute(GENERATED_CARD_ASSETS_LOOKUP_IDX)
                         _SCHEMA_READY = True
             return conn
         except Exception as exc:  # pragma: no cover - runtime env
@@ -815,6 +842,144 @@ def touch_audio_assets(*, asset_keys: Iterable[str]) -> None:
             )
     except Exception as exc:  # pragma: no cover - runtime env
         logger.error("Failed to touch audio assets: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def store_generated_card_asset(*, asset: Mapping[str, Any]) -> tuple[bool, str | None]:
+    """Persist one reusable generated card asset."""
+    asset_key = str(asset.get("asset_key") or "").strip()
+    if not asset_key:
+        return False, "asset_key is missing"
+    input_json = asset.get("input_json")
+    card_json = asset.get("card_json")
+    if not isinstance(input_json, Mapping) or not isinstance(card_json, Mapping):
+        return False, "input_json/card_json must be mappings"
+    conn = _get_conn()
+    if conn is None:
+        return False, "DB is unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO generated_card_assets (
+                    asset_key, provider, model, prompt_version, cefr, profile, l1,
+                    input_hash, input_json, card_json, status, created_at, updated_at, last_used_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, now(), now(), now())
+                ON CONFLICT (asset_key) DO UPDATE
+                SET card_json=excluded.card_json,
+                    status=excluded.status,
+                    updated_at=now(),
+                    last_used_at=now()
+                """,
+                (
+                    asset_key,
+                    str(asset.get("provider") or "").strip().lower(),
+                    str(asset.get("model") or "").strip(),
+                    str(asset.get("prompt_version") or "").strip(),
+                    str(asset.get("cefr") or "").strip(),
+                    str(asset.get("profile") or "").strip(),
+                    str(asset.get("l1") or "").strip().upper(),
+                    str(asset.get("input_hash") or "").strip(),
+                    json.dumps(dict(input_json), ensure_ascii=False),
+                    json.dumps(dict(card_json), ensure_ascii=False),
+                    str(asset.get("status") or "ok").strip() or "ok",
+                ),
+            )
+        return True, None
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to store generated card asset: %s", exc)
+        return False, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def load_generated_card_asset(*, asset_key: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Load one reusable generated card asset by deterministic key."""
+    key = str(asset_key or "").strip()
+    if not key:
+        return None, "asset_key is missing"
+    conn = _get_conn()
+    if conn is None:
+        return None, "DB is unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT asset_key, provider, model, prompt_version, cefr, profile, l1,
+                       input_hash, input_json, card_json, status, use_count
+                FROM generated_card_assets
+                WHERE asset_key=%s AND status IN ('ok', 'repaired')
+                """,
+                (key,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None, None
+
+        def _json_obj(value: Any) -> dict[str, Any]:
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, str):
+                try:
+                    loaded = json.loads(value)
+                    return loaded if isinstance(loaded, dict) else {}
+                except Exception:
+                    return {}
+            return {}
+
+        return {
+            "asset_key": row[0],
+            "provider": row[1],
+            "model": row[2],
+            "prompt_version": row[3],
+            "cefr": row[4],
+            "profile": row[5],
+            "l1": row[6],
+            "input_hash": row[7],
+            "input_json": _json_obj(row[8]),
+            "card_json": _json_obj(row[9]),
+            "status": row[10],
+            "use_count": row[11],
+        }, None
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to load generated card asset: %s", exc)
+        return None, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def touch_generated_card_asset(*, asset_key: str) -> None:
+    key = str(asset_key or "").strip()
+    if not key:
+        return
+    conn = _get_conn()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE generated_card_assets
+                SET use_count = use_count + 1,
+                    last_used_at = now(),
+                    updated_at = now()
+                WHERE asset_key=%s
+                """,
+                (key,),
+            )
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to touch generated card asset: %s", exc)
     finally:
         try:
             conn.close()

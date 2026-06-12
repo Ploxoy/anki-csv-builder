@@ -127,6 +127,7 @@ function mapServerSettings(base: Settings, payload: UserSettingsResponse): Setti
     generateAudio: payload.settings.generate_audio,
     includeAudioWord: payload.settings.include_audio_word,
     includeAudioSentence: payload.settings.include_audio_sentence,
+    reuseTextCards: payload.settings.reuse_text_cache,
     includeBasicReversed: payload.settings.include_basic_reversed,
     includeBasicTypein: payload.settings.include_basic_typein,
     defaultDeck: payload.settings.default_deck_name,
@@ -386,6 +387,7 @@ export default function App() {
           generate_audio: settings.generateAudio,
           include_audio_word: settings.includeAudioWord,
           include_audio_sentence: settings.includeAudioSentence,
+          reuse_text_cache: settings.reuseTextCards,
           include_basic_reversed: settings.includeBasicReversed,
           include_basic_typein: settings.includeBasicTypein,
           default_deck_name: settings.defaultDeck,
@@ -666,6 +668,9 @@ export default function App() {
       const totalTextBatches = Math.max(1, Math.ceil(totalRows / TEXT_BATCH_SIZE));
       const mergedItems: GenerateResponse["items"] = [];
       let mergedElapsedMs = 0;
+      let mergedTextCacheHits = 0;
+      let mergedTextAssetsStored = 0;
+      let mergedTextCacheErrors = 0;
       let lastPayload: GenerateResponse | null = null;
       const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -810,6 +815,11 @@ export default function App() {
           profile: settings.profile,
           l1: settings.l1,
           temperature: tempParsed.ratio,
+          flags: {
+            force_schema: true,
+            allow_repair: true,
+            reuse_text_cache: settings.reuseTextCards,
+          },
           items: batchItems,
         };
 
@@ -843,6 +853,9 @@ export default function App() {
           }
           lastPayload = batchPayload;
           mergedElapsedMs += Number(batchPayload.timing?.elapsed_ms || 0);
+          mergedTextCacheHits += Number(batchPayload.timing?.text_cache_hits || 0);
+          mergedTextAssetsStored += Number(batchPayload.timing?.text_assets_stored || 0);
+          mergedTextCacheErrors += Number(batchPayload.timing?.text_cache_errors || 0);
           mergedItems.push(...(Array.isArray(batchPayload.items) ? batchPayload.items : []));
           generatedRows = mergedItems.length;
 
@@ -852,6 +865,9 @@ export default function App() {
             items: [...mergedItems],
             timing: {
               elapsed_ms: mergedElapsedMs > 0 ? mergedElapsedMs : Date.now() - startedAt,
+              text_cache_hits: mergedTextCacheHits,
+              text_assets_stored: mergedTextAssetsStored,
+              text_cache_errors: mergedTextCacheErrors,
             },
           };
           setResponse(partialPayload);
@@ -889,6 +905,9 @@ export default function App() {
         items: mergedItems,
         timing: {
           elapsed_ms: mergedElapsedMs > 0 ? mergedElapsedMs : Date.now() - startedAt,
+          text_cache_hits: mergedTextCacheHits,
+          text_assets_stored: mergedTextAssetsStored,
+          text_cache_errors: mergedTextCacheErrors,
         },
       };
       setResponse(payload);

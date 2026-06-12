@@ -53,6 +53,7 @@ export type Settings = {
   generateAudio: boolean;
   includeAudioWord: boolean;
   includeAudioSentence: boolean;
+  reuseTextCards: boolean;
   includeBasicReversed: boolean;
   includeBasicTypein: boolean;
   defaultDeck: string;
@@ -78,6 +79,7 @@ export const DEFAULT_SETTINGS: Settings = {
   generateAudio: false,
   includeAudioWord: true,
   includeAudioSentence: true,
+  reuseTextCards: false,
   includeBasicReversed: false,
   includeBasicTypein: false,
   defaultDeck: "Dutch",
