@@ -97,15 +97,15 @@ export function GenerateTab({
   const reusableAudioNote = useMemo(() => {
     if (!audioRunSummary?.requested) return "";
     if ((audioRunSummary.durableCachedClips || 0) > 0 && (audioRunSummary.storedReusableAssets || 0) > 0) {
-      return "This run reused existing audio and saved new clips for future runs.";
+      return "This run reused existing audio clips and saved new audio clips for future runs.";
     }
     if ((audioRunSummary.durableCachedClips || 0) > 0) {
-      return "This run reused audio from the library, so those clips did not call the TTS provider.";
+      return "This run reused audio clips from the audio library, so those clips did not call the TTS provider.";
     }
     if ((audioRunSummary.storedReusableAssets || 0) > 0) {
       return "New audio was saved to the library. Repeating the same words/sentences with the same voice can reuse it.";
     }
-    return "No reusable audio was saved or reused in this run.";
+    return "No audio clips were saved to or reused from the audio library in this run.";
   }, [audioRunSummary]);
 
   const summaryCounts = useMemo(() => {
@@ -337,13 +337,13 @@ export function GenerateTab({
             </div>
             <p className="hint subtle">
               Overhead = queue/poll/auth/DB/cold-start time beyond per-row LLM latency.
-              {textCacheStats.hits > 0 || textCacheStats.stored > 0 ? (
+              {textCacheStats.hits > 0 ? (
                 <>
                   {" "}
-                  Text reuse is {settings.reuseTextCards ? "enabled" : "off"}: {textCacheStats.hits} card(s) reused,{" "}
-                  {textCacheStats.stored} saved for future runs.
+                  Text-card reuse is enabled: {textCacheStats.hits} card(s) loaded from the saved-card library.
                 </>
               ) : null}
+              {textCacheStats.stored > 0 ? <> {textCacheStats.stored} card(s) saved to the saved-card library for future runs.</> : null}
             </p>
             {textCacheStats.errors > 0 && (
               <div className="inline-warning">
@@ -454,10 +454,10 @@ export function GenerateTab({
                     <span className="k">failed</span> {audioRunSummary.failed}
                   </div>
                   <div className="summary-item">
-                    <span className="k">reused from library</span> {audioRunSummary.durableCachedClips || 0}
+                    <span className="k">reused audio clips</span> {audioRunSummary.durableCachedClips || 0}
                   </div>
                   <div className="summary-item">
-                    <span className="k">saved for reuse</span> {audioRunSummary.storedReusableAssets || 0}
+                    <span className="k">saved audio clips</span> {audioRunSummary.storedReusableAssets || 0}
                   </div>
                   <div className="summary-item">
                     <span className="k">server storage</span> {audioRunSummary.persisted ? "ready" : "not ready"}
