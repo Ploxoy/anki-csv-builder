@@ -1299,6 +1299,7 @@ def api_tts(
     request: Request,
     x_api_key: str | None = Header(None, alias="X-API-Key"),
 ) -> TTSResponse:
+    endpoint_started = time.time()
     user_id = _require_user(request, x_api_key)
     provider = (payload.provider or "openai").strip().lower()
 
@@ -1347,6 +1348,7 @@ def api_tts(
         voice = payload.voice or (AUDIO_VOICES[0]["id"] if AUDIO_VOICES else "alloy")
 
     resolved_model = (payload.model or AUDIO_TTS_MODEL) if provider == "openai" else (payload.model or "eleven_multilingual_v2")
+    synth_started = time.time()
     try:
         media_map, summary = ensure_audio_for_cards(
             cards,
@@ -1367,6 +1369,7 @@ def api_tts(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TTS pipeline failed: {exc}") from exc
+    synth_elapsed_ms = int((time.time() - synth_started) * 1000)
 
     # Build response audios
     clip_map: Dict[tuple[int, str], Any] = {}
@@ -1500,12 +1503,15 @@ def api_tts(
         pass
 
     storage_block: TTSStorageInfo | None = None
+    storage_elapsed_ms = 0
     if media_map:
+        storage_started = time.time()
         stored_count, storage_error = store_run_media_assets(
             user_id=user_id,
             run_id=payload.run_id or "",
             media_files=media_map,
         )
+        storage_elapsed_ms = int((time.time() - storage_started) * 1000)
         storage_block = TTSStorageInfo(
             persisted=bool(payload.run_id) and stored_count >= len(media_map),
             stored_clips=stored_count,
@@ -1514,6 +1520,18 @@ def api_tts(
     elif payload.run_id:
         storage_block = TTSStorageInfo(persisted=True, stored_clips=0, error=None)
 
+    endpoint_elapsed_ms = int((time.time() - endpoint_started) * 1000)
+    timing_block = {
+        "elapsed_ms": endpoint_elapsed_ms,
+        "synthesis_ms": synth_elapsed_ms,
+        "storage_ms": storage_elapsed_ms,
+        "items": len(payload.items or []),
+        "unique_media_files": len(media_map or {}),
+        "cache_hits": int(summary.cache_hits or 0),
+        "total_requests": int(summary.total_requests or 0),
+        "provider": provider,
+    }
+
     return TTSResponse(
         run_id=payload.run_id or "",
         provider=payload.provider,
@@ -1521,4 +1539,5 @@ def api_tts(
         audios=audios,
         summary=summary_block,
         storage=storage_block,
+        timing=timing_block,
     )

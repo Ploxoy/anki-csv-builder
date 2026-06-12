@@ -8,13 +8,6 @@
 - Основной стек API/UI сейчас: FastAPI (`api/main.py`) + минимальный web UI (`web/`) + legacy Streamlit.
 
 ## Что готово
-## Свежие изменения (июнь 2026)
-- **Vercel APKG export**: убран критичный bottleneck с большим `media_map` в теле запроса. `/api/tts` теперь сохраняет озвучку server-side в Postgres (`run_media_assets`) по `user_id + run_id + filename`.
-- **Server-side media reuse**: `/api/export/apkg` умеет добирать аудио из persisted storage по `run_id`, поэтому браузер больше не обязан пересылать base64-клипы обратно на API для крупных колод.
-- **Web export UX**: фронтенд предпочитает persisted-media путь для APKG, а inline `media_map` оставляет только как fallback для локальных/малых сценариев; в Generate теперь виден статус `Server storage` для аудио.
-- **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
-- **Тесты**: добавлены проверки `TTS -> persisted storage` и `APKG export -> persisted media reuse`.
-
 - **Core / генерация**: нормализация cloze, repair-pass, сигнал-слова, batch + parallel ThreadPool, авто-адаптация воркеров на транзитных ошибках.
 - **Экспорт**: CSV (pipe) + `.apkg`, в том числе привязка озвучки через `[sound:...]` и передачу `media_map` в genanki.
 - **TTS**:
@@ -24,6 +17,14 @@
   - Голос хранится помодульно (`audio_voice_map`), переключение провайдера не сбрасывает выбор.
 - **Secrets**: `OPENAI_API_KEY` и `ELEVENLABS_API_KEY` подтягиваются из secrets/env при старте, без ручного ввода.
 - **Тесты**: `pytest` зелёный, включая свежие проверки API-контрактов TTS.
+
+## Свежие изменения (июнь 2026)
+- **Vercel APKG export**: убран критичный bottleneck с большим `media_map` в теле запроса. `/api/tts` теперь сохраняет озвучку server-side в Postgres (`run_media_assets`) по `user_id + run_id + filename`.
+- **Server-side media reuse**: `/api/export/apkg` умеет добирать аудио из persisted storage по `run_id`, поэтому браузер больше не обязан пересылать base64-клипы обратно на API для крупных колод.
+- **Web export UX**: фронтенд предпочитает persisted-media путь для APKG, а inline `media_map` оставляет только как fallback для локальных/малых сценариев; в Generate теперь виден статус `Server storage` для аудио.
+- **TTS diagnostics for Vercel**: `/api/tts` теперь возвращает `timing` (`elapsed_ms`, `synthesis_ms`, `storage_ms`, `cache_hits`, `unique_media_files`), а web UI показывает batch-level diagnostics для аудио. Это нужно для точного разбора долгих ElevenLabs-прогонов без больших повторных затрат.
+- **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
+- **Тесты**: добавлены проверки `TTS -> persisted storage` и `APKG export -> persisted media reuse`.
 
 ## Свежие изменения (март 2026)
 - **Synology deploy/docs**: обновлён пакет деплоя для NAS — `deploy/synology/REVERSE_PROXY.md` (gate-check public IP vs CGNAT), `deploy/synology/CLOUDFLARE_TUNNEL.md` (fallback), `deploy/synology/docker-compose.cloudflared.yml`, шаблон `deploy/synology/.env.cloudflare.example`.

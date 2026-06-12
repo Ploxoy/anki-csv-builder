@@ -26,6 +26,7 @@ import {
   DEFAULT_SETTINGS,
   downloadBlobFile,
   ExportFormat,
+  formatElapsedMs,
   formatPercent,
   GenerateProgressMeta,
   generateRunId,
@@ -932,6 +933,7 @@ export default function App() {
           let persistedAudioReady = true;
           const errorSamples: string[] = [];
           const storageErrors: string[] = [];
+          const diagnosticLines: string[] = [];
           const mediaMap: Record<string, string> = {};
           const audioProgressStart = Math.min(94, textProgressCap + 4);
           const audioProgressSpan = Math.max(1, 99 - audioProgressStart);
@@ -1005,6 +1007,7 @@ export default function App() {
                 const ttsData = (await ttsRes.json().catch(() => null)) as any;
                 if (!ttsRes.ok) {
                   const detail = apiErrorText(ttsData, ttsRes.status);
+                  diagnosticLines.push("Batch " + batchIndex + "/" + totalBatches + ": HTTP " + ttsRes.status + " after " + formatElapsedMs(Date.now() - batchStartedAt) + ".");
                   appendUniqueError(errorSamples, detail);
                   failedCount += totalClips - doneClips;
                   doneClips = totalClips;
@@ -1013,6 +1016,7 @@ export default function App() {
                 }
 
                 const ttsPayload = ttsData as TTSResponse;
+                const batchHttpElapsedMs = Date.now() - batchStartedAt;
                 payload = mergeTtsIntoResponse(payload, ttsPayload);
                 const batchAudios = Array.isArray(ttsPayload.audios) ? ttsPayload.audios : [];
 
@@ -1044,8 +1048,13 @@ export default function App() {
 
                 const storedClips = Math.max(0, Number(ttsPayload.storage?.stored_clips || 0));
                 storedClipCount += storedClips;
-                if (batchOk > 0) {
-                  const batchPersisted = !!ttsPayload.storage?.persisted && storedClips >= batchOk;
+                const expectedStoredAssets = new Set(
+                  batchAudios
+                    .filter((audio) => (audio.status === "ok" || audio.status === "cached") && !!audio.filename)
+                    .map((audio) => audio.filename as string)
+                ).size;
+                if (expectedStoredAssets > 0) {
+                  const batchPersisted = !!ttsPayload.storage?.persisted && storedClips >= expectedStoredAssets;
                   if (!batchPersisted) {
                     persistedAudioReady = false;
                     appendUniqueError(
@@ -1056,6 +1065,35 @@ export default function App() {
                 } else if (ttsPayload.storage?.error) {
                   appendUniqueError(storageErrors, ttsPayload.storage.error);
                 }
+
+                const backendElapsedMs = Number(ttsPayload.timing?.elapsed_ms || 0);
+                const synthesisMs = Number(ttsPayload.timing?.synthesis_ms || 0);
+                const storageMs = Number(ttsPayload.timing?.storage_ms || 0);
+                const cacheHits = Number(ttsPayload.timing?.cache_hits || ttsPayload.summary?.cached || 0);
+                const uniqueMedia = Number(ttsPayload.timing?.unique_media_files || expectedStoredAssets || 0);
+                diagnosticLines.push(
+                  "Batch " +
+                    batchIndex +
+                    "/" +
+                    totalBatches +
+                    ": " +
+                    formatElapsedMs(batchHttpElapsedMs) +
+                    " round trip, " +
+                    (backendElapsedMs ? formatElapsedMs(backendElapsedMs) : "n/a") +
+                    " backend (synth " +
+                    (synthesisMs ? formatElapsedMs(synthesisMs) : "n/a") +
+                    ", storage " +
+                    formatElapsedMs(storageMs) +
+                    "), ok " +
+                    batchOk +
+                    ", cached " +
+                    cacheHits +
+                    ", failed " +
+                    batchFailed +
+                    ", media " +
+                    uniqueMedia +
+                    "."
+                );
 
                 doneClips = doneTarget;
                 setResponse(payload);
@@ -1077,7 +1115,7 @@ export default function App() {
             for (const storageError of storageErrors) {
               appendUniqueError(combinedErrors, storageError);
             }
-            const finalPersisted = resolvedOk > 0 ? persistedAudioReady && storedClipCount >= resolvedOk : true;
+            const finalPersisted = resolvedOk > 0 ? persistedAudioReady : true;
 
             setAudioRunSummary({
               requested: true,
@@ -1088,6 +1126,7 @@ export default function App() {
               persisted: finalPersisted,
               storedClips: storedClipCount,
               storageError: storageErrors[0] || null,
+              diagnostics: diagnosticLines,
             });
 
             if (resolvedFailed > 0) {
@@ -1127,11 +1166,12 @@ export default function App() {
               persisted: false,
               storedClips: 0,
               storageError: null,
+              diagnostics: diagnosticLines,
             });
             setGenerateNotice("audio", "error", "Audio synthesis did not complete.", detail);
           }
         } else {
-          setAudioRunSummary({ requested: true, total: 0, ok: 0, failed: 0, errors: [], persisted: true, storedClips: 0, storageError: null });
+          setAudioRunSummary({ requested: true, total: 0, ok: 0, failed: 0, errors: [], persisted: true, storedClips: 0, storageError: null, diagnostics: [] });
           setGenerateProgress((prev) => (95 > prev ? 95 : prev));
           setGenerateProgressLabel("Audio is enabled, but there are no clips to synthesize.");
           updateProgressMeta({
@@ -1146,7 +1186,7 @@ export default function App() {
           setGenerateNotice("audio", "info", "Audio enabled, but no eligible clips were found.");
         }
       } else {
-        setAudioRunSummary({ requested: false, total: 0, ok: 0, failed: 0, errors: [], persisted: false, storedClips: 0, storageError: null });
+        setAudioRunSummary({ requested: false, total: 0, ok: 0, failed: 0, errors: [], persisted: false, storedClips: 0, storageError: null, diagnostics: [] });
         setGenerateNotice("audio", "info", "Audio generation is disabled for this run.");
       }
 

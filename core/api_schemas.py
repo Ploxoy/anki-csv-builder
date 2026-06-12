@@ -328,3 +328,4 @@ class TTSResponse(BaseModel):
     audios: List[TTSAudio]
     summary: TTSSummary
     storage: Optional[TTSStorageInfo] = None
+    timing: Dict[str, Any] = Field(default_factory=dict)

@@ -165,6 +165,7 @@ export type TTSResponse = {
     cost: Record<string, unknown>;
   };
   storage?: TTSStorageInfo | null;
+  timing?: Record<string, unknown>;
 };
 
 export type UserSettings = {

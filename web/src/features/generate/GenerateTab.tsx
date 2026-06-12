@@ -400,13 +400,17 @@ export function GenerateTab({
                 {audioRunSummary.ok > 0 && (
                   <>
                     {" "}
-                    Server storage: {audioRunSummary.persisted ? `${audioRunSummary.storedClips} clip(s) saved.` : "not ready."}
+                    Server storage: {audioRunSummary.persisted ? "ready." : "not ready."}
                   </>
                 )}
               </p>
             )}
 
             <Notice notice={notices.audio} />
+
+            {(audioRunSummary?.diagnostics?.length || 0) > 0 && (
+              <pre className="diagnostic-log">{(audioRunSummary?.diagnostics || []).join("\n")}</pre>
+            )}
 
             {hasAudioFailures && audioErrorPreview.length > 0 && (
               <div className="inline-warning">
