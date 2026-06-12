@@ -341,9 +341,9 @@ def _call_with_single_retry(callable_: Callable[[], bytes], *, retry_backoff: fl
 
 def _openai_tts_timeout_seconds() -> float:
     try:
-        return max(5.0, float(os.getenv("OPENAI_TTS_TIMEOUT_SECONDS", "20")))
+        return max(5.0, float(os.getenv("OPENAI_TTS_TIMEOUT_SECONDS", "12")))
     except Exception:
-        return 20.0
+        return 12.0
 
 
 def _extract_bytes(response: object) -> bytes:

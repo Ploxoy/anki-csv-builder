@@ -1726,7 +1726,7 @@ def api_tts(
         eleven_api_key = None
         if provider == "openai":
             openai_client = _openai_client_or_500()
-            tts_max_workers = _env_int("OPENAI_TTS_MAX_WORKERS", 2, min_value=1, max_value=4)
+            tts_max_workers = _env_int("OPENAI_TTS_MAX_WORKERS", 4, min_value=1, max_value=4)
         elif provider == "elevenlabs":
             eleven_api_key = _elevenlabs_key_or_500()
             tts_max_workers = _env_int("ELEVENLABS_TTS_MAX_WORKERS", 2, min_value=1, max_value=2)

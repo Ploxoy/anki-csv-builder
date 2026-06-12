@@ -200,7 +200,8 @@ function mapServerSettings(base: Settings, payload: UserSettingsResponse): Setti
 
 const STARTER_INPUT = "aanraken\tiets voelen\tto touch\nbegrijpen\tsnappen wat iets betekent\tto understand";
 const TTS_OPTIONS_AUTO_REFRESH_MS = 3 * 60 * 1000;
-const TTS_BATCH_TIMEOUT_MS = 45_000;
+const OPENAI_TTS_BATCH_TIMEOUT_MS = 30_000;
+const ELEVENLABS_TTS_BATCH_TIMEOUT_MS = 45_000;
 
 export default function App() {
   const loadedSettings = useMemo<Settings>(() => ({ ...DEFAULT_SETTINGS, ...loadJson(SETTINGS_KEY, DEFAULT_SETTINGS) }), []);
@@ -1114,7 +1115,10 @@ export default function App() {
 
         if (ttsItems.length > 0) {
           const totalClips = ttsItems.length;
-          const ttsBatchSize = 2;
+          const audioProviderForRun = (settings.audioProvider || "openai").trim().toLowerCase();
+          const ttsBatchSize = 6;
+          const ttsBatchTimeoutMs =
+            audioProviderForRun === "elevenlabs" ? ELEVENLABS_TTS_BATCH_TIMEOUT_MS : OPENAI_TTS_BATCH_TIMEOUT_MS;
           const totalBatches = Math.ceil(totalClips / ttsBatchSize);
           let doneClips = 0;
           let okCount = 0;
@@ -1204,7 +1208,7 @@ export default function App() {
 
               try {
                 const controller = new AbortController();
-                const timeoutHandle = window.setTimeout(() => controller.abort(), TTS_BATCH_TIMEOUT_MS);
+                const timeoutHandle = window.setTimeout(() => controller.abort(), ttsBatchTimeoutMs);
                 let ttsRes: Response;
                 try {
                   ttsRes = await fetch(ttsUrl, {
@@ -1278,7 +1282,8 @@ export default function App() {
                     persistedAudioReady = false;
                     appendUniqueError(
                       storageErrors,
-                      ttsPayload.storage?.error || `Server-side audio persistence failed for batch ${batchIndex}/${totalBatches}.`
+                      ttsPayload.storage?.error ||
+                        `Server-side audio persistence failed for batch ${batchIndex}/${displayBatchTotal}.`
                     );
                   }
                 } else if (ttsPayload.storage?.error) {
@@ -1301,7 +1306,7 @@ export default function App() {
                   "Batch " +
                     batchIndex +
                     "/" +
-                    totalBatches +
+                    displayBatchTotal +
                     ": " +
                     formatElapsedMs(batchHttpElapsedMs) +
                     " round trip, " +
@@ -1334,7 +1339,7 @@ export default function App() {
               } catch (fetchErr: any) {
                 const isAbort = fetchErr?.name === "AbortError";
                 const detail = isAbort
-                  ? `TTS batch timed out after ${formatElapsedMs(TTS_BATCH_TIMEOUT_MS)}.`
+                  ? `TTS batch timed out after ${formatElapsedMs(ttsBatchTimeoutMs)}.`
                   : fetchErr?.message || String(fetchErr);
                 diagnosticLines.push(
                   "Batch " +
