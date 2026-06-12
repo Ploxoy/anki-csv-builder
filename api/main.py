@@ -154,6 +154,18 @@ def _env_text(name: str) -> str | None:
     return value or None
 
 
+def _env_int(name: str, default: int, *, min_value: int = 1, max_value: int | None = None) -> int:
+    raw = os.getenv(name)
+    try:
+        value = int(str(raw).strip()) if raw is not None else default
+    except Exception:
+        value = default
+    value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
 def _estimate_export_request_size_bytes(payload: ExportDeckRequest) -> int:
     payload_data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
     try:
@@ -1714,8 +1726,12 @@ def api_tts(
         eleven_api_key = None
         if provider == "openai":
             openai_client = _openai_client_or_500()
+            tts_max_workers = _env_int("OPENAI_TTS_MAX_WORKERS", 2, min_value=1, max_value=4)
         elif provider == "elevenlabs":
             eleven_api_key = _elevenlabs_key_or_500()
+            tts_max_workers = _env_int("ELEVENLABS_TTS_MAX_WORKERS", 2, min_value=1, max_value=2)
+        else:
+            tts_max_workers = 1
         try:
             generated_media_map, generated_summary = ensure_audio_for_cards(
                 cards_to_generate,
@@ -1730,7 +1746,7 @@ def api_tts(
                 openai_fallback_model=AUDIO_TTS_FALLBACK if provider == "openai" else None,
                 eleven_api_key=eleven_api_key,
                 eleven_model=(payload.model or None) if provider == "elevenlabs" else None,
-                max_workers=4,
+                max_workers=tts_max_workers,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -339,6 +339,13 @@ def _call_with_single_retry(callable_: Callable[[], bytes], *, retry_backoff: fl
     raise RuntimeError("Unexpected retry state")
 
 
+def _openai_tts_timeout_seconds() -> float:
+    try:
+        return max(5.0, float(os.getenv("OPENAI_TTS_TIMEOUT_SECONDS", "20")))
+    except Exception:
+        return 20.0
+
+
 def _extract_bytes(response: object) -> bytes:
     # New SDKs expose .read()
     read = getattr(response, "read", None)
@@ -379,6 +386,8 @@ def _synthesize(
     if not text:
         raise ValueError("Text for TTS is empty")
 
+    timeout_seconds = _openai_tts_timeout_seconds()
+
     # Try streaming API first for best compatibility
     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{format_}") as tmp:
         temp_path = Path(tmp.name)
@@ -393,6 +402,7 @@ def _synthesize(
                 input=text,
                 response_format=format_,
                 instructions=instructions,
+                timeout=timeout_seconds,
             ) as response:
                 response.stream_to_file(str(temp_path))
                 data = temp_path.read_bytes()
@@ -404,6 +414,7 @@ def _synthesize(
                 input=text,
                 response_format=format_,
                 instructions=instructions,
+                timeout=timeout_seconds,
             )
             data = _extract_bytes(response)
             return data

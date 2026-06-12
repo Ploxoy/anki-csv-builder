@@ -29,6 +29,7 @@
 - **Repeat-run 504 fix**: при `Reuse saved cards` web теперь использует direct text mode вместо async job queue, чтобы не тратить минуты на queue/poll при 100% text-cache hits. TTS больше не пересинтезирует clips, если `AudioWord/AudioSentence` уже прикреплены к сохранённой карточке; APKG export умеет добирать такие mp3 из глобального `audio_assets` по filename.
 - **TTS 504 hardening**: для ElevenLabs web уменьшает TTS batch size до 2 clips; retryable HTTP `429/502/503/504` теперь дробит batch на меньшие части, а ошибка одиночного clip не помечает весь оставшийся хвост failed.
 - **Audio asset consistency gate**: добавлен `/api/audio/assets/check`; перед TTS web проверяет, что уже прикреплённые `[sound:...]` реально существуют в `audio_assets`, и досинтезирует только отсутствующие клипы вместо тихого пропуска.
+- **OpenAI TTS hang guard**: для OpenAI TTS добавлен явный request timeout (`OPENAI_TTS_TIMEOUT_SECONDS`, default 20s), backend-параллельность снижена до 2 workers по умолчанию (`OPENAI_TTS_MAX_WORKERS`), web отправляет TTS батчами по 2 клипа и обрывает зависший `/api/tts` батч через 45s с диагностикой.
 - **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
 - **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse`, durable TTS cache-hit и generated-card cache-hit без вызова провайдера.
 

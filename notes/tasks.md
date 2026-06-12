@@ -36,6 +36,7 @@
 - [x] V3 — Vercel large-APKG path: `/api/tts` сохраняет audio clips server-side в Postgres (`run_media_assets`), а `/api/export/apkg` переиспользует их по `run_id`, чтобы не упираться в request-size limit при больших колодах с аудио.
 - [x] V5 — Durable TTS asset store v1: глобальная таблица `audio_assets` по deterministic asset key (`provider/model/voice/type/text/style`) + reuse в `/api/tts`, чтобы повторные озвучки не вызывали TTS-провайдера заново.
 - [x] V5a — Audio asset consistency gate: `/api/audio/assets/check` + web preflight для attached `[sound:...]`, чтобы отсутствующие mp3 из `audio_assets` досинтезировались, а не пропускались UI.
+- [x] V5b — OpenAI TTS hang guard: request timeout для OpenAI speech API, default max workers=2 и web TTS batches по 2 clips с 45s abort/diagnostics.
 - [x] V6a — Optional generated-card reuse v1: глобальная таблица `generated_card_assets` и флаг `reuse_text_cache`; при совпадении input+generation settings `/api/generate` возвращает сохранённую карточку без вызова LLM. Batch lookup/touch оптимизированы, чтобы повторные длинные списки не делали DB roundtrip на каждую строку.
 - [ ] V6 — Long-run generation persistence: durable `run_items`/resume flow для списков 1000+ строк, чтобы один сбой не требовал перегенерации уже готовых карточек.
 - [ ] V7 — Lexical memory v1: спроектировать словарный слой (`lexeme_entries`, examples, translations by L1, quality flags) поверх накопленных генераций.

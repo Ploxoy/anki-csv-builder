@@ -200,6 +200,7 @@ function mapServerSettings(base: Settings, payload: UserSettingsResponse): Setti
 
 const STARTER_INPUT = "aanraken\tiets voelen\tto touch\nbegrijpen\tsnappen wat iets betekent\tto understand";
 const TTS_OPTIONS_AUTO_REFRESH_MS = 3 * 60 * 1000;
+const TTS_BATCH_TIMEOUT_MS = 45_000;
 
 export default function App() {
   const loadedSettings = useMemo<Settings>(() => ({ ...DEFAULT_SETTINGS, ...loadJson(SETTINGS_KEY, DEFAULT_SETTINGS) }), []);
@@ -1113,8 +1114,7 @@ export default function App() {
 
         if (ttsItems.length > 0) {
           const totalClips = ttsItems.length;
-          const audioProviderForRun = (settings.audioProvider || "openai").trim().toLowerCase();
-          const ttsBatchSize = audioProviderForRun === "elevenlabs" ? 2 : 6;
+          const ttsBatchSize = 2;
           const totalBatches = Math.ceil(totalClips / ttsBatchSize);
           let doneClips = 0;
           let okCount = 0;
@@ -1203,7 +1203,19 @@ export default function App() {
               };
 
               try {
-                const ttsRes = await fetch(ttsUrl, { method: "POST", headers, body: JSON.stringify(ttsReq) });
+                const controller = new AbortController();
+                const timeoutHandle = window.setTimeout(() => controller.abort(), TTS_BATCH_TIMEOUT_MS);
+                let ttsRes: Response;
+                try {
+                  ttsRes = await fetch(ttsUrl, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(ttsReq),
+                    signal: controller.signal,
+                  });
+                } finally {
+                  window.clearTimeout(timeoutHandle);
+                }
                 const ttsData = (await ttsRes.json().catch(() => null)) as any;
                 if (!ttsRes.ok) {
                   const detail = apiErrorText(ttsData, ttsRes.status);
@@ -1319,6 +1331,33 @@ export default function App() {
                 doneClips = doneTarget;
                 setResponse(payload);
                 updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${displayBatchTotal} complete.`);
+              } catch (fetchErr: any) {
+                const isAbort = fetchErr?.name === "AbortError";
+                const detail = isAbort
+                  ? `TTS batch timed out after ${formatElapsedMs(TTS_BATCH_TIMEOUT_MS)}.`
+                  : fetchErr?.message || String(fetchErr);
+                diagnosticLines.push(
+                  "Batch " +
+                    batchIndex +
+                    "/" +
+                    displayBatchTotal +
+                    ": " +
+                    detail +
+                    " after " +
+                    formatElapsedMs(Date.now() - batchStartedAt) +
+                    "."
+                );
+                appendUniqueError(errorSamples, detail);
+                if (batch.length > 1) {
+                  const midpoint = Math.ceil(batch.length / 2);
+                  ttsQueue.unshift(batch.slice(0, midpoint), batch.slice(midpoint));
+                  updateAudioProgress(doneClips, batchIndex, false, "Retrying smaller audio batch after timeout.");
+                  continue;
+                }
+                failedCount += batch.length;
+                doneClips = doneTarget;
+                updateAudioProgress(doneClips, batchIndex, false, "Continuing after audio timeout.");
+                continue;
               } finally {
                 if (waitTimer != null) {
                   window.clearInterval(waitTimer);
