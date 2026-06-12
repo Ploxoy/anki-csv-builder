@@ -605,7 +605,7 @@ export default function App() {
     const textProgressCap = audioRequested ? 72 : 94;
     const startedAt = Date.now();
     const WAITING_PROVIDER_MS = 4000;
-    const TEXT_BATCH_SIZE = totalRows > 40 ? 6 : totalRows > 20 ? 8 : 10;
+    const TEXT_BATCH_SIZE = totalRows > 80 ? 20 : totalRows > 40 ? 16 : totalRows > 20 ? 10 : 10;
     let progressTimer: number | null = null;
     let generatedRows = 0;
 
@@ -680,7 +680,7 @@ export default function App() {
         doneBefore: number,
         batchSize: number
       ): Promise<GenerateResponse> => {
-        const workerChunkSize = Math.max(1, Math.min(batchSize, 4));
+        const workerChunkSize = Math.max(1, Math.min(batchSize, settings.reuseTextCards ? 12 : 8));
         const createdRes = await fetch(jobsCreateUrl, { method: "POST", headers, body: JSON.stringify(req) });
         const createdData = (await createdRes.json().catch(() => null)) as any;
         if (!createdRes.ok) {

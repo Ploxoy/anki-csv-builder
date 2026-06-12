@@ -120,6 +120,8 @@ from core.db import (
     store_generated_card_asset,
     load_generated_card_asset,
     touch_generated_card_asset,
+    load_generated_card_assets,
+    touch_generated_card_assets,
 )
 
 
@@ -350,6 +352,39 @@ def _generation_card_asset_identity(*, payload: GenerateRequest, item: Any, l1_c
         "input_json": input_json,
         **settings_json,
     }
+
+
+def _preload_generated_card_assets(
+    *,
+    payload: GenerateRequest,
+    items: List[Any],
+    l1_code: str,
+) -> tuple[Dict[str, Dict[str, Any]], str | None]:
+    if not bool(getattr(payload.flags, "reuse_text_cache", False)) or not items:
+        return {}, None
+    keys = [
+        _generation_card_asset_identity(payload=payload, item=item, l1_code=l1_code)["asset_key"]
+        for item in items
+    ]
+    return load_generated_card_assets(asset_keys=keys)
+
+
+def _needs_text_provider(
+    *,
+    payload: GenerateRequest,
+    items: List[Any],
+    l1_code: str,
+    text_cache_assets: Dict[str, Dict[str, Any]],
+) -> bool:
+    if not items:
+        return False
+    if not bool(getattr(payload.flags, "reuse_text_cache", False)):
+        return True
+    for item in items:
+        identity = _generation_card_asset_identity(payload=payload, item=item, l1_code=l1_code)
+        if identity["asset_key"] not in text_cache_assets:
+            return True
+    return False
 
 
 def _card_copy_without_cache_meta(card: Mapping[str, Any]) -> Dict[str, Any]:
@@ -658,11 +693,17 @@ def _generate_one_item(
     l1_meta: Dict[str, Any],
     signal_usage: Dict[str, int],
     signal_last: Any,
+    text_cache_assets: Dict[str, Dict[str, Any]] | None = None,
+    text_cache_touched_keys: List[str] | None = None,
 ) -> tuple[GenerateItemResult, Dict[str, Any], Dict[str, int], Any]:
     reuse_text_cache = bool(getattr(payload.flags, "reuse_text_cache", False))
     asset_identity = _generation_card_asset_identity(payload=payload, item=item, l1_code=l1_code)
     if reuse_text_cache:
-        cached_asset, cache_error = load_generated_card_asset(asset_key=asset_identity["asset_key"])
+        cache_error = None
+        if text_cache_assets is not None:
+            cached_asset = text_cache_assets.get(asset_identity["asset_key"])
+        else:
+            cached_asset, cache_error = load_generated_card_asset(asset_key=asset_identity["asset_key"])
         if cached_asset and isinstance(cached_asset.get("card_json"), dict):
             card = dict(cached_asset["card_json"])
             meta = dict(card.get("meta") or {})
@@ -687,10 +728,13 @@ def _generate_one_item(
                 error=card.get("error") or None,
                 usage=_usage_from_meta(meta),
             )
-            try:
-                touch_generated_card_asset(asset_key=asset_identity["asset_key"])
-            except Exception:
-                pass
+            if text_cache_touched_keys is not None:
+                text_cache_touched_keys.append(asset_identity["asset_key"])
+            else:
+                try:
+                    touch_generated_card_asset(asset_key=asset_identity["asset_key"])
+                except Exception:
+                    pass
             return out_item, card, signal_usage, signal_last
         if cache_error:
             logger.info("Generated-card cache lookup skipped: %s", cache_error)
@@ -846,6 +890,21 @@ def api_generate(
     results_cards: List[Dict[str, Any]] = []
     items_out: List[GenerateItemResult] = []
     started = time.time()
+    text_cache_assets, text_cache_error = _preload_generated_card_assets(
+        payload=payload,
+        items=list(payload.items or []),
+        l1_code=l1_code,
+    )
+    if text_cache_error:
+        logger.info("Generated-card cache preload skipped: %s", text_cache_error)
+    if _needs_text_provider(
+        payload=payload,
+        items=list(payload.items or []),
+        l1_code=l1_code,
+        text_cache_assets=text_cache_assets,
+    ):
+        client = _openai_client_or_500()
+    text_cache_touched_keys: List[str] = []
     for idx, item in enumerate(payload.items):
         try:
             out_item, card, signal_usage, signal_last = _generate_one_item(
@@ -857,11 +916,18 @@ def api_generate(
                 l1_meta=l1_meta,
                 signal_usage=signal_usage,
                 signal_last=signal_last,
+                text_cache_assets=text_cache_assets,
+                text_cache_touched_keys=text_cache_touched_keys,
             )
         except AuthenticationError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         items_out.append(out_item)
         results_cards.append(card)
+    if text_cache_touched_keys:
+        try:
+            touch_generated_card_assets(asset_keys=text_cache_touched_keys)
+        except Exception:
+            pass
 
     return _finalize_generate_response(
         payload=payload,
@@ -954,7 +1020,7 @@ def api_generate_worker(
         user_id = _require_user(request, x_api_key)
 
     stale_seconds = int(os.getenv("GENERATE_JOB_STALE_SECONDS", "90") or "90")
-    default_max_items = int(os.getenv("GENERATE_JOB_MAX_ITEMS_PER_WORKER", "2") or "2")
+    default_max_items = int(os.getenv("GENERATE_JOB_MAX_ITEMS_PER_WORKER", "6") or "6")
     max_items = max(1, min(int(payload.max_items or default_max_items), 20))
 
     claimed = claim_generation_job(
@@ -1023,6 +1089,33 @@ def api_generate_worker(
         )
 
     end_index = min(total_items, processed_items + max_items)
+    chunk_items = list(request_payload.items[processed_items:end_index])
+    text_cache_assets, text_cache_error = _preload_generated_card_assets(
+        payload=request_payload,
+        items=chunk_items,
+        l1_code=l1_code,
+    )
+    if text_cache_error:
+        logger.info("Generated-card cache preload skipped: %s", text_cache_error)
+    try:
+        if _needs_text_provider(
+            payload=request_payload,
+            items=chunk_items,
+            l1_code=l1_code,
+            text_cache_assets=text_cache_assets,
+        ):
+            client = _openai_client_or_500()
+    except HTTPException as exc:
+        fail_generation_job(job_id=job_id, error_text=str(exc.detail), state=state, processed_items=processed_items)
+        return GenerateJobWorkerResponse(
+            processed=True,
+            job_id=job_id,
+            status="failed",
+            processed_items=processed_items,
+            total_items=total_items,
+            message=str(exc.detail),
+        )
+    text_cache_touched_keys: List[str] = []
     for idx in range(processed_items, end_index):
         item = request_payload.items[idx]
         try:
@@ -1035,6 +1128,8 @@ def api_generate_worker(
                 l1_meta=l1_meta,
                 signal_usage=signal_usage,
                 signal_last=signal_last,
+                text_cache_assets=text_cache_assets,
+                text_cache_touched_keys=text_cache_touched_keys,
             )
         except AuthenticationError as exc:
             fail_generation_job(
@@ -1117,6 +1212,11 @@ def api_generate_worker(
                 "started_epoch": started_epoch,
             },
         )
+    if text_cache_touched_keys:
+        try:
+            touch_generated_card_assets(asset_keys=text_cache_touched_keys)
+        except Exception:
+            pass
 
     new_state = {
         "items_out": items_out_raw,

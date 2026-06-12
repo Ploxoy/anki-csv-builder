@@ -903,12 +903,23 @@ def store_generated_card_asset(*, asset: Mapping[str, Any]) -> tuple[bool, str |
 
 def load_generated_card_asset(*, asset_key: str) -> tuple[dict[str, Any] | None, str | None]:
     """Load one reusable generated card asset by deterministic key."""
-    key = str(asset_key or "").strip()
-    if not key:
-        return None, "asset_key is missing"
+    assets, error = load_generated_card_assets(asset_keys=[asset_key])
+    if error:
+        return None, error
+    return assets.get(str(asset_key or "").strip()), None
+
+
+def load_generated_card_assets(*, asset_keys: Iterable[str]) -> tuple[dict[str, dict[str, Any]], str | None]:
+    """Load reusable generated card assets by deterministic keys."""
+    keys = [str(key).strip() for key in (asset_keys or []) if str(key).strip()]
+    if not keys:
+        return {}, None
+    unique_keys = sorted(set(keys))
+    if not unique_keys:
+        return {}, None
     conn = _get_conn()
     if conn is None:
-        return None, "DB is unavailable"
+        return {}, "DB is unavailable"
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -916,13 +927,11 @@ def load_generated_card_asset(*, asset_key: str) -> tuple[dict[str, Any] | None,
                 SELECT asset_key, provider, model, prompt_version, cefr, profile, l1,
                        input_hash, input_json, card_json, status, use_count
                 FROM generated_card_assets
-                WHERE asset_key=%s AND status IN ('ok', 'repaired')
+                WHERE asset_key = ANY(%s) AND status IN ('ok', 'repaired')
                 """,
-                (key,),
+                (unique_keys,),
             )
-            row = cur.fetchone()
-        if not row:
-            return None, None
+            rows = cur.fetchall() or []
 
         def _json_obj(value: Any) -> dict[str, Any]:
             if isinstance(value, dict):
@@ -935,23 +944,26 @@ def load_generated_card_asset(*, asset_key: str) -> tuple[dict[str, Any] | None,
                     return {}
             return {}
 
-        return {
-            "asset_key": row[0],
-            "provider": row[1],
-            "model": row[2],
-            "prompt_version": row[3],
-            "cefr": row[4],
-            "profile": row[5],
-            "l1": row[6],
-            "input_hash": row[7],
-            "input_json": _json_obj(row[8]),
-            "card_json": _json_obj(row[9]),
-            "status": row[10],
-            "use_count": row[11],
-        }, None
+        out: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            out[str(row[0])] = {
+                "asset_key": row[0],
+                "provider": row[1],
+                "model": row[2],
+                "prompt_version": row[3],
+                "cefr": row[4],
+                "profile": row[5],
+                "l1": row[6],
+                "input_hash": row[7],
+                "input_json": _json_obj(row[8]),
+                "card_json": _json_obj(row[9]),
+                "status": row[10],
+                "use_count": row[11],
+            }
+        return out, None
     except Exception as exc:  # pragma: no cover - runtime env
-        logger.error("Failed to load generated card asset: %s", exc)
-        return None, str(exc)
+        logger.error("Failed to load generated card assets: %s", exc)
+        return {}, str(exc)
     finally:
         try:
             conn.close()
@@ -960,9 +972,14 @@ def load_generated_card_asset(*, asset_key: str) -> tuple[dict[str, Any] | None,
 
 
 def touch_generated_card_asset(*, asset_key: str) -> None:
-    key = str(asset_key or "").strip()
-    if not key:
+    touch_generated_card_assets(asset_keys=[asset_key])
+
+
+def touch_generated_card_assets(*, asset_keys: Iterable[str]) -> None:
+    keys = [str(key).strip() for key in (asset_keys or []) if str(key).strip()]
+    if not keys:
         return
+    unique_keys = sorted(set(keys))
     conn = _get_conn()
     if conn is None:
         return
@@ -974,12 +991,12 @@ def touch_generated_card_asset(*, asset_key: str) -> None:
                 SET use_count = use_count + 1,
                     last_used_at = now(),
                     updated_at = now()
-                WHERE asset_key=%s
+                WHERE asset_key = ANY(%s)
                 """,
-                (key,),
+                (unique_keys,),
             )
     except Exception as exc:  # pragma: no cover - runtime env
-        logger.error("Failed to touch generated card asset: %s", exc)
+        logger.error("Failed to touch generated card assets: %s", exc)
     finally:
         try:
             conn.close()

@@ -57,11 +57,11 @@ def test_api_generate_reuses_saved_card_without_generation_call(monkeypatch):
     monkeypatch.setattr(api_main, "_openai_client_or_500", lambda: (_ for _ in ()).throw(AssertionError("client not needed")))
     monkeypatch.setattr(api_main, "generate_card", fail_generate_card)
     monkeypatch.setattr(api_main, "log_usage_events", lambda **kwargs: None)
-    monkeypatch.setattr(api_main, "touch_generated_card_asset", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "touch_generated_card_assets", lambda **kwargs: None)
     monkeypatch.setattr(
         api_main,
-        "load_generated_card_asset",
-        lambda **kwargs: ({"card_json": _card(), "status": "ok"}, None),
+        "load_generated_card_assets",
+        lambda **kwargs: ({kwargs["asset_keys"][0]: {"card_json": _card(), "status": "ok"}}, None),
     )
 
     result = api_main.api_generate(_payload(reuse=True), request=_dummy_request(), x_api_key=None)
@@ -87,7 +87,7 @@ def test_api_generate_stores_successful_card_on_cache_miss(monkeypatch):
     monkeypatch.setattr(api_main, "_openai_client_or_500", lambda: object())
     monkeypatch.setattr(api_main, "generate_card", fake_generate_card)
     monkeypatch.setattr(api_main, "log_usage_events", lambda **kwargs: None)
-    monkeypatch.setattr(api_main, "load_generated_card_asset", lambda **kwargs: (None, None))
+    monkeypatch.setattr(api_main, "load_generated_card_assets", lambda **kwargs: ({}, None))
     monkeypatch.setattr(api_main, "store_generated_card_asset", fake_store_generated_card_asset)
 
     result = api_main.api_generate(_payload(reuse=True), request=_dummy_request(), x_api_key=None)
