@@ -26,6 +26,7 @@ def patch_api_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(api_main, "_require_user", lambda request, x_api_key: "user-test")
     monkeypatch.setattr(api_main, "_openai_client_or_500", lambda: object())
     monkeypatch.setattr(api_main, "log_usage_events", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "store_run_media_assets", lambda **kwargs: (len(kwargs.get("media_files") or {}), None))
 
 
 def test_api_tts_returns_clip_level_status_and_error(monkeypatch: pytest.MonkeyPatch, patch_api_auth: None) -> None:
@@ -81,6 +82,9 @@ def test_api_tts_returns_clip_level_status_and_error(monkeypatch: pytest.MonkeyP
     assert result.audios[1].status == "failed"
     assert result.audios[1].error == "upstream timeout"
     assert result.audios[1].filename is None
+    assert result.storage is not None
+    assert result.storage.persisted is True
+    assert result.storage.stored_clips == 1
 
 
 def test_api_tts_retries_transient_error_once(

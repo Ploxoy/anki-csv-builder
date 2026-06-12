@@ -1,6 +1,6 @@
 # Now — Anki CSV Builder
 
-Updated: 2026-03-30T14:47:01
+Updated: 2026-06-12T00:00:00
 
 ## Quick pointers
 - notes/status.md (project status)
@@ -123,3 +123,5 @@ c47b3af power sfe modes
 - Keep Synology deploy path with `sudo` for compose operations to avoid false-positive "updated but not rebuilt" states.
 - Open questions:
 - None critical; incident is currently considered resolved based on successful long-list run.
+
+- Current focus: Vercel export path now uses persisted TTS media in Postgres (`run_media_assets`) so APKG downloads do not need a huge base64 request body.

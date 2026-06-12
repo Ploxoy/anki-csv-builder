@@ -246,6 +246,11 @@ export default function App() {
   }, [response]);
 
   const hasAudioFailures = !!audioRunSummary && audioRunSummary.requested && audioRunSummary.failed > 0;
+  const canUsePersistedAudioForApkg =
+    !!response?.run_id &&
+    !!audioRunSummary?.requested &&
+    !!audioRunSummary?.persisted &&
+    (audioRunSummary?.storedClips || 0) > 0;
 
   function setGenerateNotice(section: "input" | "run" | "audio" | "export", level: "info" | "success" | "warning" | "error", message: string, details?: string) {
     setNotices((prev) => withGenerateNotice(prev, section, { level, message, details }));
@@ -923,7 +928,10 @@ export default function App() {
           let doneClips = 0;
           let okCount = 0;
           let failedCount = 0;
+          let storedClipCount = 0;
+          let persistedAudioReady = true;
           const errorSamples: string[] = [];
+          const storageErrors: string[] = [];
           const mediaMap: Record<string, string> = {};
           const audioProgressStart = Math.min(94, textProgressCap + 4);
           const audioProgressSpan = Math.max(1, 99 - audioProgressStart);
@@ -1034,6 +1042,21 @@ export default function App() {
                   appendUniqueError(errorSamples, err);
                 }
 
+                const storedClips = Math.max(0, Number(ttsPayload.storage?.stored_clips || 0));
+                storedClipCount += storedClips;
+                if (batchOk > 0) {
+                  const batchPersisted = !!ttsPayload.storage?.persisted && storedClips >= batchOk;
+                  if (!batchPersisted) {
+                    persistedAudioReady = false;
+                    appendUniqueError(
+                      storageErrors,
+                      ttsPayload.storage?.error || `Server-side audio persistence failed for batch ${batchIndex}/${totalBatches}.`
+                    );
+                  }
+                } else if (ttsPayload.storage?.error) {
+                  appendUniqueError(storageErrors, ttsPayload.storage.error);
+                }
+
                 doneClips = doneTarget;
                 setResponse(payload);
                 updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${totalBatches} complete.`);
@@ -1050,17 +1073,25 @@ export default function App() {
 
             const resolvedOk = Math.min(okCount, totalClips);
             const resolvedFailed = Math.max(failedCount, totalClips - resolvedOk);
+            const combinedErrors = [...errorSamples];
+            for (const storageError of storageErrors) {
+              appendUniqueError(combinedErrors, storageError);
+            }
+            const finalPersisted = resolvedOk > 0 ? persistedAudioReady && storedClipCount >= resolvedOk : true;
 
             setAudioRunSummary({
               requested: true,
               total: totalClips,
               ok: resolvedOk,
               failed: resolvedFailed,
-              errors: errorSamples,
+              errors: combinedErrors,
+              persisted: finalPersisted,
+              storedClips: storedClipCount,
+              storageError: storageErrors[0] || null,
             });
 
             if (resolvedFailed > 0) {
-              const firstErr = errorSamples.find((err) => typeof err === "string" && err.trim().length > 0);
+              const firstErr = combinedErrors.find((err) => typeof err === "string" && err.trim().length > 0);
               const details = firstErr ? `First error: ${firstErr}` : undefined;
               if (resolvedOk > 0) {
                 setGenerateNotice(
@@ -1072,6 +1103,14 @@ export default function App() {
               } else {
                 setGenerateNotice("audio", "error", `Audio failed for all clips (${resolvedFailed}).`, details);
               }
+            } else if (!finalPersisted) {
+              const details = storageErrors[0] || "Large APKG export on Vercel may fail until server-side storage is available.";
+              setGenerateNotice(
+                "audio",
+                "warning",
+                `Audio ready: ${resolvedOk} clip(s), but server-side export storage is unavailable.`,
+                details
+              );
             } else {
               setGenerateNotice("audio", "success", `Audio ready: ${resolvedOk} clip(s).`);
             }
@@ -1085,11 +1124,14 @@ export default function App() {
               ok: okCount,
               failed: unresolvedFailed,
               errors: errorSamples,
+              persisted: false,
+              storedClips: 0,
+              storageError: null,
             });
             setGenerateNotice("audio", "error", "Audio synthesis did not complete.", detail);
           }
         } else {
-          setAudioRunSummary({ requested: true, total: 0, ok: 0, failed: 0, errors: [] });
+          setAudioRunSummary({ requested: true, total: 0, ok: 0, failed: 0, errors: [], persisted: true, storedClips: 0, storageError: null });
           setGenerateProgress((prev) => (95 > prev ? 95 : prev));
           setGenerateProgressLabel("Audio is enabled, but there are no clips to synthesize.");
           updateProgressMeta({
@@ -1104,7 +1146,7 @@ export default function App() {
           setGenerateNotice("audio", "info", "Audio enabled, but no eligible clips were found.");
         }
       } else {
-        setAudioRunSummary({ requested: false, total: 0, ok: 0, failed: 0, errors: [] });
+        setAudioRunSummary({ requested: false, total: 0, ok: 0, failed: 0, errors: [], persisted: false, storedClips: 0, storageError: null });
         setGenerateNotice("audio", "info", "Audio generation is disabled for this run.");
       }
 
@@ -1179,6 +1221,8 @@ export default function App() {
     setNotices((prev) => withGenerateNotice(prev, "export", null));
 
     try {
+      const inlineApkgMedia =
+        format === "apkg" && !canUsePersistedAudioForApkg && Object.keys(audioMediaMap).length > 0 ? audioMediaMap : undefined;
       const req: ExportDeckRequest = {
         run_id: response.run_id || generateRunId(),
         l1: settings.l1,
@@ -1189,15 +1233,16 @@ export default function App() {
         guid_policy: "stable",
         include_basic_reversed: settings.includeBasicReversed,
         include_basic_typein: settings.includeBasicTypein,
-        media_map: format === "apkg" && Object.keys(audioMediaMap).length > 0 ? audioMediaMap : undefined,
+        use_persisted_media: format === "apkg" ? canUsePersistedAudioForApkg : false,
+        media_map: inlineApkgMedia,
         cards: exportCards,
       };
 
-      if (format === "apkg") {
+      if (format === "apkg" && req.media_map) {
         const estimatedBytes = estimateExportRequestSizeBytes(req);
         if (estimatedBytes >= EXPORT_REQUEST_SOFT_LIMIT_BYTES) {
           throw new Error(
-            `APKG export request is too large for Vercel (${formatMb(estimatedBytes)} MB estimated). Try fewer cards, disable audio, or split the deck into smaller batches.`
+            `APKG export request is too large for Vercel (${formatMb(estimatedBytes)} MB estimated). Server-side audio storage is not available for this run, so try fewer cards, disable audio, or regenerate after storage is fixed.`
           );
         }
       }
@@ -1215,8 +1260,10 @@ export default function App() {
         const fileName = parseAttachmentFilename(res.headers.get("Content-Disposition")) || `${normalizedDeckName(settings.defaultDeck || "Dutch")}.apkg`;
         const cardCount = Number(res.headers.get("X-Card-Count") || exportCards.length || 0);
         downloadBlobFile(blob, fileName);
-        const details = exportWarning || undefined;
-        setGenerateNotice("export", "success", `Downloaded ${fileName} (${cardCount} cards).`, details);
+        const successDetails = [exportWarning, canUsePersistedAudioForApkg ? "Used server-stored audio for APKG export." : ""]
+          .filter(Boolean)
+          .join(" ") || undefined;
+        setGenerateNotice("export", "success", `Downloaded ${fileName} (${cardCount} cards).`, successDetails);
       } else {
         const data = (await res.json().catch(() => null)) as any;
         const payload = data as ExportFileResponse;

@@ -397,6 +397,12 @@ export function GenerateTab({
             {audioRunSummary?.requested && (
               <p className="hint subtle">
                 Audio summary: {audioRunSummary.ok}/{audioRunSummary.total} ready, {audioRunSummary.failed} failed.
+                {audioRunSummary.ok > 0 && (
+                  <>
+                    {" "}
+                    Server storage: {audioRunSummary.persisted ? `${audioRunSummary.storedClips} clip(s) saved.` : "not ready."}
+                  </>
+                )}
               </p>
             )}
 

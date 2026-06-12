@@ -25,7 +25,17 @@ def patch_api_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(api_main, "_require_user", lambda request, x_api_key: "user-test")
 
 
-def _payload(media_map: dict[str, str] | None = None) -> ExportDeckRequest:
+def _payload(media_map: dict[str, str] | None = None, use_persisted_media: bool = False) -> ExportDeckRequest:
+    card = {
+        "L2_word": "fiets",
+        "L2_cloze": "Ik zie een {{c1::fiets}}.",
+        "L1_sentence": "I see a bicycle.",
+        "L2_collocations": "een fiets zien; op de fiets; nieuwe fiets",
+        "L2_definition": "een voertuig met twee wielen",
+        "L1_gloss": "bicycle",
+    }
+    if media_map is not None or use_persisted_media:
+        card["AudioWord"] = "[sound:word_fiets.mp3]"
     return ExportDeckRequest(
         run_id="run-1",
         l1="EN",
@@ -36,17 +46,9 @@ def _payload(media_map: dict[str, str] | None = None) -> ExportDeckRequest:
         guid_policy="stable",
         include_basic_reversed=False,
         include_basic_typein=False,
+        use_persisted_media=use_persisted_media,
         media_map=media_map,
-        cards=[
-            {
-                "L2_word": "fiets",
-                "L2_cloze": "Ik zie een {{c1::fiets}}.",
-                "L1_sentence": "I see a bicycle.",
-                "L2_collocations": "een fiets zien; op de fiets; nieuwe fiets",
-                "L2_definition": "een voertuig met twee wielen",
-                "L1_gloss": "bicycle",
-            }
-        ],
+        cards=[card],
     )
 
 
@@ -71,3 +73,28 @@ def test_api_export_apkg_rejects_large_request(monkeypatch: pytest.MonkeyPatch, 
 
     assert exc_info.value.status_code == 413
     assert "too large for Vercel" in str(exc_info.value.detail)
+
+
+def test_api_export_apkg_uses_persisted_media(monkeypatch: pytest.MonkeyPatch, patch_api_auth: None) -> None:
+    monkeypatch.setattr(api_main, "HAS_GENANKI", True)
+    captured: dict[str, object] = {}
+
+    def fake_build(*args, **kwargs):
+        captured["media_files"] = kwargs.get("media_files")
+        return b"apkg-bytes"
+
+    monkeypatch.setattr(api_main, "build_anki_package", fake_build)
+    monkeypatch.setattr(
+        api_main,
+        "load_run_media_assets",
+        lambda **kwargs: ({"word_fiets.mp3": b"persisted-audio"}, None),
+    )
+
+    result = api_main.api_export_apkg(
+        _payload(media_map=None, use_persisted_media=True),
+        request=_dummy_request(),
+        x_api_key=None,
+    )
+
+    assert isinstance(result, StreamingResponse)
+    assert captured["media_files"] == {"word_fiets.mp3": b"persisted-audio"}

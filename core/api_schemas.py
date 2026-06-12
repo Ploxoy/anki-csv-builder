@@ -250,6 +250,7 @@ class ExportDeckRequest(BaseModel):
     guid_policy: Literal["stable", "unique"] = "stable"
     include_basic_reversed: bool = False
     include_basic_typein: bool = False
+    use_persisted_media: bool = False
     media_map: Optional[Dict[str, str]] = None
     cards: List[ExportCard]
 
@@ -314,9 +315,16 @@ class TTSSummary(BaseModel):
     cost: Dict[str, Any]
 
 
+class TTSStorageInfo(BaseModel):
+    persisted: bool = False
+    stored_clips: int = 0
+    error: Optional[str] = None
+
+
 class TTSResponse(BaseModel):
     run_id: str
     provider: str
     model: str
     audios: List[TTSAudio]
     summary: TTSSummary
+    storage: Optional[TTSStorageInfo] = None

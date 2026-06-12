@@ -48,6 +48,7 @@ from core.api_schemas import (
     TTSResponse,
     TTSAudio,
     TTSSummary,
+    TTSStorageInfo,
     GenerateJobCreateResponse,
     GenerateJobStatusResponse,
     GenerateJobWorkerRequest,
@@ -110,6 +111,8 @@ from core.db import (
     update_generation_job_progress,
     complete_generation_job,
     fail_generation_job,
+    store_run_media_assets,
+    load_run_media_assets,
 )
 
 
@@ -1042,7 +1045,7 @@ def api_export_csv(
     request: Request,
     x_api_key: str | None = Header(None, alias="X-API-Key"),
 ) -> ExportFileResponse:
-    _require_user(request, x_api_key)
+    user_id = _require_user(request, x_api_key)
 
     if not payload.cards:
         raise HTTPException(status_code=400, detail="No cards to export")
@@ -1084,7 +1087,7 @@ def api_export_apkg(
     request: Request,
     x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
-    _require_user(request, x_api_key)
+    user_id = _require_user(request, x_api_key)
 
     if not payload.cards:
         raise HTTPException(status_code=400, detail="No cards to export")
@@ -1112,17 +1115,7 @@ def api_export_apkg(
     cards = _export_cards_to_dict(payload.cards)
     run_id = (payload.run_id or "").strip() or str(int(time.time()))
     deck_name = (payload.deck_name or "").strip() or ANKI_DECK_NAME
-    media_files: Dict[str, bytes] | None = None
-    if payload.media_map:
-        media_files = {}
-        for raw_name, content_b64 in payload.media_map.items():
-            if not content_b64:
-                continue
-            safe_name = _safe_media_filename(raw_name)
-            try:
-                media_files[safe_name] = base64.b64decode(content_b64)
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Invalid media payload for {safe_name}") from exc
+    media_files = _resolve_export_media_files(payload=payload, user_id=user_id, cards=cards)
 
     try:
         front_template_raw = CLOZE_FRONT_TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -1237,6 +1230,67 @@ def _extract_sound_filename(sound_field: str) -> str:
     if sound_field.startswith("[sound:") and sound_field.endswith("]"):
         return sound_field[len("[sound:") : -1]
     return sound_field
+
+
+def _referenced_audio_filenames(cards: List[Dict[str, Any]]) -> set[str]:
+    out: set[str] = set()
+    for card in cards or []:
+        for field_name in ("AudioWord", "AudioSentence"):
+            raw_value = str(card.get(field_name, "") or "").strip()
+            if not raw_value:
+                continue
+            extracted = _extract_sound_filename(raw_value)
+            if not extracted:
+                continue
+            filename = _safe_media_filename(extracted)
+            if filename:
+                out.add(filename)
+    return out
+
+
+def _resolve_export_media_files(
+    *,
+    payload: ExportDeckRequest,
+    user_id: str,
+    cards: List[Dict[str, Any]],
+) -> Dict[str, bytes] | None:
+    media_files: Dict[str, bytes] = {}
+    for raw_name, content_b64 in (payload.media_map or {}).items():
+        if not content_b64:
+            continue
+        safe_name = _safe_media_filename(raw_name)
+        try:
+            media_files[safe_name] = base64.b64decode(content_b64)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid media payload for {safe_name}") from exc
+
+    referenced = _referenced_audio_filenames(cards)
+    if referenced:
+        missing = sorted(name for name in referenced if name not in media_files)
+        storage_error: str | None = None
+        if missing and payload.run_id:
+            persisted_media, storage_error = load_run_media_assets(
+                user_id=user_id,
+                run_id=payload.run_id,
+                filenames=missing,
+            )
+            media_files.update(persisted_media)
+            missing = sorted(name for name in referenced if name not in media_files)
+
+        if missing:
+            detail = (
+                f"APKG export is missing {len(missing)} audio file(s). "
+                f"First missing: {missing[0]}."
+            )
+            if payload.use_persisted_media and not payload.run_id:
+                detail += " run_id is required for persisted-media export."
+            elif storage_error:
+                detail += f" Storage lookup error: {storage_error}"
+            elif payload.use_persisted_media:
+                detail += " The audio batch may not have been persisted yet."
+            raise HTTPException(status_code=409, detail=detail)
+
+    return media_files or None
 
 
 @app.post("/api/tts", response_model=TTSResponse)
@@ -1445,10 +1499,26 @@ def api_tts(
     except Exception:
         pass
 
+    storage_block: TTSStorageInfo | None = None
+    if media_map:
+        stored_count, storage_error = store_run_media_assets(
+            user_id=user_id,
+            run_id=payload.run_id or "",
+            media_files=media_map,
+        )
+        storage_block = TTSStorageInfo(
+            persisted=bool(payload.run_id) and stored_count >= len(media_map),
+            stored_clips=stored_count,
+            error=storage_error,
+        )
+    elif payload.run_id:
+        storage_block = TTSStorageInfo(persisted=True, stored_clips=0, error=None)
+
     return TTSResponse(
         run_id=payload.run_id or "",
         provider=payload.provider,
         model=resolved_model,
         audios=audios,
         summary=summary_block,
+        storage=storage_block,
     )

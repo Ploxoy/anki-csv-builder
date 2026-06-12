@@ -89,6 +89,7 @@ export type ExportDeckRequest = {
   guid_policy: "stable" | "unique";
   include_basic_reversed: boolean;
   include_basic_typein: boolean;
+  use_persisted_media?: boolean;
   media_map?: Record<string, string>;
   cards: Card[];
 };
@@ -144,6 +145,12 @@ export type TTSAudio = {
   usage?: UsageEvent | null;
 };
 
+export type TTSStorageInfo = {
+  persisted: boolean;
+  stored_clips: number;
+  error?: string | null;
+};
+
 export type TTSResponse = {
   run_id: string;
   provider: string;
@@ -157,6 +164,7 @@ export type TTSResponse = {
     usage: Record<string, unknown>;
     cost: Record<string, unknown>;
   };
+  storage?: TTSStorageInfo | null;
 };
 
 export type UserSettings = {

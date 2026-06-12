@@ -32,6 +32,7 @@
 - [x] D6 — Инцидент после внедрения sleep/wake закрыт: проблема 504 на длинной text-generation воспроизводилась при одном длинном `/api/generate`; исправлено батчевой генерацией в `web/src/App.tsx` + корректным `sudo`-перезапуском контейнеров на Synology; подтверждён успешный прогон длинного списка (52 записи, audio off).
 - [x] V1 — Vercel Plan C (async generate): добавлены queue/job endpoints (`/api/jobs/generate`, `/api/jobs/generate/{id}`, `/api/jobs/generate/worker`), storage таблица `generation_jobs` и polling-worker flow в web (`web/src/App.tsx`) для избежания длинных синхронных таймаутов.
 - [x] V2 — Vercel bootstrap: добавлены `vercel.json`, `api/index.py`, `api/requirements.txt` (FastAPI function + static web build + cron endpoint wiring).
+- [x] V3 — Vercel large-APKG path: `/api/tts` сохраняет audio clips server-side в Postgres (`run_media_assets`), а `/api/export/apkg` переиспользует их по `run_id`, чтобы не упираться в request-size limit при больших колодах с аудио.
 
 ## 🧪 Beta readiness (Phase 0.5)
 - [x] B1 — Invite-token auth v0: `/api/admin/invite` (admin) + `Authorization: Bearer <token>` (user), без Supabase.

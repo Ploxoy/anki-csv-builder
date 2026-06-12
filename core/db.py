@@ -115,6 +115,20 @@ CREATE TABLE IF NOT EXISTS generation_jobs (
 );
 """
 
+RUN_MEDIA_ASSETS_TABLE = """
+CREATE TABLE IF NOT EXISTS run_media_assets (
+    id BIGSERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    content BYTEA NOT NULL,
+    content_size INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, run_id, filename)
+);
+"""
+
 # Helpful index for lookups in /api/usage.
 USAGE_EVENTS_USER_CREATED_IDX = """
 CREATE INDEX IF NOT EXISTS usage_events_user_created_at_idx
@@ -129,6 +143,11 @@ ON generation_jobs (user_id, created_at DESC);
 GENERATION_JOBS_STATUS_CREATED_IDX = """
 CREATE INDEX IF NOT EXISTS generation_jobs_status_created_at_idx
 ON generation_jobs (status, created_at ASC);
+"""
+
+RUN_MEDIA_ASSETS_USER_RUN_IDX = """
+CREATE INDEX IF NOT EXISTS run_media_assets_user_run_idx
+ON run_media_assets (user_id, run_id, created_at DESC);
 """
 
 
@@ -160,9 +179,11 @@ def _get_conn():
                             cur.execute(USERS_TABLE)
                             cur.execute(USER_SETTINGS_TABLE)
                             cur.execute(GENERATION_JOBS_TABLE)
+                            cur.execute(RUN_MEDIA_ASSETS_TABLE)
                             cur.execute(USAGE_EVENTS_USER_CREATED_IDX)
                             cur.execute(GENERATION_JOBS_USER_CREATED_IDX)
                             cur.execute(GENERATION_JOBS_STATUS_CREATED_IDX)
+                            cur.execute(RUN_MEDIA_ASSETS_USER_RUN_IDX)
                         _SCHEMA_READY = True
             return conn
         except Exception as exc:  # pragma: no cover - runtime env
@@ -533,6 +554,82 @@ def rotate_user_token(user_id: str) -> str | None:
     except Exception as exc:  # pragma: no cover - runtime env
         logger.error("Failed to rotate token: %s", exc)
         return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def store_run_media_assets(*, user_id: str, run_id: str, media_files: Mapping[str, bytes]) -> tuple[int, str | None]:
+    """Persist audio/media bytes for a run so export can rebuild APKG without a huge client payload."""
+    if not user_id or not run_id:
+        return 0, "run_id or user_id is missing"
+    rows = []
+    for filename, content in (media_files or {}).items():
+        if not filename or not content:
+            continue
+        rows.append((user_id, run_id, filename, bytes(content), len(content)))
+    if not rows:
+        return 0, None
+    conn = _get_conn()
+    if conn is None:
+        return 0, "DB is unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO run_media_assets (user_id, run_id, filename, content, content_size, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, now(), now())
+                ON CONFLICT (user_id, run_id, filename) DO UPDATE
+                SET content=excluded.content,
+                    content_size=excluded.content_size,
+                    updated_at=now()
+                """,
+                rows,
+            )
+        return len(rows), None
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to store run media assets: %s", exc)
+        return 0, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def load_run_media_assets(*, user_id: str, run_id: str, filenames: Iterable[str] | None = None) -> tuple[dict[str, bytes], str | None]:
+    if not user_id or not run_id:
+        return {}, "run_id or user_id is missing"
+    wanted = {str(name).strip() for name in (filenames or []) if str(name).strip()}
+    conn = _get_conn()
+    if conn is None:
+        return {}, "DB is unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT filename, content FROM run_media_assets WHERE user_id=%s AND run_id=%s",
+                (user_id, run_id),
+            )
+            rows = cur.fetchall() or []
+        out: dict[str, bytes] = {}
+        for filename, content in rows:
+            filename_text = str(filename or "").strip()
+            if not filename_text:
+                continue
+            if wanted and filename_text not in wanted:
+                continue
+            if isinstance(content, memoryview):
+                out[filename_text] = content.tobytes()
+            elif isinstance(content, bytearray):
+                out[filename_text] = bytes(content)
+            elif isinstance(content, bytes):
+                out[filename_text] = content
+        return out, None
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to load run media assets: %s", exc)
+        return {}, str(exc)
     finally:
         try:
             conn.close()

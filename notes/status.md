@@ -1,6 +1,6 @@
 # Status — Anki CSV Builder
 
-*(обновлено: 2026-03-30)*
+*(обновлено: 2026-06-12)*
 
 ## Кратко
 - MVP закрывает генерацию NL карточек с CSV/APKG экспортом, пакетной обработкой и базовой панелью диагностики.
@@ -8,6 +8,13 @@
 - Основной стек API/UI сейчас: FastAPI (`api/main.py`) + минимальный web UI (`web/`) + legacy Streamlit.
 
 ## Что готово
+## Свежие изменения (июнь 2026)
+- **Vercel APKG export**: убран критичный bottleneck с большим `media_map` в теле запроса. `/api/tts` теперь сохраняет озвучку server-side в Postgres (`run_media_assets`) по `user_id + run_id + filename`.
+- **Server-side media reuse**: `/api/export/apkg` умеет добирать аудио из persisted storage по `run_id`, поэтому браузер больше не обязан пересылать base64-клипы обратно на API для крупных колод.
+- **Web export UX**: фронтенд предпочитает persisted-media путь для APKG, а inline `media_map` оставляет только как fallback для локальных/малых сценариев; в Generate теперь виден статус `Server storage` для аудио.
+- **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
+- **Тесты**: добавлены проверки `TTS -> persisted storage` и `APKG export -> persisted media reuse`.
+
 - **Core / генерация**: нормализация cloze, repair-pass, сигнал-слова, batch + parallel ThreadPool, авто-адаптация воркеров на транзитных ошибках.
 - **Экспорт**: CSV (pipe) + `.apkg`, в том числе привязка озвучки через `[sound:...]` и передачу `media_map` в genanki.
 - **TTS**:

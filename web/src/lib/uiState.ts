@@ -26,6 +26,9 @@ export type AudioRunSummary = {
   ok: number;
   failed: number;
   errors: string[];
+  persisted: boolean;
+  storedClips: number;
+  storageError?: string | null;
 };
 
 export type Settings = {
