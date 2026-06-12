@@ -94,6 +94,20 @@ export function GenerateTab({
     return audioRunSummary.errors.slice(0, 5);
   }, [audioRunSummary]);
 
+  const reusableAudioNote = useMemo(() => {
+    if (!audioRunSummary?.requested) return "";
+    if ((audioRunSummary.durableCachedClips || 0) > 0 && (audioRunSummary.storedReusableAssets || 0) > 0) {
+      return "This run reused existing audio and saved new clips for future runs.";
+    }
+    if ((audioRunSummary.durableCachedClips || 0) > 0) {
+      return "This run reused audio from the library, so those clips did not call the TTS provider.";
+    }
+    if ((audioRunSummary.storedReusableAssets || 0) > 0) {
+      return "New audio was saved to the library. Repeating the same words/sentences with the same voice can reuse it.";
+    }
+    return "No reusable audio was saved or reused in this run.";
+  }, [audioRunSummary]);
+
   const summaryCounts = useMemo(() => {
     const items = response?.items || [];
     const ok = items.filter((it) => it.status === "ok").length;
@@ -395,21 +409,35 @@ export function GenerateTab({
             </div>
 
             {audioRunSummary?.requested && (
-              <p className="hint subtle">
-                Audio summary: {audioRunSummary.ok}/{audioRunSummary.total} ready, {audioRunSummary.failed} failed.
-                {audioRunSummary.ok > 0 && (
-                  <>
-                    {" "}
-                    Server storage: {audioRunSummary.persisted ? "ready." : "not ready."}
-                  </>
-                )}
-              </p>
+              <div className="audio-library-summary">
+                <div className="summary-strip">
+                  <div className="summary-item">
+                    <span className="k">ready</span> {audioRunSummary.ok}/{audioRunSummary.total}
+                  </div>
+                  <div className="summary-item">
+                    <span className="k">failed</span> {audioRunSummary.failed}
+                  </div>
+                  <div className="summary-item">
+                    <span className="k">reused from library</span> {audioRunSummary.durableCachedClips || 0}
+                  </div>
+                  <div className="summary-item">
+                    <span className="k">saved for reuse</span> {audioRunSummary.storedReusableAssets || 0}
+                  </div>
+                  <div className="summary-item">
+                    <span className="k">server storage</span> {audioRunSummary.persisted ? "ready" : "not ready"}
+                  </div>
+                </div>
+                <p className="hint subtle">{reusableAudioNote}</p>
+              </div>
             )}
 
             <Notice notice={notices.audio} />
 
             {(audioRunSummary?.diagnostics?.length || 0) > 0 && (
-              <pre className="diagnostic-log">{(audioRunSummary?.diagnostics || []).join("\n")}</pre>
+              <details className="raw-block">
+                <summary>Technical audio diagnostics</summary>
+                <pre className="diagnostic-log">{(audioRunSummary?.diagnostics || []).join("\n")}</pre>
+              </details>
             )}
 
             {hasAudioFailures && audioErrorPreview.length > 0 && (

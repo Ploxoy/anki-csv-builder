@@ -480,6 +480,18 @@ pre {
   font-size: 14px;
 }
 
+.audio-library-summary {
+  border: 1px solid #d8e7f5;
+  border-radius: var(--radius-sm);
+  background: #f7fbff;
+  padding: 10px 12px;
+  margin: var(--space-2) 0;
+}
+
+.audio-library-summary .summary-strip {
+  margin-bottom: 6px;
+}
+
 .empty-state {
   border: 1px dashed #cfd9e4;
   border-radius: var(--radius-sm);

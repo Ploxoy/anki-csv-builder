@@ -28,6 +28,9 @@ export type AudioRunSummary = {
   errors: string[];
   persisted: boolean;
   storedClips: number;
+  cachedClips: number;
+  durableCachedClips: number;
+  storedReusableAssets: number;
   storageError?: string | null;
   diagnostics: string[];
 };

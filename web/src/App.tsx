@@ -930,6 +930,9 @@ export default function App() {
           let okCount = 0;
           let failedCount = 0;
           let storedClipCount = 0;
+          let cachedClipCount = 0;
+          let durableCachedClipCount = 0;
+          let storedReusableAssetCount = 0;
           let persistedAudioReady = true;
           const errorSamples: string[] = [];
           const storageErrors: string[] = [];
@@ -1072,6 +1075,9 @@ export default function App() {
                 const cacheHits = Number(ttsPayload.timing?.cache_hits || ttsPayload.summary?.cached || 0);
                 const durableCacheHits = Number(ttsPayload.timing?.durable_cache_hits || 0);
                 const audioAssetsStored = Number(ttsPayload.timing?.audio_assets_stored || 0);
+                cachedClipCount += cacheHits;
+                durableCachedClipCount += durableCacheHits;
+                storedReusableAssetCount += audioAssetsStored;
                 const durableCacheError = String(ttsPayload.timing?.durable_cache_error || "");
                 const audioAssetsStorageError = String(ttsPayload.timing?.audio_assets_storage_error || "");
                 const uniqueMedia = Number(ttsPayload.timing?.unique_media_files || expectedStoredAssets || 0);
@@ -1136,6 +1142,9 @@ export default function App() {
               errors: combinedErrors,
               persisted: finalPersisted,
               storedClips: storedClipCount,
+              cachedClips: cachedClipCount,
+              durableCachedClips: durableCachedClipCount,
+              storedReusableAssets: storedReusableAssetCount,
               storageError: storageErrors[0] || null,
               diagnostics: diagnosticLines,
             });
@@ -1176,13 +1185,16 @@ export default function App() {
               errors: errorSamples,
               persisted: false,
               storedClips: 0,
+              cachedClips: cachedClipCount,
+              durableCachedClips: durableCachedClipCount,
+              storedReusableAssets: storedReusableAssetCount,
               storageError: null,
               diagnostics: diagnosticLines,
             });
             setGenerateNotice("audio", "error", "Audio synthesis did not complete.", detail);
           }
         } else {
-          setAudioRunSummary({ requested: true, total: 0, ok: 0, failed: 0, errors: [], persisted: true, storedClips: 0, storageError: null, diagnostics: [] });
+          setAudioRunSummary({ requested: true, total: 0, ok: 0, failed: 0, errors: [], persisted: true, storedClips: 0, cachedClips: 0, durableCachedClips: 0, storedReusableAssets: 0, storageError: null, diagnostics: [] });
           setGenerateProgress((prev) => (95 > prev ? 95 : prev));
           setGenerateProgressLabel("Audio is enabled, but there are no clips to synthesize.");
           updateProgressMeta({
@@ -1197,7 +1209,7 @@ export default function App() {
           setGenerateNotice("audio", "info", "Audio enabled, but no eligible clips were found.");
         }
       } else {
-        setAudioRunSummary({ requested: false, total: 0, ok: 0, failed: 0, errors: [], persisted: false, storedClips: 0, storageError: null, diagnostics: [] });
+        setAudioRunSummary({ requested: false, total: 0, ok: 0, failed: 0, errors: [], persisted: false, storedClips: 0, cachedClips: 0, durableCachedClips: 0, storedReusableAssets: 0, storageError: null, diagnostics: [] });
         setGenerateNotice("audio", "info", "Audio generation is disabled for this run.");
       }
 
