@@ -34,6 +34,9 @@
 - [x] V2 — Vercel bootstrap: добавлены `vercel.json`, `api/index.py`, `api/requirements.txt` (FastAPI function + static web build + cron endpoint wiring).
 - [x] V4 — TTS diagnostics for Vercel: добавить timing в `/api/tts` и batch-level diagnostics в web UI для анализа долгих ElevenLabs-прогонов.
 - [x] V3 — Vercel large-APKG path: `/api/tts` сохраняет audio clips server-side в Postgres (`run_media_assets`), а `/api/export/apkg` переиспользует их по `run_id`, чтобы не упираться в request-size limit при больших колодах с аудио.
+- [x] V5 — Durable TTS asset store v1: глобальная таблица `audio_assets` по deterministic asset key (`provider/model/voice/type/text/style`) + reuse в `/api/tts`, чтобы повторные озвучки не вызывали TTS-провайдера заново.
+- [ ] V6 — Long-run generation persistence: durable `run_items`/resume flow для списков 1000+ строк, чтобы один сбой не требовал перегенерации уже готовых карточек.
+- [ ] V7 — Lexical memory v1: спроектировать словарный слой (`lexeme_entries`, examples, translations by L1, quality flags) поверх накопленных генераций.
 
 ## 🧪 Beta readiness (Phase 0.5)
 - [x] B1 — Invite-token auth v0: `/api/admin/invite` (admin) + `Authorization: Bearer <token>` (user), без Supabase.

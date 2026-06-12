@@ -108,6 +108,8 @@ Notes:
 Notes:
 - `model` is optional. If omitted, server picks provider default.
 - Server applies a single automatic retry only for transient synthesis errors (`429/5xx/timeout`).
+- Audio reuse is durable across runs when `provider + model + voice + clip type + text + style/instructions`
+  match exactly after server normalization. Durable hits return `status: "cached"` and do not call the TTS provider.
 
 **Response (200)**
 ```json
@@ -139,6 +141,23 @@ Notes:
     "cached": 0,
     "usage": { "audio_chars": 42 },
     "cost": { "estimated_usd": 0.000063, "notes": null }
+  },
+  "storage": {
+    "persisted": true,
+    "stored_clips": 2,
+    "error": null
+  },
+  "timing": {
+    "elapsed_ms": 780,
+    "synthesis_ms": 620,
+    "storage_ms": 40,
+    "items": 2,
+    "unique_media_files": 2,
+    "cache_hits": 1,
+    "durable_cache_hits": 1,
+    "audio_assets_stored": 1,
+    "total_requests": 1,
+    "provider": "openai"
   }
 }
 ```

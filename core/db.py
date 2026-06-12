@@ -129,6 +129,29 @@ CREATE TABLE IF NOT EXISTS run_media_assets (
 );
 """
 
+AUDIO_ASSETS_TABLE = """
+CREATE TABLE IF NOT EXISTS audio_assets (
+    asset_key TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    voice TEXT NOT NULL,
+    text_hash TEXT NOT NULL,
+    text TEXT NOT NULL,
+    kind TEXT,
+    filename TEXT NOT NULL,
+    content BYTEA NOT NULL,
+    content_size INT NOT NULL DEFAULT 0,
+    style_hash TEXT NOT NULL DEFAULT '',
+    spoken_language TEXT,
+    output_format TEXT,
+    quality_status TEXT NOT NULL DEFAULT 'ok',
+    use_count BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at TIMESTAMPTZ
+);
+"""
+
 # Helpful index for lookups in /api/usage.
 USAGE_EVENTS_USER_CREATED_IDX = """
 CREATE INDEX IF NOT EXISTS usage_events_user_created_at_idx
@@ -148,6 +171,11 @@ ON generation_jobs (status, created_at ASC);
 RUN_MEDIA_ASSETS_USER_RUN_IDX = """
 CREATE INDEX IF NOT EXISTS run_media_assets_user_run_idx
 ON run_media_assets (user_id, run_id, created_at DESC);
+"""
+
+AUDIO_ASSETS_LOOKUP_IDX = """
+CREATE INDEX IF NOT EXISTS audio_assets_lookup_idx
+ON audio_assets (provider, model, voice, text_hash, quality_status);
 """
 
 
@@ -180,10 +208,12 @@ def _get_conn():
                             cur.execute(USER_SETTINGS_TABLE)
                             cur.execute(GENERATION_JOBS_TABLE)
                             cur.execute(RUN_MEDIA_ASSETS_TABLE)
+                            cur.execute(AUDIO_ASSETS_TABLE)
                             cur.execute(USAGE_EVENTS_USER_CREATED_IDX)
                             cur.execute(GENERATION_JOBS_USER_CREATED_IDX)
                             cur.execute(GENERATION_JOBS_STATUS_CREATED_IDX)
                             cur.execute(RUN_MEDIA_ASSETS_USER_RUN_IDX)
+                            cur.execute(AUDIO_ASSETS_LOOKUP_IDX)
                         _SCHEMA_READY = True
             return conn
         except Exception as exc:  # pragma: no cover - runtime env
@@ -630,6 +660,161 @@ def load_run_media_assets(*, user_id: str, run_id: str, filenames: Iterable[str]
     except Exception as exc:  # pragma: no cover - runtime env
         logger.error("Failed to load run media assets: %s", exc)
         return {}, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def store_audio_assets(*, assets: Iterable[Mapping[str, Any]]) -> tuple[int, str | None]:
+    """Persist globally reusable TTS audio assets keyed by deterministic asset_key."""
+    rows = []
+    for asset in assets or []:
+        asset_key = str(asset.get("asset_key") or "").strip()
+        filename = str(asset.get("filename") or "").strip()
+        content = asset.get("content")
+        if not asset_key or not filename or not content:
+            continue
+        content_bytes = bytes(content)
+        if not content_bytes:
+            continue
+        text = str(asset.get("text") or "")
+        text_hash = str(asset.get("text_hash") or hashlib.sha256(text.encode("utf-8")).hexdigest())
+        rows.append(
+            (
+                asset_key,
+                str(asset.get("provider") or "").strip().lower(),
+                str(asset.get("model") or "").strip(),
+                str(asset.get("voice") or "").strip(),
+                text_hash,
+                text,
+                str(asset.get("kind") or "").strip() or None,
+                filename,
+                content_bytes,
+                len(content_bytes),
+                str(asset.get("style_hash") or ""),
+                str(asset.get("spoken_language") or "").strip() or None,
+                str(asset.get("output_format") or "").strip() or None,
+            )
+        )
+    if not rows:
+        return 0, None
+    conn = _get_conn()
+    if conn is None:
+        return 0, "DB is unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO audio_assets (
+                    asset_key, provider, model, voice, text_hash, text, kind, filename,
+                    content, content_size, style_hash, spoken_language, output_format,
+                    quality_status, created_at, updated_at, last_used_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'ok', now(), now(), now())
+                ON CONFLICT (asset_key) DO UPDATE
+                SET filename=excluded.filename,
+                    content=excluded.content,
+                    content_size=excluded.content_size,
+                    quality_status='ok',
+                    updated_at=now(),
+                    last_used_at=now()
+                """,
+                rows,
+            )
+        return len(rows), None
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to store audio assets: %s", exc)
+        return 0, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def load_audio_assets(*, asset_keys: Iterable[str]) -> tuple[dict[str, dict[str, Any]], str | None]:
+    """Load reusable audio assets by deterministic keys."""
+    keys = [str(key).strip() for key in (asset_keys or []) if str(key).strip()]
+    if not keys:
+        return {}, None
+    conn = _get_conn()
+    if conn is None:
+        return {}, "DB is unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT asset_key, provider, model, voice, text, kind, filename, content,
+                       content_size, style_hash, spoken_language, output_format, use_count
+                FROM audio_assets
+                WHERE asset_key = ANY(%s) AND quality_status = 'ok'
+                """,
+                (keys,),
+            )
+            rows = cur.fetchall() or []
+        out: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            content = row[7]
+            if isinstance(content, memoryview):
+                content_bytes = content.tobytes()
+            elif isinstance(content, bytearray):
+                content_bytes = bytes(content)
+            elif isinstance(content, bytes):
+                content_bytes = content
+            else:
+                content_bytes = bytes(content or b"")
+            if not content_bytes:
+                continue
+            out[str(row[0])] = {
+                "asset_key": row[0],
+                "provider": row[1],
+                "model": row[2],
+                "voice": row[3],
+                "text": row[4],
+                "kind": row[5],
+                "filename": row[6],
+                "content": content_bytes,
+                "content_size": row[8],
+                "style_hash": row[9],
+                "spoken_language": row[10],
+                "output_format": row[11],
+                "use_count": row[12],
+            }
+        return out, None
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to load audio assets: %s", exc)
+        return {}, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def touch_audio_assets(*, asset_keys: Iterable[str]) -> None:
+    """Mark reusable assets as used without failing the caller."""
+    keys = [str(key).strip() for key in (asset_keys or []) if str(key).strip()]
+    if not keys:
+        return
+    conn = _get_conn()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE audio_assets
+                SET use_count = use_count + 1,
+                    last_used_at = now(),
+                    updated_at = now()
+                WHERE asset_key = ANY(%s)
+                """,
+                (keys,),
+            )
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to touch audio assets: %s", exc)
     finally:
         try:
             conn.close()

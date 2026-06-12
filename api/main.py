@@ -89,7 +89,7 @@ from config.settings import (
     get_allowed_prefixes,
     get_block_substrings,
 )
-from core.audio import ensure_audio_for_cards
+from core.audio import AudioClipResult, AudioSynthesisSummary, ensure_audio_for_cards, sentence_for_tts, tts_asset_identity
 from core.export_csv import generate_csv
 from core.export_anki import HAS_GENANKI, build_anki_package
 from core.run_report import build_run_report, resolve_audio_pricing
@@ -113,6 +113,9 @@ from core.db import (
     fail_generation_job,
     store_run_media_assets,
     load_run_media_assets,
+    store_audio_assets,
+    load_audio_assets,
+    touch_audio_assets,
 )
 
 
@@ -1303,13 +1306,7 @@ def api_tts(
     user_id = _require_user(request, x_api_key)
     provider = (payload.provider or "openai").strip().lower()
 
-    openai_client = None
-    eleven_api_key = None
-    if provider == "openai":
-        openai_client = _openai_client_or_500()
-    elif provider == "elevenlabs":
-        eleven_api_key = _elevenlabs_key_or_500()
-    else:
+    if provider not in {"openai", "elevenlabs"}:
         raise HTTPException(status_code=400, detail=f"Unsupported TTS provider: {payload.provider}")
 
     include_word = any(it.type == "word" for it in payload.items)
@@ -1348,27 +1345,175 @@ def api_tts(
         voice = payload.voice or (AUDIO_VOICES[0]["id"] if AUDIO_VOICES else "alloy")
 
     resolved_model = (payload.model or AUDIO_TTS_MODEL) if provider == "openai" else (payload.model or "eleven_multilingual_v2")
-    synth_started = time.time()
-    try:
-        media_map, summary = ensure_audio_for_cards(
-            cards,
+
+    asset_entries: List[Dict[str, Any]] = []
+    requested_asset_keys: List[str] = []
+    for idx, item in enumerate(payload.items):
+        tts_text = (item.text or "").strip() if item.type == "word" else sentence_for_tts(item.text or "")
+        if not tts_text:
+            continue
+        identity = tts_asset_identity(
             provider=provider,
+            model=resolved_model,
             voice=voice,
-            include_word=include_word,
-            include_sentence=include_sentence,
-            instruction_payloads=instruction_payloads,
-            instruction_keys=instruction_keys,
-            openai_client=openai_client,
-            openai_model=resolved_model if provider == "openai" else None,
-            openai_fallback_model=AUDIO_TTS_FALLBACK if provider == "openai" else None,
-            eleven_api_key=eleven_api_key,
-            eleven_model=(payload.model or None) if provider == "elevenlabs" else None,
-            max_workers=4,
+            kind=item.type,
+            text=tts_text,
+            instruction_payload=instruction_payloads.get(item.type),
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"TTS pipeline failed: {exc}") from exc
+        entry = {
+            "index": idx,
+            "item": item,
+            "text": tts_text,
+            "identity": identity,
+        }
+        asset_entries.append(entry)
+        requested_asset_keys.append(identity["asset_key"])
+
+    durable_assets: Dict[str, Dict[str, Any]] = {}
+    durable_cache_error: str | None = None
+    if requested_asset_keys:
+        durable_assets, durable_cache_error = load_audio_assets(asset_keys=sorted(set(requested_asset_keys)))
+
+    cards_to_generate: List[Dict[str, Any]] = []
+    generation_entries: List[Dict[str, Any]] = []
+    media_map: Dict[str, bytes] = {}
+    summary = AudioSynthesisSummary(provider=provider, voice=voice)
+    if instruction_keys:
+        summary.sentence_instruction_key = instruction_keys.get("sentence", "")
+        summary.word_instruction_key = instruction_keys.get("word", "")
+
+    durable_hit_keys: List[str] = []
+    for entry in asset_entries:
+        idx = int(entry["index"])
+        item = entry["item"]
+        identity = entry["identity"]
+        asset = durable_assets.get(identity["asset_key"])
+        if asset:
+            filename = str(asset.get("filename") or identity["filename"]).strip()
+            content = asset.get("content") or b""
+            if filename and content:
+                media_map[filename] = bytes(content)
+                if item.type == "word":
+                    cards[idx]["AudioWord"] = f"[sound:{filename}]"
+                    summary.word_success += 1
+                else:
+                    cards[idx]["AudioSentence"] = f"[sound:{filename}]"
+                    summary.sentence_success += 1
+                summary.cache_hits += 1
+                durable_hit_keys.append(identity["asset_key"])
+                summary.clip_results.append(
+                    AudioClipResult(
+                        card_index=idx,
+                        kind=item.type,
+                        text=str(entry["text"]),
+                        status="cached",
+                        filename=filename,
+                        error="",
+                        model=str(asset.get("model") or resolved_model),
+                    )
+                )
+                continue
+        generation_entries.append(entry)
+        cards_to_generate.append(
+            {
+                "id": item.card_id,
+                "L2_word": item.text if item.type == "word" else "",
+                "L2_cloze": item.text if item.type == "sentence" else "",
+                "AudioWord": "",
+                "AudioSentence": "",
+            }
+        )
+
+    if durable_hit_keys:
+        try:
+            touch_audio_assets(asset_keys=sorted(set(durable_hit_keys)))
+        except Exception:
+            pass
+
+    synth_started = time.time()
+    generated_media_map: Dict[str, bytes] = {}
+    generated_summary = AudioSynthesisSummary(provider=provider, voice=voice)
+    audio_assets_stored = 0
+    audio_assets_storage_error: str | None = None
+    if generation_entries:
+        openai_client = None
+        eleven_api_key = None
+        if provider == "openai":
+            openai_client = _openai_client_or_500()
+        elif provider == "elevenlabs":
+            eleven_api_key = _elevenlabs_key_or_500()
+        try:
+            generated_media_map, generated_summary = ensure_audio_for_cards(
+                cards_to_generate,
+                provider=provider,
+                voice=voice,
+                include_word=include_word,
+                include_sentence=include_sentence,
+                instruction_payloads=instruction_payloads,
+                instruction_keys=instruction_keys,
+                openai_client=openai_client,
+                openai_model=resolved_model if provider == "openai" else None,
+                openai_fallback_model=AUDIO_TTS_FALLBACK if provider == "openai" else None,
+                eleven_api_key=eleven_api_key,
+                eleven_model=(payload.model or None) if provider == "elevenlabs" else None,
+                max_workers=4,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"TTS pipeline failed: {exc}") from exc
+
+        media_map.update(generated_media_map)
+        summary.word_success += generated_summary.word_success
+        summary.sentence_success += generated_summary.sentence_success
+        summary.word_skipped += generated_summary.word_skipped
+        summary.sentence_skipped += generated_summary.sentence_skipped
+        summary.errors.extend(generated_summary.errors or [])
+        summary.fallback_switches += generated_summary.fallback_switches
+        summary.total_characters += generated_summary.total_characters
+        summary.total_requests_billed += generated_summary.total_requests_billed
+        summary.total_requests += generated_summary.total_requests
+        summary.cache_hits += generated_summary.cache_hits
+        for model_name, data in (generated_summary.model_usage or {}).items():
+            target = summary.model_usage.setdefault(model_name, {key: 0 for key in data.keys()})
+            for key, value in data.items():
+                target[key] = int(target.get(key, 0) or 0) + int(value or 0)
+
+        generated_assets_to_store: List[Dict[str, Any]] = []
+        for clip in generated_summary.clip_results:
+            subset_idx = int(clip.card_index)
+            if subset_idx < 0 or subset_idx >= len(generation_entries):
+                continue
+            entry = generation_entries[subset_idx]
+            original_idx = int(entry["index"])
+            clip.card_index = original_idx
+            summary.clip_results.append(clip)
+            generated_card = cards_to_generate[subset_idx]
+            cards[original_idx]["AudioWord"] = generated_card.get("AudioWord", "")
+            cards[original_idx]["AudioSentence"] = generated_card.get("AudioSentence", "")
+
+            if clip.status not in {"ok", "cached"} or not clip.filename:
+                continue
+            content = generated_media_map.get(clip.filename)
+            if not content:
+                continue
+            item = entry["item"]
+            model_for_asset = str(getattr(clip, "model", "") or resolved_model)
+            identity = tts_asset_identity(
+                provider=provider,
+                model=model_for_asset,
+                voice=voice,
+                kind=item.type,
+                text=str(entry["text"]),
+                instruction_payload=instruction_payloads.get(item.type),
+            )
+            generated_assets_to_store.append({**identity, "content": content, "filename": clip.filename})
+
+        if generated_assets_to_store:
+            try:
+                audio_assets_stored, audio_assets_storage_error = store_audio_assets(assets=generated_assets_to_store)
+            except Exception as exc:
+                audio_assets_storage_error = str(exc)
     synth_elapsed_ms = int((time.time() - synth_started) * 1000)
 
     # Build response audios
@@ -1528,6 +1673,10 @@ def api_tts(
         "items": len(payload.items or []),
         "unique_media_files": len(media_map or {}),
         "cache_hits": int(summary.cache_hits or 0),
+        "durable_cache_hits": len(durable_hit_keys),
+        "durable_cache_error": durable_cache_error,
+        "audio_assets_stored": audio_assets_stored,
+        "audio_assets_storage_error": audio_assets_storage_error,
         "total_requests": int(summary.total_requests or 0),
         "provider": provider,
     }

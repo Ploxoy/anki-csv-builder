@@ -25,6 +25,7 @@ __all__ = [
     "ensure_audio_for_cards",
     "fetch_elevenlabs_voices",
     "sentence_for_tts",
+    "tts_asset_identity",
 ]
 
 
@@ -197,6 +198,91 @@ def _filename(kind: str, voice: str, text: str) -> str:
     slug = _slugify(text)[:40]
     digest = hashlib.sha1(f"{voice}|{text}".encode("utf-8")).hexdigest()[:8]
     return f"{kind}_{slug}__{voice}__{digest}.mp3"
+
+
+def _openai_instruction_text(instruction_payload: Any) -> Optional[str]:
+    if isinstance(instruction_payload, dict):
+        raw_instr = instruction_payload.get("instructions")
+        if isinstance(raw_instr, str):
+            return raw_instr.strip() or None
+    if isinstance(instruction_payload, str):
+        return instruction_payload.strip() or None
+    return None
+
+
+def _elevenlabs_style_token(instruction_payload: Any) -> tuple[str, str]:
+    voice_settings: Optional[Dict[str, Any]] = None
+    spoken_language = "nl"
+    if isinstance(instruction_payload, dict):
+        vs = instruction_payload.get("voice_settings")
+        if isinstance(vs, dict):
+            voice_settings = vs
+        sl = instruction_payload.get("spoken_language")
+        if isinstance(sl, str) and sl:
+            spoken_language = sl
+    token_source = {
+        "voice_settings": voice_settings,
+        "spoken_language": spoken_language,
+    }
+    return _payload_token(token_source), spoken_language
+
+
+def tts_asset_identity(
+    *,
+    provider: str,
+    model: str,
+    voice: str,
+    kind: str,
+    text: str,
+    instruction_payload: Any = None,
+) -> Dict[str, str]:
+    """Return deterministic metadata for durable TTS asset reuse."""
+    provider_key = (provider or "openai").strip().lower()
+    model_key = (model or "").strip()
+    voice_key = (voice or "").strip()
+    kind_key = (kind or "").strip().lower()
+    text_key = _WHITESPACE_RE.sub(" ", (text or "").strip())
+
+    if provider_key == "openai":
+        style_token = _payload_token(_openai_instruction_text(instruction_payload))
+        spoken_language = ""
+        output_format = "mp3"
+    elif provider_key == "elevenlabs":
+        style_token, spoken_language = _elevenlabs_style_token(instruction_payload)
+        output_format = "mp3_44100_128"
+    else:
+        style_token = _payload_token(instruction_payload)
+        spoken_language = ""
+        output_format = "mp3"
+
+    style_hash = hashlib.sha256(style_token.encode("utf-8")).hexdigest()
+    text_hash = hashlib.sha256(text_key.encode("utf-8")).hexdigest()
+    key_material = "|".join(
+        [
+            "tts-v1",
+            provider_key,
+            model_key,
+            voice_key,
+            kind_key,
+            output_format,
+            spoken_language,
+            style_hash,
+            text_hash,
+        ]
+    )
+    return {
+        "asset_key": hashlib.sha256(key_material.encode("utf-8")).hexdigest(),
+        "provider": provider_key,
+        "model": model_key,
+        "voice": voice_key,
+        "kind": kind_key,
+        "text": text_key,
+        "text_hash": text_hash,
+        "style_hash": style_hash,
+        "spoken_language": spoken_language,
+        "output_format": output_format,
+        "filename": _filename(kind_key, voice_key, text_key),
+    }
 
 
 def _is_model_not_found(error: Exception) -> bool:

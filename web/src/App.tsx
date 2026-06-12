@@ -1070,8 +1070,12 @@ export default function App() {
                 const synthesisMs = Number(ttsPayload.timing?.synthesis_ms || 0);
                 const storageMs = Number(ttsPayload.timing?.storage_ms || 0);
                 const cacheHits = Number(ttsPayload.timing?.cache_hits || ttsPayload.summary?.cached || 0);
+                const durableCacheHits = Number(ttsPayload.timing?.durable_cache_hits || 0);
+                const audioAssetsStored = Number(ttsPayload.timing?.audio_assets_stored || 0);
+                const durableCacheError = String(ttsPayload.timing?.durable_cache_error || "");
+                const audioAssetsStorageError = String(ttsPayload.timing?.audio_assets_storage_error || "");
                 const uniqueMedia = Number(ttsPayload.timing?.unique_media_files || expectedStoredAssets || 0);
-                diagnosticLines.push(
+                let diagnosticLine =
                   "Batch " +
                     batchIndex +
                     "/" +
@@ -1088,12 +1092,19 @@ export default function App() {
                     batchOk +
                     ", cached " +
                     cacheHits +
+                    " (durable " +
+                    durableCacheHits +
+                    ", stored assets " +
+                    audioAssetsStored +
+                    ")" +
                     ", failed " +
                     batchFailed +
                     ", media " +
                     uniqueMedia +
-                    "."
-                );
+                    ".";
+                if (durableCacheError) diagnosticLine += " Durable cache read: " + durableCacheError + ".";
+                if (audioAssetsStorageError) diagnosticLine += " Durable cache write: " + audioAssetsStorageError + ".";
+                diagnosticLines.push(diagnosticLine);
 
                 doneClips = doneTarget;
                 setResponse(payload);

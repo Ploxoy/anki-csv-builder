@@ -27,6 +27,9 @@ def patch_api_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(api_main, "_openai_client_or_500", lambda: object())
     monkeypatch.setattr(api_main, "log_usage_events", lambda **kwargs: None)
     monkeypatch.setattr(api_main, "store_run_media_assets", lambda **kwargs: (len(kwargs.get("media_files") or {}), None))
+    monkeypatch.setattr(api_main, "load_audio_assets", lambda **kwargs: ({}, None))
+    monkeypatch.setattr(api_main, "store_audio_assets", lambda **kwargs: (len(list(kwargs.get("assets") or [])), None))
+    monkeypatch.setattr(api_main, "touch_audio_assets", lambda **kwargs: None)
 
 
 def test_api_tts_returns_clip_level_status_and_error(monkeypatch: pytest.MonkeyPatch, patch_api_auth: None) -> None:
@@ -147,6 +150,56 @@ def test_api_tts_does_not_retry_validation_error(
     assert calls["count"] == 1
     assert result.audios[0].status == "failed"
     assert result.summary.failed == 1
+
+
+def test_api_tts_reuses_durable_audio_asset_without_provider_call(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    touched: list[str] = []
+
+    def fail_ensure(*args: Any, **kwargs: Any):
+        raise AssertionError("provider synthesis should not run for durable cache hits")
+
+    def fake_load_audio_assets(*, asset_keys: list[str]):
+        key = asset_keys[0]
+        return {
+            key: {
+                "asset_key": key,
+                "provider": "openai",
+                "model": "gpt-4o-tts",
+                "voice": "alloy",
+                "kind": "word",
+                "filename": "word_fiets__alloy__cached.mp3",
+                "content": b"cached-audio",
+            }
+        }, None
+
+    def fake_touch_audio_assets(*, asset_keys: list[str]) -> None:
+        touched.extend(asset_keys)
+
+    monkeypatch.setattr(api_main, "ensure_audio_for_cards", fail_ensure)
+    monkeypatch.setattr(api_main, "load_audio_assets", fake_load_audio_assets)
+    monkeypatch.setattr(api_main, "touch_audio_assets", fake_touch_audio_assets)
+
+    payload = TTSRequest(
+        run_id="run-cached",
+        provider="openai",
+        model="gpt-4o-tts",
+        voice="alloy",
+        items=[{"card_id": "row-1", "type": "word", "text": "fiets"}],
+    )
+
+    result = api_main.api_tts(payload, request=_dummy_request(), x_api_key=None)
+
+    assert result.summary.ok == 1
+    assert result.summary.failed == 0
+    assert result.summary.cached == 1
+    assert result.audios[0].status == "cached"
+    assert result.audios[0].filename == "word_fiets__alloy__cached.mp3"
+    assert result.audios[0].audio_b64 is not None
+    assert result.timing["durable_cache_hits"] == 1
+    assert result.timing["total_requests"] == 0
+    assert touched
 
 
 def test_filter_openai_tts_models_returns_live_discovered_list() -> None:
