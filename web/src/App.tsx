@@ -31,6 +31,7 @@ import {
   generateRunId,
   normalizeImportedText,
   normalizedDeckName,
+  parseAttachmentFilename,
   parseTemperatureValue,
   SETTINGS_KEY,
   settingsFingerprint,
@@ -72,6 +73,17 @@ function buildTtsItems(
   }
   return items;
 }
+
+const EXPORT_REQUEST_SOFT_LIMIT_BYTES = 4_200_000;
+
+function estimateExportRequestSizeBytes(payload: ExportDeckRequest): number {
+  return new TextEncoder().encode(JSON.stringify(payload)).length;
+}
+
+function formatMb(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(2);
+}
+
 
 function mergeTtsIntoResponse(generated: GenerateResponse, tts: TTSResponse): GenerateResponse {
   const byCard = new Map<string, { word?: string; sentence?: string }>();
@@ -1181,20 +1193,39 @@ export default function App() {
         cards: exportCards,
       };
 
+      if (format === "apkg") {
+        const estimatedBytes = estimateExportRequestSizeBytes(req);
+        if (estimatedBytes >= EXPORT_REQUEST_SOFT_LIMIT_BYTES) {
+          throw new Error(
+            `APKG export request is too large for Vercel (${formatMb(estimatedBytes)} MB estimated). Try fewer cards, disable audio, or split the deck into smaller batches.`
+          );
+        }
+      }
+
       const url = `${settings.apiBase || ""}/api/export/${format}`;
       const headers = apiHeaders();
       const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(req) });
-      const data = (await res.json().catch(() => null)) as any;
       if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as any;
         throw new Error(apiErrorText(data, res.status));
       }
 
-      const payload = data as ExportFileResponse;
-      const buffer = decodeBase64ToArrayBuffer(payload.content_b64);
-      const blob = new Blob([buffer], { type: payload.mime_type || "application/octet-stream" });
-      downloadBlobFile(blob, payload.file_name);
-      const details = exportWarning || undefined;
-      setGenerateNotice("export", "success", `Downloaded ${payload.file_name} (${payload.card_count} cards).`, details);
+      if (format === "apkg") {
+        const blob = await res.blob();
+        const fileName = parseAttachmentFilename(res.headers.get("Content-Disposition")) || `${normalizedDeckName(settings.defaultDeck || "Dutch")}.apkg`;
+        const cardCount = Number(res.headers.get("X-Card-Count") || exportCardCount || 0);
+        downloadBlobFile(blob, fileName);
+        const details = exportWarning || undefined;
+        setGenerateNotice("export", "success", `Downloaded ${fileName} (${cardCount} cards).`, details);
+      } else {
+        const data = (await res.json().catch(() => null)) as any;
+        const payload = data as ExportFileResponse;
+        const buffer = decodeBase64ToArrayBuffer(payload.content_b64);
+        const blob = new Blob([buffer], { type: payload.mime_type || "application/octet-stream" });
+        downloadBlobFile(blob, payload.file_name);
+        const details = exportWarning || undefined;
+        setGenerateNotice("export", "success", `Downloaded ${payload.file_name} (${payload.card_count} cards).`, details);
+      }
     } catch (e: any) {
       setGenerateNotice("export", "error", e?.message || String(e));
     } finally {

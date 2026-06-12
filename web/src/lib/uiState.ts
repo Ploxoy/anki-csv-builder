@@ -205,6 +205,20 @@ export function downloadBlobFile(blob: Blob, fileName: string): void {
   URL.revokeObjectURL(url);
 }
 
+export function parseAttachmentFilename(headerValue: string | null): string | null {
+  if (!headerValue) return null;
+  const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+  const plainMatch = headerValue.match(/filename="?([^";]+)"?/i);
+  return plainMatch?.[1]?.trim() || null;
+}
+
 export function normalizedDeckName(rawName: string): string {
   const safe = rawName
     .trim()

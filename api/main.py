@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import base64
 import hmac
+import io
+import json
 import logging
 import os
 import re
@@ -16,6 +18,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi.responses import StreamingResponse
 
 from core.secrets import read_secret
 from core.api_schemas import (
@@ -112,6 +115,8 @@ from core.db import (
 
 app = FastAPI(title="Doedutch API", version="0.1.0")
 logger = logging.getLogger(__name__)
+VERCEL_FUNCTION_BODY_LIMIT_BYTES = 4_500_000
+EXPORT_REQUEST_SOFT_LIMIT_BYTES = 4_200_000
 
 def _env_flag(name: str, default: bool = True) -> bool:
     raw = os.getenv(name)
@@ -131,6 +136,35 @@ def _env_text(name: str) -> str | None:
         return None
     value = raw.strip()
     return value or None
+
+
+def _estimate_export_request_size_bytes(payload: ExportDeckRequest) -> int:
+    payload_data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    try:
+        return len(json.dumps(payload_data, ensure_ascii=False).encode("utf-8"))
+    except Exception:
+        media_total = 0
+        for content_b64 in (payload.media_map or {}).values():
+            if content_b64:
+                media_total += len(content_b64.encode("utf-8"))
+        cards_total = sum(
+            len((card.L2_word or "").encode("utf-8"))
+            + len((card.L2_cloze or "").encode("utf-8"))
+            + len((card.L1_sentence or "").encode("utf-8"))
+            + len((card.L2_collocations or "").encode("utf-8"))
+            + len((card.L2_definition or "").encode("utf-8"))
+            + len((card.L1_gloss or "").encode("utf-8"))
+            for card in payload.cards
+        )
+        return media_total + cards_total + 2048
+
+
+def _iter_bytesio(buffer: io.BytesIO, chunk_size: int = 64 * 1024):
+    while True:
+        chunk = buffer.read(chunk_size)
+        if not chunk:
+            break
+        yield chunk
 
 
 @app.on_event("startup")
@@ -1044,18 +1078,30 @@ def api_export_csv(
     )
 
 
-@app.post("/api/export/apkg", response_model=ExportFileResponse)
+@app.post("/api/export/apkg")
 def api_export_apkg(
     payload: ExportDeckRequest,
     request: Request,
     x_api_key: str | None = Header(None, alias="X-API-Key"),
-) -> ExportFileResponse:
+):
     _require_user(request, x_api_key)
 
     if not payload.cards:
         raise HTTPException(status_code=400, detail="No cards to export")
     if not HAS_GENANKI:
         raise HTTPException(status_code=501, detail="APKG export is disabled: genanki is not installed on the API server.")
+
+    estimated_request_size = _estimate_export_request_size_bytes(payload)
+    if estimated_request_size >= EXPORT_REQUEST_SOFT_LIMIT_BYTES:
+        size_mb = estimated_request_size / (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"APKG export request is too large for Vercel ({size_mb:.2f} MB estimated; limit is about "
+                f"{VERCEL_FUNCTION_BODY_LIMIT_BYTES / (1024 * 1024):.1f} MB). "
+                "Try fewer cards, disable audio, or split the deck into smaller batches."
+            ),
+        )
 
     l1_code = (payload.l1 or "").strip().upper()
     l1_meta = L1_LANGS.get(l1_code)
@@ -1129,11 +1175,16 @@ def api_export_apkg(
         raise HTTPException(status_code=500, detail=f"Failed to build .apkg: {exc}") from exc
 
     base = _safe_export_basename(deck_name, ANKI_DECK_NAME)
-    return ExportFileResponse(
-        file_name=f"{base}.apkg",
-        mime_type="application/octet-stream",
-        content_b64=base64.b64encode(anki_bytes).decode("ascii"),
-        card_count=len(cards),
+    file_name = f"{base}.apkg"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{file_name}"',
+        "X-Card-Count": str(len(cards)),
+        "Access-Control-Expose-Headers": "Content-Disposition, X-Card-Count",
+    }
+    return StreamingResponse(
+        _iter_bytesio(io.BytesIO(anki_bytes)),
+        media_type="application/octet-stream",
+        headers=headers,
     )
 
 
