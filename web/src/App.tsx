@@ -1213,7 +1213,7 @@ export default function App() {
       if (format === "apkg") {
         const blob = await res.blob();
         const fileName = parseAttachmentFilename(res.headers.get("Content-Disposition")) || `${normalizedDeckName(settings.defaultDeck || "Dutch")}.apkg`;
-        const cardCount = Number(res.headers.get("X-Card-Count") || exportCardCount || 0);
+        const cardCount = Number(res.headers.get("X-Card-Count") || exportCards.length || 0);
         downloadBlobFile(blob, fileName);
         const details = exportWarning || undefined;
         setGenerateNotice("export", "success", `Downloaded ${fileName} (${cardCount} cards).`, details);
