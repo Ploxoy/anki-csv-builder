@@ -264,6 +264,18 @@ class ExportFileResponse(BaseModel):
     card_count: int
 
 
+# ---------- Audio assets ----------
+
+class AudioAssetCheckRequest(BaseModel):
+    filenames: List[str] = Field(default_factory=list)
+
+
+class AudioAssetCheckResponse(BaseModel):
+    found: List[str] = Field(default_factory=list)
+    missing: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
 # ---------- TTS ----------
 
 class TTSItem(BaseModel):

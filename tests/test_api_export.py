@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 import api.main as api_main
-from core.api_schemas import ExportDeckRequest
+from core.api_schemas import AudioAssetCheckRequest, ExportDeckRequest
 
 
 def _dummy_request() -> Request:
@@ -128,3 +128,23 @@ def test_api_export_apkg_uses_reusable_audio_asset_by_filename(
 
     assert isinstance(result, StreamingResponse)
     assert captured["media_files"] == {"word_fiets.mp3": b"reusable-audio"}
+
+
+def test_api_audio_assets_check_reports_found_and_missing(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    monkeypatch.setattr(
+        api_main,
+        "list_existing_audio_asset_filenames",
+        lambda **kwargs: ({"word_fiets.mp3"}, None),
+    )
+
+    result = api_main.api_audio_assets_check(
+        AudioAssetCheckRequest(filenames=["word_fiets.mp3", "missing.mp3", "../bad/name.mp3"]),
+        request=_dummy_request(),
+        x_api_key=None,
+    )
+
+    assert result.found == ["word_fiets.mp3"]
+    assert result.missing == ["missing.mp3", "name.mp3"]
+    assert result.error is None

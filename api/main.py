@@ -42,6 +42,8 @@ from core.api_schemas import (
     UserRotateResponse,
     ExportDeckRequest,
     ExportFileResponse,
+    AudioAssetCheckRequest,
+    AudioAssetCheckResponse,
     TTSRequest,
     TTSOptionsResponse,
     TTSProviderOptions,
@@ -117,6 +119,7 @@ from core.db import (
     store_audio_assets,
     load_audio_assets,
     load_audio_assets_by_filenames,
+    list_existing_audio_asset_filenames,
     touch_audio_assets,
     store_generated_card_asset,
     load_generated_card_asset,
@@ -1467,6 +1470,29 @@ def api_tts_options(
             ),
         },
     )
+
+
+@app.post("/api/audio/assets/check", response_model=AudioAssetCheckResponse)
+def api_audio_assets_check(
+    payload: AudioAssetCheckRequest,
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> AudioAssetCheckResponse:
+    _require_user(request, x_api_key)
+
+    requested: list[str] = []
+    for raw_name in payload.filenames or []:
+        try:
+            filename = _safe_media_filename(raw_name)
+        except ValueError:
+            continue
+        if filename:
+            requested.append(filename)
+    requested_unique = sorted(set(requested))
+    found, error = list_existing_audio_asset_filenames(filenames=requested_unique)
+    found_sorted = sorted(name for name in requested_unique if name in found)
+    missing = sorted(name for name in requested_unique if name not in found)
+    return AudioAssetCheckResponse(found=found_sorted, missing=missing, error=error)
 
 
 def _extract_sound_filename(sound_field: str) -> str:

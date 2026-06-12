@@ -111,6 +111,16 @@ export type ExportFileResponse = {
   card_count: number;
 };
 
+export type AudioAssetCheckRequest = {
+  filenames: string[];
+};
+
+export type AudioAssetCheckResponse = {
+  found: string[];
+  missing: string[];
+  error?: string | null;
+};
+
 export type TTSItemType = "word" | "sentence";
 
 export type TTSItem = {

@@ -862,6 +862,36 @@ def load_audio_assets_by_filenames(*, filenames: Iterable[str]) -> tuple[dict[st
             pass
 
 
+def list_existing_audio_asset_filenames(*, filenames: Iterable[str]) -> tuple[set[str], str | None]:
+    names = [str(name).strip() for name in (filenames or []) if str(name).strip()]
+    if not names:
+        return set(), None
+    unique_names = sorted(set(names))
+    conn = _get_conn()
+    if conn is None:
+        return set(), "DB is unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT filename
+                FROM audio_assets
+                WHERE filename = ANY(%s) AND quality_status = 'ok'
+                """,
+                (unique_names,),
+            )
+            rows = cur.fetchall() or []
+        return {str(row[0]).strip() for row in rows if str(row[0]).strip()}, None
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to list existing audio asset filenames: %s", exc)
+        return set(), str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def touch_audio_assets(*, asset_keys: Iterable[str]) -> None:
     """Mark reusable assets as used without failing the caller."""
     keys = [str(key).strip() for key in (asset_keys or []) if str(key).strip()]

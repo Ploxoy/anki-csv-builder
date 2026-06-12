@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { parseItems } from "./lib/parse";
 import { loadJson, saveJson } from "./lib/storage";
 import {
+  AudioAssetCheckRequest,
+  AudioAssetCheckResponse,
   Card,
   ExportDeckRequest,
   ExportFileResponse,
@@ -87,6 +89,54 @@ function countAttachedAudioClips(
     if (opts.includeSentence && (row.card.AudioSentence || "").trim()) count += 1;
   }
   return count;
+}
+
+type AttachedAudioField = "AudioWord" | "AudioSentence";
+
+type AttachedAudioEntry = {
+  field: AttachedAudioField;
+  filename: string;
+};
+
+function soundFilenameFromField(value?: string | null): string {
+  const text = (value || "").trim();
+  if (!text) return "";
+  const match = text.match(/^\[sound:([^\]]+)\]$/i);
+  return (match?.[1] || text).trim();
+}
+
+function collectAttachedAudioEntries(
+  generated: GenerateResponse,
+  opts: { includeWord: boolean; includeSentence: boolean }
+): AttachedAudioEntry[] {
+  const entries: AttachedAudioEntry[] = [];
+  for (const row of generated.items) {
+    if (!row.card) continue;
+    if (row.status !== "ok" && row.status !== "repaired") continue;
+    if (opts.includeWord) {
+      const filename = soundFilenameFromField(row.card.AudioWord);
+      if (filename) entries.push({ field: "AudioWord", filename });
+    }
+    if (opts.includeSentence) {
+      const filename = soundFilenameFromField(row.card.AudioSentence);
+      if (filename) entries.push({ field: "AudioSentence", filename });
+    }
+  }
+  return entries;
+}
+
+function stripMissingAttachedAudio(generated: GenerateResponse, missingFilenames: Set<string>): GenerateResponse {
+  if (missingFilenames.size === 0) return generated;
+  return {
+    ...generated,
+    items: generated.items.map((item) => {
+      if (!item.card) return item;
+      const card = { ...item.card };
+      if (missingFilenames.has(soundFilenameFromField(card.AudioWord))) card.AudioWord = "";
+      if (missingFilenames.has(soundFilenameFromField(card.AudioSentence))) card.AudioSentence = "";
+      return { ...item, card };
+    }),
+  };
 }
 
 const EXPORT_REQUEST_SOFT_LIMIT_BYTES = 4_200_000;
@@ -351,6 +401,79 @@ export default function App() {
     if (settings.userToken.trim()) headers.Authorization = `Bearer ${settings.userToken.trim()}`;
     if (settings.xApiKey.trim()) headers["X-API-Key"] = settings.xApiKey.trim();
     return headers;
+  }
+
+  async function verifyAttachedAudioAssets(
+    generated: GenerateResponse,
+    opts: { includeWord: boolean; includeSentence: boolean },
+    headers: Record<string, string>
+  ): Promise<{ payload: GenerateResponse; attached: number; missing: number; diagnostics: string[] }> {
+    const entries = collectAttachedAudioEntries(generated, opts);
+    if (entries.length === 0) {
+      return { payload: generated, attached: 0, missing: 0, diagnostics: [] };
+    }
+
+    const filenames = Array.from(new Set(entries.map((entry) => entry.filename).filter(Boolean)));
+    if (filenames.length === 0) {
+      return { payload: generated, attached: entries.length, missing: 0, diagnostics: [] };
+    }
+
+    const body: AudioAssetCheckRequest = { filenames };
+    try {
+      const res = await fetch(`${settings.apiBase || ""}/api/audio/assets/check`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+      const data = (await res.json().catch(() => null)) as AudioAssetCheckResponse | any;
+      if (!res.ok) {
+        return {
+          payload: generated,
+          attached: entries.length,
+          missing: 0,
+          diagnostics: [`Attached audio verification skipped: ${apiErrorText(data, res.status)}.`],
+        };
+      }
+      if (data?.error) {
+        return {
+          payload: generated,
+          attached: entries.length,
+          missing: 0,
+          diagnostics: [`Attached audio verification skipped: ${data.error}.`],
+        };
+      }
+
+      const foundSet = new Set((data?.found || []).map((name: string) => String(name || "").trim()).filter(Boolean));
+      const missingSet = new Set(
+        filenames.filter((filename) => !foundSet.has(filename))
+      );
+      const missingAttachedCount = entries.filter((entry) => missingSet.has(entry.filename)).length;
+      const diagnostics: string[] = [];
+      if (missingAttachedCount > 0) {
+        diagnostics.push(
+          `Attached audio verification: ${entries.length - missingAttachedCount}/${entries.length} linked clip(s) exist, ` +
+            `${missingAttachedCount} missing clip(s) will be synthesized.`
+        );
+      } else {
+        diagnostics.push(`Attached audio verification: ${entries.length}/${entries.length} linked clip(s) exist.`);
+      }
+      if (data?.error) {
+        diagnostics.push(`Attached audio verification warning: ${data.error}.`);
+      }
+      return {
+        payload: stripMissingAttachedAudio(generated, missingSet),
+        attached: entries.length,
+        missing: missingAttachedCount,
+        diagnostics,
+      };
+    } catch (err: any) {
+      return {
+        payload: generated,
+        attached: entries.length,
+        missing: 0,
+        diagnostics: [`Attached audio verification skipped: ${err?.message || String(err)}.`],
+      };
+    }
   }
 
   async function onLoadSettings() {
@@ -966,6 +1089,19 @@ export default function App() {
           elapsedMs: Date.now() - startedAt,
         });
 
+        const audioVerification = await verifyAttachedAudioAssets(
+          payload,
+          {
+            includeWord: settings.includeAudioWord,
+            includeSentence: settings.includeAudioSentence,
+          },
+          headers
+        );
+        if (audioVerification.payload !== payload) {
+          payload = audioVerification.payload;
+          setResponse(payload);
+        }
+
         const ttsItems = buildTtsItems(payload, {
           includeWord: settings.includeAudioWord,
           includeSentence: settings.includeAudioSentence,
@@ -977,7 +1113,8 @@ export default function App() {
 
         if (ttsItems.length > 0) {
           const totalClips = ttsItems.length;
-          const ttsBatchSize = 8;
+          const audioProviderForRun = (settings.audioProvider || "openai").trim().toLowerCase();
+          const ttsBatchSize = audioProviderForRun === "elevenlabs" ? 2 : 6;
           const totalBatches = Math.ceil(totalClips / ttsBatchSize);
           let doneClips = 0;
           let okCount = 0;
@@ -989,7 +1126,7 @@ export default function App() {
           let persistedAudioReady = true;
           const errorSamples: string[] = [];
           const storageErrors: string[] = [];
-          const diagnosticLines: string[] = [];
+          const diagnosticLines: string[] = [...audioVerification.diagnostics];
           const mediaMap: Record<string, string> = {};
           const audioProgressStart = Math.min(94, textProgressCap + 4);
           const audioProgressSpan = Math.max(1, 99 - audioProgressStart);
@@ -1021,9 +1158,16 @@ export default function App() {
 
           try {
             const ttsUrl = `${settings.apiBase || ""}/api/tts`;
+            const ttsQueue: TTSRequest["items"][] = [];
             for (let offset = 0; offset < totalClips; offset += ttsBatchSize) {
-              const batchIndex = Math.floor(offset / ttsBatchSize) + 1;
-              const batch = ttsItems.slice(offset, offset + ttsBatchSize);
+              ttsQueue.push(ttsItems.slice(offset, offset + ttsBatchSize));
+            }
+            let batchIndex = 0;
+            while (ttsQueue.length > 0) {
+              batchIndex += 1;
+              const batch = ttsQueue.shift() || [];
+              if (batch.length === 0) continue;
+              const displayBatchTotal = Math.max(totalBatches, batchIndex + ttsQueue.length);
               const doneTarget = Math.min(totalClips, doneClips + batch.length);
               const baseRatio = totalClips > 0 ? doneClips / totalClips : 1;
               const doneRatio = totalClips > 0 ? doneTarget / totalClips : 1;
@@ -1035,7 +1179,7 @@ export default function App() {
               let waitingProgress = baseProgress;
               const batchStartedAt = Date.now();
 
-              updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${totalBatches} in progress...`);
+              updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${displayBatchTotal} in progress...`);
 
               let waitTimer: number | null = window.setInterval(() => {
                 const step = Math.max(0.08, (waitingCap - baseProgress) / 16);
@@ -1046,7 +1190,7 @@ export default function App() {
                   doneClips,
                   batchIndex,
                   waitingProvider,
-                  `Batch ${batchIndex}/${totalBatches} in progress...`
+                  `Batch ${batchIndex}/${displayBatchTotal} in progress...`
                 );
               }, 350);
 
@@ -1063,12 +1207,19 @@ export default function App() {
                 const ttsData = (await ttsRes.json().catch(() => null)) as any;
                 if (!ttsRes.ok) {
                   const detail = apiErrorText(ttsData, ttsRes.status);
-                  diagnosticLines.push("Batch " + batchIndex + "/" + totalBatches + ": HTTP " + ttsRes.status + " after " + formatElapsedMs(Date.now() - batchStartedAt) + ".");
+                  const retryableStatus = [429, 502, 503, 504].includes(ttsRes.status);
+                  diagnosticLines.push("Batch " + batchIndex + "/" + displayBatchTotal + ": HTTP " + ttsRes.status + " after " + formatElapsedMs(Date.now() - batchStartedAt) + ".");
                   appendUniqueError(errorSamples, detail);
-                  failedCount += totalClips - doneClips;
-                  doneClips = totalClips;
-                  updateAudioProgress(doneClips, batchIndex, false, "Stopped after API error.");
-                  break;
+                  if (retryableStatus && batch.length > 1) {
+                    const midpoint = Math.ceil(batch.length / 2);
+                    ttsQueue.unshift(batch.slice(0, midpoint), batch.slice(midpoint));
+                    updateAudioProgress(doneClips, batchIndex, false, "Retrying smaller audio batch.");
+                    continue;
+                  }
+                  failedCount += batch.length;
+                  doneClips = doneTarget;
+                  updateAudioProgress(doneClips, batchIndex, false, "Continuing after audio batch error.");
+                  continue;
                 }
 
                 const ttsPayload = ttsData as TTSResponse;
@@ -1167,7 +1318,7 @@ export default function App() {
 
                 doneClips = doneTarget;
                 setResponse(payload);
-                updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${totalBatches} complete.`);
+                updateAudioProgress(doneClips, batchIndex, false, `Batch ${batchIndex}/${displayBatchTotal} complete.`);
               } finally {
                 if (waitTimer != null) {
                   window.clearInterval(waitTimer);
@@ -1247,7 +1398,11 @@ export default function App() {
             setGenerateNotice("audio", "error", "Audio synthesis did not complete.", detail);
           }
         } else {
-          setAudioRunSummary({ requested: true, total: attachedAudioClips, ok: attachedAudioClips, failed: 0, errors: [], persisted: true, storedClips: 0, cachedClips: attachedAudioClips, durableCachedClips: attachedAudioClips, storedReusableAssets: 0, storageError: null, diagnostics: attachedAudioClips > 0 ? ["Audio synthesis skipped: selected clips were already attached to saved cards."] : [] });
+          const diagnostics = [...audioVerification.diagnostics];
+          if (attachedAudioClips > 0) {
+            diagnostics.push("Audio synthesis skipped: selected clips were already attached to saved cards.");
+          }
+          setAudioRunSummary({ requested: true, total: attachedAudioClips, ok: attachedAudioClips, failed: 0, errors: [], persisted: true, storedClips: 0, cachedClips: attachedAudioClips, durableCachedClips: attachedAudioClips, storedReusableAssets: 0, storageError: null, diagnostics });
           setGenerateProgress((prev) => (95 > prev ? 95 : prev));
           setGenerateProgressLabel(
             attachedAudioClips > 0
