@@ -52,6 +52,7 @@ from core.api_schemas import (
     TTSPreviewResponse,
     TTSSharedVoiceAddRequest,
     TTSSharedVoiceAddResponse,
+    TTSVoiceListResponse,
     TTSVoiceCheckRequest,
     TTSVoiceCheckResponse,
     TTSResponse,
@@ -142,6 +143,9 @@ from core.db import (
     touch_generated_card_asset,
     load_generated_card_assets,
     touch_generated_card_assets,
+    upsert_curated_tts_voice,
+    list_curated_tts_voices,
+    delete_curated_tts_voice,
 )
 
 
@@ -565,6 +569,27 @@ def _fallback_elevenlabs_tts_models() -> List[str]:
         "eleven_turbo_v2_5",
         "eleven_multilingual_v2",
         "eleven_v3",
+    ]
+
+
+def _merge_tts_voice_options(*groups: List[TTSOption]) -> List[TTSOption]:
+    seen: set[str] = set()
+    merged: List[TTSOption] = []
+    for group in groups:
+        for voice in group:
+            voice_id = (voice.id or "").strip()
+            if not voice_id or voice_id in seen:
+                continue
+            seen.add(voice_id)
+            merged.append(TTSOption(id=voice_id, label=(voice.label or voice_id).strip() or voice_id))
+    return merged
+
+
+def _curated_elevenlabs_voice_options() -> List[TTSOption]:
+    return [
+        TTSOption(id=str(row.get("id") or "").strip(), label=str(row.get("label") or row.get("id") or "").strip())
+        for row in list_curated_tts_voices(provider="elevenlabs")
+        if str(row.get("id") or "").strip()
     ]
 
 
@@ -1487,6 +1512,7 @@ def api_tts_options(
         for voice in AUDIO_ELEVEN_VOICES
         if (voice.get("id") or "").strip()
     ]
+    eleven_voices = _merge_tts_voice_options(eleven_voices, _curated_elevenlabs_voice_options())
     try:
         eleven_models = fetch_elevenlabs_models(_elevenlabs_key_or_500())
     except Exception:
@@ -1560,9 +1586,16 @@ def api_tts_voice_add_shared(
         if not public_user_id:
             try:
                 existing_voice = fetch_elevenlabs_voice(api_key, voice_id)
+                label = new_name or existing_voice.get("label") or existing_voice["id"]
+                upsert_curated_tts_voice(
+                    provider="elevenlabs",
+                    voice_id=existing_voice["id"],
+                    label=label,
+                    source="existing_voice",
+                )
                 return TTSSharedVoiceAddResponse(
                     id=existing_voice["id"],
-                    label=new_name or existing_voice.get("label") or existing_voice["id"],
+                    label=label,
                     source="existing_voice",
                 )
             except RuntimeError:
@@ -1584,10 +1617,40 @@ def api_tts_voice_add_shared(
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    label = voice.get("label") or voice["id"]
+    upsert_curated_tts_voice(
+        provider="elevenlabs",
+        voice_id=voice["id"],
+        label=label,
+        source="shared_voice",
+    )
     return TTSSharedVoiceAddResponse(
         id=voice["id"],
-        label=voice.get("label") or voice["id"],
+        label=label,
     )
+
+
+@app.get("/api/admin/tts/voices", response_model=TTSVoiceListResponse)
+def api_admin_tts_voices(
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> TTSVoiceListResponse:
+    _require_api_shared_secret(x_api_key)
+    return TTSVoiceListResponse(items=_curated_elevenlabs_voice_options())
+
+
+@app.delete("/api/admin/tts/voices/{voice_id}")
+def api_admin_tts_voice_delete(
+    voice_id: str,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> Dict[str, Any]:
+    _require_api_shared_secret(x_api_key)
+    clean_voice_id = (voice_id or "").strip()
+    if not clean_voice_id:
+        raise HTTPException(status_code=400, detail="voice_id is required")
+    deleted = delete_curated_tts_voice(provider="elevenlabs", voice_id=clean_voice_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Curated voice was not found")
+    return {"provider": "elevenlabs", "id": clean_voice_id, "deleted": True}
 
 
 @app.post("/api/tts/preview", response_model=TTSPreviewResponse)

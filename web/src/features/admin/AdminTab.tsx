@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { InviteCreateResponse, UsageListResponse, UserListResponse } from "../../types";
+import { InviteCreateResponse, TTSOption, UsageListResponse, UserListResponse } from "../../types";
 import { NoticeMessage } from "../../lib/messages";
 import { shortJson } from "../../lib/uiState";
 import { Notice } from "../../ui/Notice";
@@ -15,6 +15,9 @@ type AdminTabProps = {
   onSetStatus: (userId: string, status: "active" | "blocked") => void;
   onRotate: (userId: string) => void;
   onLoadUsage: (userId: string) => void;
+  curatedVoices: TTSOption[];
+  onListSharedVoices: () => Promise<void>;
+  onDeleteSharedVoice: (voiceId: string) => Promise<void>;
   onAddSharedVoice: (params: { publicUserId: string; voiceId: string; newName: string }) => Promise<void>;
   notices: {
     toolbar: NoticeMessage | null;
@@ -36,6 +39,9 @@ export function AdminTab({
   onSetStatus,
   onRotate,
   onLoadUsage,
+  curatedVoices,
+  onListSharedVoices,
+  onDeleteSharedVoice,
   onAddSharedVoice,
   notices,
 }: AdminTabProps) {
@@ -178,7 +184,7 @@ export function AdminTab({
         </div>
 
         <p className="hint flow-hint">
-          Add Voice Library voices to the server ElevenLabs workspace, or select a voice that is already available to the server key.
+          Add Voice Library voices to the server ElevenLabs workspace and save them to the global curated list shown in Settings.
         </p>
 
         <div className="grid two-col">
@@ -210,16 +216,53 @@ export function AdminTab({
 
         <div className="toolbar-actions compact-top">
           <button className="btn primary" type="button" onClick={addSharedVoice} disabled={adminBusy || !hasAdminKey || !voiceIdOrLink.trim()}>
-            Add/select voice
+            Add and save voice
+          </button>
+          <button className="btn" type="button" onClick={onListSharedVoices} disabled={adminBusy || !hasAdminKey}>
+            Refresh saved voices
           </button>
         </div>
 
         <p className="hint subtle">
-          If the voice is already available, Doedutch selects it without importing. Otherwise, if owner ID is empty, Doedutch searches
+          If the voice is already available, Doedutch saves it without importing. Otherwise, if owner ID is empty, Doedutch searches
           ElevenLabs Voice Library by the pasted voice ID/link and uses the returned owner ID. Importing mutates the server workspace.
         </p>
 
         <Notice notice={notices.voices} />
+
+        {curatedVoices.length === 0 ? (
+          <div className="empty-state">No curated ElevenLabs voices saved yet.</div>
+        ) : (
+          <div className="table-wrap compact-top">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>label</th>
+                  <th>voice_id</th>
+                  <th>actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {curatedVoices.map((voice) => (
+                  <tr key={voice.id}>
+                    <td>{voice.label || voice.id}</td>
+                    <td>{voice.id}</td>
+                    <td>
+                      <button
+                        className="btn tiny danger"
+                        type="button"
+                        onClick={() => onDeleteSharedVoice(voice.id)}
+                        disabled={adminBusy || !hasAdminKey}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="card">

@@ -337,6 +337,10 @@ class TTSSharedVoiceAddResponse(BaseModel):
     source: str = "shared_voice"
 
 
+class TTSVoiceListResponse(BaseModel):
+    items: List[TTSOption] = Field(default_factory=list)
+
+
 class TTSPreviewRequest(BaseModel):
     provider: str
     model: Optional[str] = None

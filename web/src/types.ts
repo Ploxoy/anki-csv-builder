@@ -182,6 +182,10 @@ export type TTSSharedVoiceAddResponse = {
   source?: string;
 };
 
+export type TTSVoiceListResponse = {
+  items: TTSOption[];
+};
+
 export type TTSPreviewRequest = {
   provider: string;
   model?: string;

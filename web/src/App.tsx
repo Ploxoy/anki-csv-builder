@@ -19,6 +19,7 @@ import {
   TTSResponse,
   TTSSharedVoiceAddRequest,
   TTSSharedVoiceAddResponse,
+  TTSVoiceListResponse,
   TTSVoiceCheckRequest,
   TTSVoiceCheckResponse,
   UsageListResponse,
@@ -234,6 +235,7 @@ export default function App() {
   const [ttsOptions, setTtsOptions] = useState<TTSOptionsResponse | null>(null);
   const [ttsOptionsBusy, setTtsOptionsBusy] = useState(false);
   const [ttsOptionsLoadedAt, setTtsOptionsLoadedAt] = useState<number | null>(null);
+  const [curatedAudioVoices, setCuratedAudioVoices] = useState<TTSVoiceListResponse["items"]>([]);
   const [customAudioVoiceLabels, setCustomAudioVoiceLabels] = useState<Record<string, string>>(() =>
     loadJson(CUSTOM_AUDIO_VOICE_LABELS_KEY, {})
   );
@@ -280,6 +282,7 @@ export default function App() {
   const activeAudioProviderOptions = ttsOptions?.by_provider?.[audioProviderKey];
   const audioModelOptions = activeAudioProviderOptions?.models || [];
   const audioVoiceOptions = activeAudioProviderOptions?.voices || [];
+  const curatedAudioVoiceOptions = audioProviderKey === "elevenlabs" ? curatedAudioVoices : [];
 
   const availableAudioModelOptions = useMemo(() => {
     const fromCurrent = settings.audioModel ? [settings.audioModel] : [];
@@ -288,13 +291,17 @@ export default function App() {
 
   const availableAudioVoiceOptions = useMemo(() => {
     const fromApi = audioVoiceOptions.map((voice) => voice.id);
+    const fromCurated = curatedAudioVoiceOptions.map((voice) => voice.id);
     const fromCurrent = settings.audioVoice ? [settings.audioVoice] : [];
-    return Array.from(new Set([...fromApi, ...fromCurrent].filter(Boolean)));
-  }, [audioVoiceOptions, settings.audioVoice]);
+    return Array.from(new Set([...fromApi, ...fromCurated, ...fromCurrent].filter(Boolean)));
+  }, [audioVoiceOptions, curatedAudioVoiceOptions, settings.audioVoice]);
 
   const audioVoiceLabels = useMemo(() => {
     const map: Record<string, string> = {};
     for (const voice of audioVoiceOptions) {
+      if (voice.id) map[voice.id] = voice.label || voice.id;
+    }
+    for (const voice of curatedAudioVoiceOptions) {
       if (voice.id) map[voice.id] = voice.label || voice.id;
     }
     for (const [voiceId, label] of Object.entries(customAudioVoiceLabels)) {
@@ -304,7 +311,7 @@ export default function App() {
       map[settings.audioVoice] = settings.audioVoice;
     }
     return map;
-  }, [audioVoiceOptions, customAudioVoiceLabels, settings.audioVoice]);
+  }, [audioVoiceOptions, curatedAudioVoiceOptions, customAudioVoiceLabels, settings.audioVoice]);
 
   const exportCards = useMemo(() => {
     const items = response?.items || [];
@@ -391,6 +398,12 @@ export default function App() {
     if (activeTab === "admin" && !adminEnabled) {
       setActiveTab("settings");
     }
+  }, [activeTab, adminEnabled]);
+
+  useEffect(() => {
+    if (activeTab !== "admin" || !adminEnabled || curatedAudioVoices.length > 0) return;
+    void adminListElevenLabsVoices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, adminEnabled]);
 
   useEffect(() => {
@@ -791,6 +804,32 @@ export default function App() {
     }
   }
 
+  async function adminListElevenLabsVoices(): Promise<void> {
+    if (!settings.xApiKey.trim()) {
+      setAdminNotice("voices", "warning", "X-API-Key is required to list curated ElevenLabs voices.");
+      return;
+    }
+
+    setAdminBusy(true);
+    try {
+      const res = await fetch(`${settings.apiBase || ""}/api/admin/tts/voices`, {
+        method: "GET",
+        headers: apiHeaders(),
+      });
+      const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(apiErrorText(data, res.status));
+      }
+      const payload = data as TTSVoiceListResponse;
+      setCuratedAudioVoices(payload.items || []);
+      setAdminNotice("voices", "success", `Loaded ${payload.items?.length || 0} curated ElevenLabs voice(s).`);
+    } catch (e: any) {
+      setAdminNotice("voices", "error", e?.message || String(e));
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   async function adminAddElevenLabsSharedVoice(params: { publicUserId: string; voiceId: string; newName: string }): Promise<void> {
     const publicUserId = params.publicUserId.trim();
     const voiceId = params.voiceId.trim();
@@ -825,6 +864,11 @@ export default function App() {
       const added = data as TTSSharedVoiceAddResponse;
       const elevenOptions = ttsOptions?.by_provider?.elevenlabs;
       const elevenModels = elevenOptions?.models || [];
+      setCuratedAudioVoices((current) => {
+        const nextItem = { id: added.id, label: added.label || added.id };
+        const withoutSame = current.filter((voice) => voice.id !== added.id);
+        return [...withoutSame, nextItem].sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id));
+      });
       setCustomAudioVoiceLabels((current) => {
         const next = { ...current, [added.id]: added.label || added.id };
         saveJson(CUSTOM_AUDIO_VOICE_LABELS_KEY, next);
@@ -838,7 +882,46 @@ export default function App() {
           : elevenOptions?.default_model || elevenModels[0] || "eleven_multilingual_v2",
         audioVoice: added.id,
       }));
-      setAdminNotice("voices", "success", `Shared ElevenLabs voice added and selected: ${added.label || added.id}.`);
+      setAdminNotice("voices", "success", `ElevenLabs voice saved to curated list and selected: ${added.label || added.id}.`);
+    } catch (e: any) {
+      setAdminNotice("voices", "error", e?.message || String(e));
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function adminDeleteElevenLabsVoice(voiceId: string): Promise<void> {
+    const cleanVoiceId = voiceId.trim();
+    if (!cleanVoiceId) {
+      setAdminNotice("voices", "warning", "Voice ID is required to delete a curated voice.");
+      return;
+    }
+    if (!settings.xApiKey.trim()) {
+      setAdminNotice("voices", "warning", "X-API-Key is required to delete curated ElevenLabs voices.");
+      return;
+    }
+    const ok = window.confirm(
+      `Remove this voice from the Doedutch curated list?\n\n${cleanVoiceId}\n\nThis does not delete the voice from ElevenLabs.`
+    );
+    if (!ok) return;
+
+    setAdminBusy(true);
+    try {
+      const res = await fetch(`${settings.apiBase || ""}/api/admin/tts/voices/${encodeURIComponent(cleanVoiceId)}`, {
+        method: "DELETE",
+        headers: apiHeaders(),
+      });
+      const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(apiErrorText(data, res.status));
+      }
+      setCuratedAudioVoices((current) => current.filter((voice) => voice.id !== cleanVoiceId));
+      setSettings((current) =>
+        current.audioProvider.trim().toLowerCase() === "elevenlabs" && current.audioVoice === cleanVoiceId
+          ? { ...current, audioVoice: "" }
+          : current
+      );
+      setAdminNotice("voices", "success", "Voice removed from the curated list.");
     } catch (e: any) {
       setAdminNotice("voices", "error", e?.message || String(e));
     } finally {
@@ -1889,6 +1972,9 @@ export default function App() {
           onSetStatus={adminSetStatus}
           onRotate={adminRotate}
           onLoadUsage={adminLoadUsage}
+          curatedVoices={curatedAudioVoices}
+          onListSharedVoices={adminListElevenLabsVoices}
+          onDeleteSharedVoice={adminDeleteElevenLabsVoice}
           onAddSharedVoice={adminAddElevenLabsSharedVoice}
           notices={notices.admin}
         />

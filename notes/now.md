@@ -119,3 +119,9 @@ d830884 voices preview
 - Why: some voices are already available to the server API key but are not discoverable via Voice Library search, so admin import should not fail in that case.
 - Next steps: deploy, retry Admin -> ElevenLabs voice curation with O4PMCJ0ef9FbFrmigDn4; it should select the existing server voice instead of failing search.
 - Open questions: whether to add a visible `source` badge (`existing_voice` vs `shared_voice`) in the Admin success card.
+- What I changed: added a durable `curated_tts_voices` collection, `GET /api/admin/tts/voices`, and merged curated ElevenLabs voices into `/api/tts/options`.
+- Why: Admin voice curation must be a list of reusable voices, not just overwrite the single selected `audio_voice` setting.
+- Next steps: deploy, open Admin -> ElevenLabs voice curation, add/refresh multiple voices, then reload Settings models & voices and verify all saved voices appear in the dropdown.
+- What I changed: added admin-only curated voice removal (`DELETE /api/admin/tts/voices/{voice_id}`) and a Remove action in the Admin voice table.
+- Why: the curated voice list needs lifecycle management before it grows too large.
+- Note: removal only hides the voice from Doedutch curated options; it does not delete the voice from ElevenLabs.

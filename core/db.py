@@ -172,6 +172,18 @@ CREATE TABLE IF NOT EXISTS generated_card_assets (
 );
 """
 
+CURATED_TTS_VOICES_TABLE = """
+CREATE TABLE IF NOT EXISTS curated_tts_voices (
+    provider TEXT NOT NULL,
+    voice_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    source TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider, voice_id)
+);
+"""
+
 # Helpful index for lookups in /api/usage.
 USAGE_EVENTS_USER_CREATED_IDX = """
 CREATE INDEX IF NOT EXISTS usage_events_user_created_at_idx
@@ -235,6 +247,7 @@ def _get_conn():
                             cur.execute(RUN_MEDIA_ASSETS_TABLE)
                             cur.execute(AUDIO_ASSETS_TABLE)
                             cur.execute(GENERATED_CARD_ASSETS_TABLE)
+                            cur.execute(CURATED_TTS_VOICES_TABLE)
                             cur.execute(USAGE_EVENTS_USER_CREATED_IDX)
                             cur.execute(GENERATION_JOBS_USER_CREATED_IDX)
                             cur.execute(GENERATION_JOBS_STATUS_CREATED_IDX)
@@ -611,6 +624,126 @@ def rotate_user_token(user_id: str) -> str | None:
     except Exception as exc:  # pragma: no cover - runtime env
         logger.error("Failed to rotate token: %s", exc)
         return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def upsert_curated_tts_voice(
+    *,
+    provider: str,
+    voice_id: str,
+    label: str,
+    source: str | None = None,
+) -> dict[str, Any] | None:
+    """Persist one admin-curated TTS voice for global UI discovery."""
+    provider_text = str(provider or "").strip().lower()
+    voice_id_text = str(voice_id or "").strip()
+    label_text = str(label or "").strip() or voice_id_text
+    source_text = str(source or "").strip() or None
+    if not provider_text or not voice_id_text:
+        return None
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO curated_tts_voices (provider, voice_id, label, source, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, now(), now())
+                ON CONFLICT (provider, voice_id) DO UPDATE
+                SET label=excluded.label,
+                    source=excluded.source,
+                    updated_at=now()
+                RETURNING provider, voice_id, label, source, created_at, updated_at
+                """,
+                (provider_text, voice_id_text, label_text, source_text),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "provider": row[0],
+            "id": row[1],
+            "label": row[2],
+            "source": row[3],
+            "created_at": row[4].isoformat() if isinstance(row[4], datetime) else str(row[4]),
+            "updated_at": row[5].isoformat() if isinstance(row[5], datetime) else str(row[5]),
+        }
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to upsert curated TTS voice: %s", exc)
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def list_curated_tts_voices(*, provider: str | None = None) -> list[dict[str, Any]]:
+    """List admin-curated TTS voices for merging into provider options."""
+    provider_text = str(provider or "").strip().lower()
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        sql = """
+            SELECT provider, voice_id, label, source, created_at, updated_at
+            FROM curated_tts_voices
+        """
+        params: list[Any] = []
+        if provider_text:
+            sql += " WHERE provider=%s"
+            params.append(provider_text)
+        sql += " ORDER BY provider ASC, label ASC, voice_id ASC"
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall() or []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            out.append(
+                {
+                    "provider": row[0],
+                    "id": row[1],
+                    "label": row[2],
+                    "source": row[3],
+                    "created_at": row[4].isoformat() if isinstance(row[4], datetime) else str(row[4]),
+                    "updated_at": row[5].isoformat() if isinstance(row[5], datetime) else str(row[5]),
+                }
+            )
+        return out
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to list curated TTS voices: %s", exc)
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def delete_curated_tts_voice(*, provider: str, voice_id: str) -> bool:
+    """Remove one voice from the Doedutch curated list without deleting provider assets."""
+    provider_text = str(provider or "").strip().lower()
+    voice_id_text = str(voice_id or "").strip()
+    if not provider_text or not voice_id_text:
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM curated_tts_voices WHERE provider=%s AND voice_id=%s",
+                (provider_text, voice_id_text),
+            )
+            return cur.rowcount > 0
+    except Exception as exc:  # pragma: no cover - runtime env
+        logger.error("Failed to delete curated TTS voice: %s", exc)
+        return False
     finally:
         try:
             conn.close()

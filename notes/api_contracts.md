@@ -246,6 +246,7 @@ Notes:
 Notes:
 - ElevenLabs models are loaded dynamically from `GET /v1/models` and filtered by `can_do_text_to_speech`.
 - If live discovery fails, the backend falls back to a small known TTS list so the UI is not stuck on one legacy model.
+- ElevenLabs voices include static defaults plus the admin-curated server list from `curated_tts_voices`; voices added through Admin are available to all users after options refresh.
 
 ## `/api/tts/voice/check` — validate a manual TTS voice ID
 
@@ -308,7 +309,46 @@ Notes:
 - If the voice is already available to the server `ELEVENLABS_API_KEY`, the endpoint returns it with `source: "existing_voice"` and does not call the shared import API.
 - If `public_user_id` or `new_name` is omitted, the backend searches `GET /v1/shared-voices?search=<voice_id>` and uses the returned `public_owner_id` / voice name.
 - ElevenLabs ultimately requires both `public_owner_id` and `voice_id`; the search step is how Doedutch tries to discover the owner ID automatically.
-- After adding, the Admin UI selects the returned voice ID in the current browser session and stores the display label locally.
+- After adding, the backend upserts the returned voice into `curated_tts_voices`; the Admin UI selects it in the current browser session and the voice appears in Settings for all users after options refresh.
+
+## `/api/admin/tts/voices` — list curated TTS voices
+
+**Request**
+- `GET /api/admin/tts/voices`
+- Requires `X-API-Key`.
+
+**Response (200)**
+```json
+{
+  "items": [
+    { "id": "voice-id-returned-by-elevenlabs", "label": "Readable voice name" }
+  ]
+}
+```
+
+Notes:
+- The current implementation returns the global ElevenLabs curated list maintained by Admin.
+- This list is also merged into `/api/tts/options` so users can select admin-approved voices without pasting IDs manually.
+
+## `/api/admin/tts/voices/{voice_id}` — remove a curated TTS voice
+
+**Request**
+- `DELETE /api/admin/tts/voices/{voice_id}`
+- Requires `X-API-Key`.
+
+**Response (200)**
+```json
+{
+  "provider": "elevenlabs",
+  "id": "voice-id-returned-by-elevenlabs",
+  "deleted": true
+}
+```
+
+Notes:
+- This removes the voice only from Doedutch `curated_tts_voices`.
+- It does not delete or unshare the voice from the ElevenLabs workspace/library.
+- Missing voices return `404`.
 
 ## `/api/tts/preview` — synthesize one short voice preview
 

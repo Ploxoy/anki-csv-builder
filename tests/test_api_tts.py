@@ -30,6 +30,9 @@ def patch_api_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(api_main, "load_audio_assets", lambda **kwargs: ({}, None))
     monkeypatch.setattr(api_main, "store_audio_assets", lambda **kwargs: (len(list(kwargs.get("assets") or [])), None))
     monkeypatch.setattr(api_main, "touch_audio_assets", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "list_curated_tts_voices", lambda **kwargs: [])
+    monkeypatch.setattr(api_main, "upsert_curated_tts_voice", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "delete_curated_tts_voice", lambda **kwargs: False)
 
 
 def test_api_tts_returns_clip_level_status_and_error(monkeypatch: pytest.MonkeyPatch, patch_api_auth: None) -> None:
@@ -119,6 +122,7 @@ def test_api_tts_voice_add_shared_adds_and_returns_voice(
     monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
 ) -> None:
     seen: dict[str, Any] = {}
+    saved: dict[str, Any] = {}
 
     monkeypatch.setattr(api_main, "_require_api_shared_secret", lambda x_api_key: None)
     monkeypatch.setattr(api_main, "_elevenlabs_key_or_500", lambda: "eleven-secret")
@@ -129,6 +133,7 @@ def test_api_tts_voice_add_shared_adds_and_returns_voice(
         return {"id": "added-voice", "label": "Saved Voice"}
 
     monkeypatch.setattr(api_main, "add_elevenlabs_shared_voice", fake_add)
+    monkeypatch.setattr(api_main, "upsert_curated_tts_voice", lambda **kwargs: saved.update(kwargs))
 
     payload = TTSSharedVoiceAddRequest(
         public_user_id="public-user",
@@ -144,6 +149,12 @@ def test_api_tts_voice_add_shared_adds_and_returns_voice(
     assert seen["new_name"] == "Saved Voice"
     assert result.id == "added-voice"
     assert result.label == "Saved Voice"
+    assert saved == {
+        "provider": "elevenlabs",
+        "voice_id": "added-voice",
+        "label": "Saved Voice",
+        "source": "shared_voice",
+    }
 
 
 def test_api_tts_voice_add_shared_discovers_owner_when_missing(
@@ -179,9 +190,11 @@ def test_api_tts_voice_add_shared_discovers_owner_when_missing(
 def test_api_tts_voice_add_shared_returns_existing_voice_without_search(
     monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
 ) -> None:
+    saved: dict[str, Any] = {}
     monkeypatch.setattr(api_main, "_require_api_shared_secret", lambda x_api_key: None)
     monkeypatch.setattr(api_main, "_elevenlabs_key_or_500", lambda: "eleven-secret")
     monkeypatch.setattr(api_main, "fetch_elevenlabs_voice", lambda api_key, voice_id: {"id": voice_id, "label": "Existing Voice"})
+    monkeypatch.setattr(api_main, "upsert_curated_tts_voice", lambda **kwargs: saved.update(kwargs))
 
     def fail_search(*args: Any, **kwargs: Any):
         raise AssertionError("shared voice search should not run for an already available voice")
@@ -199,6 +212,82 @@ def test_api_tts_voice_add_shared_returns_existing_voice_without_search(
     assert result.id == "O4PMCJ0ef9FbFrmigDn4"
     assert result.label == "Existing Voice"
     assert result.source == "existing_voice"
+    assert saved == {
+        "provider": "elevenlabs",
+        "voice_id": "O4PMCJ0ef9FbFrmigDn4",
+        "label": "Existing Voice",
+        "source": "existing_voice",
+    }
+
+
+def test_api_tts_options_merges_curated_elevenlabs_voices(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    monkeypatch.setattr(api_main, "_list_openai_model_ids", lambda: ["gpt-4.1-mini", "gpt-4o-tts"])
+    monkeypatch.setattr(api_main, "_elevenlabs_key_or_500", lambda: "eleven-secret")
+    monkeypatch.setattr(api_main, "fetch_elevenlabs_models", lambda api_key: ["eleven_flash_v2_5"])
+    monkeypatch.setattr(
+        api_main,
+        "list_curated_tts_voices",
+        lambda **kwargs: [
+            {"id": "custom-voice-1", "label": "Custom Voice 1"},
+            {"id": "custom-voice-2", "label": "Custom Voice 2"},
+        ],
+    )
+
+    result = api_main.api_tts_options(request=_dummy_request(), x_api_key=None)
+
+    eleven = result.by_provider["elevenlabs"]
+    voice_ids = [voice.id for voice in eleven.voices]
+    assert "custom-voice-1" in voice_ids
+    assert "custom-voice-2" in voice_ids
+
+
+def test_api_admin_tts_voices_lists_curated_voices(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    monkeypatch.setattr(api_main, "_require_api_shared_secret", lambda x_api_key: None)
+    monkeypatch.setattr(
+        api_main,
+        "list_curated_tts_voices",
+        lambda **kwargs: [{"id": "voice-a", "label": "Voice A"}],
+    )
+
+    result = api_main.api_admin_tts_voices(x_api_key=None)
+
+    assert len(result.items) == 1
+    assert result.items[0].id == "voice-a"
+    assert result.items[0].label == "Voice A"
+
+
+def test_api_admin_tts_voice_delete_removes_curated_voice(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(api_main, "_require_api_shared_secret", lambda x_api_key: None)
+
+    def fake_delete(**kwargs: Any) -> bool:
+        seen.update(kwargs)
+        return True
+
+    monkeypatch.setattr(api_main, "delete_curated_tts_voice", fake_delete)
+
+    result = api_main.api_admin_tts_voice_delete("voice-a", x_api_key=None)
+
+    assert seen == {"provider": "elevenlabs", "voice_id": "voice-a"}
+    assert result == {"provider": "elevenlabs", "id": "voice-a", "deleted": True}
+
+
+def test_api_admin_tts_voice_delete_404_for_missing_voice(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    monkeypatch.setattr(api_main, "_require_api_shared_secret", lambda x_api_key: None)
+    monkeypatch.setattr(api_main, "delete_curated_tts_voice", lambda **kwargs: False)
+
+    with pytest.raises(api_main.HTTPException) as exc_info:
+        api_main.api_admin_tts_voice_delete("missing-voice", x_api_key=None)
+
+    assert exc_info.value.status_code == 404
 
 
 def test_api_tts_preview_returns_audio_without_storage(

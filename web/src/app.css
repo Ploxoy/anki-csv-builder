@@ -269,6 +269,17 @@ pre {
   border-color: var(--accent-hover);
 }
 
+.btn.danger {
+  border-color: #e8b8be;
+  color: var(--danger);
+  background: #fff6f7;
+}
+
+.btn.danger:hover {
+  border-color: var(--danger);
+  background: #fff1f2;
+}
+
 .btn.small {
   padding: 8px 11px;
   font-size: 13px;
