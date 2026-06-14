@@ -305,6 +305,7 @@ Notes:
 Notes:
 - This calls ElevenLabs `POST /v1/voices/add/:public_user_id/:voice_id`.
 - The UI accepts either a raw `voice_id` or an ElevenLabs public Voice Library link containing `voiceId=...`.
+- If the voice is already available to the server `ELEVENLABS_API_KEY`, the endpoint returns it with `source: "existing_voice"` and does not call the shared import API.
 - If `public_user_id` or `new_name` is omitted, the backend searches `GET /v1/shared-voices?search=<voice_id>` and uses the returned `public_owner_id` / voice name.
 - ElevenLabs ultimately requires both `public_owner_id` and `voice_id`; the search step is how Doedutch tries to discover the owner ID automatically.
 - After adding, the Admin UI selects the returned voice ID in the current browser session and stores the display label locally.

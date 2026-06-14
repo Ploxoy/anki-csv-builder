@@ -176,6 +176,31 @@ def test_api_tts_voice_add_shared_discovers_owner_when_missing(
     assert result.id == "library-voice"
 
 
+def test_api_tts_voice_add_shared_returns_existing_voice_without_search(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    monkeypatch.setattr(api_main, "_require_api_shared_secret", lambda x_api_key: None)
+    monkeypatch.setattr(api_main, "_elevenlabs_key_or_500", lambda: "eleven-secret")
+    monkeypatch.setattr(api_main, "fetch_elevenlabs_voice", lambda api_key, voice_id: {"id": voice_id, "label": "Existing Voice"})
+
+    def fail_search(*args: Any, **kwargs: Any):
+        raise AssertionError("shared voice search should not run for an already available voice")
+
+    def fail_add(*args: Any, **kwargs: Any):
+        raise AssertionError("shared voice add should not run for an already available voice")
+
+    monkeypatch.setattr(api_main, "find_elevenlabs_shared_voice", fail_search)
+    monkeypatch.setattr(api_main, "add_elevenlabs_shared_voice", fail_add)
+
+    payload = TTSSharedVoiceAddRequest(voice_id="O4PMCJ0ef9FbFrmigDn4")
+
+    result = api_main.api_tts_voice_add_shared(payload, x_api_key=None)
+
+    assert result.id == "O4PMCJ0ef9FbFrmigDn4"
+    assert result.label == "Existing Voice"
+    assert result.source == "existing_voice"
+
+
 def test_api_tts_preview_returns_audio_without_storage(
     monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
 ) -> None:

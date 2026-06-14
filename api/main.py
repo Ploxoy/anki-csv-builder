@@ -1557,6 +1557,16 @@ def api_tts_voice_add_shared(
         public_user_id = (payload.public_user_id or "").strip()
         voice_id = (payload.voice_id or "").strip()
         new_name = (payload.new_name or "").strip()
+        if not public_user_id:
+            try:
+                existing_voice = fetch_elevenlabs_voice(api_key, voice_id)
+                return TTSSharedVoiceAddResponse(
+                    id=existing_voice["id"],
+                    label=new_name or existing_voice.get("label") or existing_voice["id"],
+                    source="existing_voice",
+                )
+            except RuntimeError:
+                pass
         if not public_user_id or not new_name:
             shared_voice = find_elevenlabs_shared_voice(api_key, voice_id)
             public_user_id = public_user_id or shared_voice["public_owner_id"]

@@ -178,7 +178,7 @@ export function AdminTab({
         </div>
 
         <p className="hint flow-hint">
-          Add Voice Library voices to the server ElevenLabs workspace. Once added, users can reload TTS options and select the voice.
+          Add Voice Library voices to the server ElevenLabs workspace, or select a voice that is already available to the server key.
         </p>
 
         <div className="grid two-col">
@@ -210,13 +210,13 @@ export function AdminTab({
 
         <div className="toolbar-actions compact-top">
           <button className="btn primary" type="button" onClick={addSharedVoice} disabled={adminBusy || !hasAdminKey || !voiceIdOrLink.trim()}>
-            Add shared voice
+            Add/select voice
           </button>
         </div>
 
         <p className="hint subtle">
-          If owner ID is empty, Doedutch searches ElevenLabs Voice Library by the pasted voice ID/link and uses the returned owner ID.
-          This mutates the server ElevenLabs workspace, so keep this admin-only.
+          If the voice is already available, Doedutch selects it without importing. Otherwise, if owner ID is empty, Doedutch searches
+          ElevenLabs Voice Library by the pasted voice ID/link and uses the returned owner ID. Importing mutates the server workspace.
         </p>
 
         <Notice notice={notices.voices} />
