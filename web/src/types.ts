@@ -168,6 +168,31 @@ export type TTSVoiceCheckResponse = {
   source?: string;
 };
 
+export type TTSPreviewRequest = {
+  provider: string;
+  model?: string;
+  voice?: string;
+  text: string;
+};
+
+export type TTSPreviewResponse = {
+  provider: string;
+  model: string;
+  voice: string;
+  text: string;
+  filename: string;
+  audio_b64: string;
+  summary: {
+    ok: number;
+    failed: number;
+    cached: number;
+    errors?: string[];
+    usage: Record<string, unknown>;
+    cost: Record<string, unknown>;
+  };
+  timing?: Record<string, unknown>;
+};
+
 export type TTSAudio = {
   card_id: string;
   type: TTSItemType;

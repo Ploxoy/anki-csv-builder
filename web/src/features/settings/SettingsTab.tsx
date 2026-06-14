@@ -24,6 +24,7 @@ type SettingsTabProps = {
   ttsOptionsBusy: boolean;
   onReloadTtsOptions: () => void;
   onCheckElevenLabsVoiceId: (voiceId: string) => void;
+  onPreviewTtsVoice: (sampleText: string) => Promise<string>;
   notices: {
     toolbar: NoticeMessage | null;
     access: NoticeMessage | null;
@@ -54,13 +55,32 @@ export function SettingsTab({
   ttsOptionsBusy,
   onReloadTtsOptions,
   onCheckElevenLabsVoiceId,
+  onPreviewTtsVoice,
   notices,
   adminEnabled,
 }: SettingsTabProps) {
   const [showUserToken, setShowUserToken] = useState(false);
   const [showXApiKey, setShowXApiKey] = useState(false);
   const [customVoiceId, setCustomVoiceId] = useState("");
+  const [previewText, setPreviewText] = useState("Dit is een voorbeeld van deze stem.");
+  const [previewAudioUrl, setPreviewAudioUrl] = useState("");
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const audioProviderKey = (settings.audioProvider || "").trim().toLowerCase();
+
+  async function runVoicePreview() {
+    setPreviewBusy(true);
+    setPreviewError("");
+    setPreviewAudioUrl("");
+    try {
+      const audioUrl = await onPreviewTtsVoice(previewText);
+      setPreviewAudioUrl(audioUrl);
+    } catch (e: any) {
+      setPreviewError(e?.message || String(e));
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
 
   return (
     <section className="tab-layout">
@@ -334,6 +354,35 @@ export function SettingsTab({
             </p>
           </div>
         )}
+
+        <div className="voice-preview-panel">
+          <label>
+            <span>Voice preview text</span>
+            <div className="inline-actions">
+              <input
+                value={previewText}
+                onChange={(e) => setPreviewText(e.target.value)}
+                maxLength={300}
+                placeholder="Dutch sample text"
+              />
+              <button
+                className="btn"
+                type="button"
+                onClick={runVoicePreview}
+                disabled={busy || ttsOptionsBusy || previewBusy || !previewText.trim() || !settings.audioVoice.trim()}
+              >
+                {previewBusy ? "Preparing..." : "Preview voice"}
+              </button>
+            </div>
+          </label>
+          <p className="hint subtle">This sends one short TTS request and may consume provider quota.</p>
+          {previewError && <Notice notice={{ level: "error", message: previewError }} />}
+          {previewAudioUrl && (
+            <audio className="voice-preview-player" controls src={previewAudioUrl}>
+              Your browser does not support audio playback.
+            </audio>
+          )}
+        </div>
 
         {availableAudioModelOptions.length === 0 && (
           <p className="hint subtle">Reload models & voices to fetch available TTS models. The list also refreshes automatically.</p>

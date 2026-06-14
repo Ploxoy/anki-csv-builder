@@ -323,6 +323,13 @@ class TTSVoiceCheckResponse(BaseModel):
     source: str = "manual"
 
 
+class TTSPreviewRequest(BaseModel):
+    provider: str
+    model: Optional[str] = None
+    voice: Optional[str] = None
+    text: str
+
+
 class TTSAudio(BaseModel):
     card_id: str
     type: Literal["word", "sentence"]
@@ -340,6 +347,17 @@ class TTSSummary(BaseModel):
     errors: List[str] = Field(default_factory=list)
     usage: Dict[str, Any]
     cost: Dict[str, Any]
+
+
+class TTSPreviewResponse(BaseModel):
+    provider: str
+    model: str
+    voice: str
+    text: str
+    filename: str
+    audio_b64: str
+    summary: TTSSummary
+    timing: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TTSStorageInfo(BaseModel):

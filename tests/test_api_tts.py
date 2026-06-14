@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 import api.main as api_main
-from core.api_schemas import TTSRequest, TTSVoiceCheckRequest
+from core.api_schemas import TTSPreviewRequest, TTSRequest, TTSVoiceCheckRequest
 from core.audio import AudioClipResult, AudioSynthesisSummary
 from core import audio as audio_core
 
@@ -113,6 +113,58 @@ def test_api_tts_voice_check_validates_elevenlabs_voice(
     assert result.id == "voice-123"
     assert result.label == "Library Voice"
     assert result.valid is True
+
+
+def test_api_tts_preview_returns_audio_without_storage(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    logged: list[dict[str, Any]] = []
+
+    def fake_log_usage_events(**kwargs: Any) -> None:
+        logged.extend(kwargs.get("events") or [])
+
+    def fake_ensure(cards: list[dict[str, Any]], **kwargs: Any):
+        assert kwargs["provider"] == "openai"
+        assert kwargs["voice"] == "alloy"
+        cards[0]["AudioSentence"] = "[sound:sentence_preview.mp3]"
+        summary = AudioSynthesisSummary(provider="openai", voice="alloy")
+        summary.sentence_success = 1
+        summary.total_characters = 32
+        summary.total_requests = 1
+        summary.total_requests_billed = 1
+        summary.model_usage = {"gpt-4o-tts": {"chars": 32, "requests": 1}}
+        summary.clip_results = [
+            AudioClipResult(
+                card_index=0,
+                kind="sentence",
+                text="Dit is een voorbeeld.",
+                status="ok",
+                filename="sentence_preview.mp3",
+                model="gpt-4o-tts",
+            )
+        ]
+        return {"sentence_preview.mp3": b"preview-audio"}, summary
+
+    monkeypatch.setattr(api_main, "ensure_audio_for_cards", fake_ensure)
+    monkeypatch.setattr(api_main, "log_usage_events", fake_log_usage_events)
+
+    payload = TTSPreviewRequest(
+        provider="openai",
+        model="gpt-4o-tts",
+        voice="alloy",
+        text="Dit is een voorbeeld.",
+    )
+
+    result = api_main.api_tts_preview(payload, request=_dummy_request(), x_api_key=None)
+
+    assert result.provider == "openai"
+    assert result.model == "gpt-4o-tts"
+    assert result.voice == "alloy"
+    assert result.filename == "sentence_preview.mp3"
+    assert result.audio_b64
+    assert result.summary.ok == 1
+    assert logged
+    assert logged[0]["kind"] == "audio_preview"
 
 
 def test_api_tts_retries_transient_error_once(

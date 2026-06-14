@@ -13,6 +13,8 @@ import {
   GenerateJobStatusResponse,
   InviteCreateResponse,
   TTSOptionsResponse,
+  TTSPreviewRequest,
+  TTSPreviewResponse,
   TTSRequest,
   TTSResponse,
   TTSVoiceCheckRequest,
@@ -778,6 +780,46 @@ export default function App() {
     } finally {
       setTtsOptionsBusy(false);
     }
+  }
+
+  async function onPreviewTtsVoice(sampleText: string): Promise<string> {
+    const text = sampleText.trim();
+    const provider = (settings.audioProvider || "openai").trim().toLowerCase();
+    if (!text) {
+      throw new Error("Preview text is required.");
+    }
+    if (!settings.userToken.trim()) {
+      setSettingsNotice("access", "warning", "Invite token is required to preview TTS voices.");
+      throw new Error("Invite token is required.");
+    }
+    if (!settings.audioVoice.trim()) {
+      throw new Error("Select a TTS voice before previewing it.");
+    }
+    if (provider === "elevenlabs" && !settings.audioModel.trim()) {
+      throw new Error("Select an ElevenLabs TTS model before previewing the voice.");
+    }
+
+    const payload: TTSPreviewRequest = {
+      provider,
+      model: settings.audioModel || undefined,
+      voice: settings.audioVoice,
+      text,
+    };
+    const res = await fetch(`${settings.apiBase || ""}/api/tts/preview`, {
+      method: "POST",
+      headers: apiHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = (await res.json().catch(() => null)) as any;
+    if (!res.ok) {
+      throw new Error(apiErrorText(data, res.status));
+    }
+    const preview = data as TTSPreviewResponse;
+    if (!preview.audio_b64) {
+      throw new Error("TTS preview returned no audio.");
+    }
+    setSettingsNotice("audio", "success", `Voice preview ready (${preview.model}, ${preview.voice}).`);
+    return `data:audio/mpeg;base64,${preview.audio_b64}`;
   }
 
   async function onGenerate() {
@@ -1765,6 +1807,7 @@ export default function App() {
           ttsOptionsBusy={ttsOptionsBusy}
           onReloadTtsOptions={() => onLoadTtsOptions(false)}
           onCheckElevenLabsVoiceId={onCheckElevenLabsVoiceId}
+          onPreviewTtsVoice={onPreviewTtsVoice}
           notices={notices.settings}
           adminEnabled={adminEnabled}
         />

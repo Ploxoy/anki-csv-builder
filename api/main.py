@@ -48,6 +48,8 @@ from core.api_schemas import (
     TTSOptionsResponse,
     TTSProviderOptions,
     TTSOption,
+    TTSPreviewRequest,
+    TTSPreviewResponse,
     TTSVoiceCheckRequest,
     TTSVoiceCheckResponse,
     TTSResponse,
@@ -1521,6 +1523,158 @@ def api_tts_voice_check(
         label=voice.get("label") or voice["id"],
         valid=True,
         source="elevenlabs",
+    )
+
+
+@app.post("/api/tts/preview", response_model=TTSPreviewResponse)
+def api_tts_preview(
+    payload: TTSPreviewRequest,
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> TTSPreviewResponse:
+    started = time.time()
+    user_id = _require_user(request, x_api_key)
+    provider = (payload.provider or "openai").strip().lower()
+    preview_text = (payload.text or "").strip()
+
+    if provider not in {"openai", "elevenlabs"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported TTS provider: {payload.provider}")
+    if not preview_text:
+        raise HTTPException(status_code=400, detail="Preview text is required")
+    if len(preview_text) > 300:
+        raise HTTPException(status_code=400, detail="Preview text must be 300 characters or less")
+
+    if provider == "elevenlabs":
+        sentence_key = "Eleven_sentence_tutor"
+        sentence_payload = (AUDIO_ELEVEN_STYLES.get("sentence", {}).get(sentence_key) or {}).get("payload")
+        instruction_payloads = {"sentence": sentence_payload}
+        instruction_keys = {"sentence": sentence_key}
+        default_voice = AUDIO_ELEVEN_VOICES[0]["id"] if AUDIO_ELEVEN_VOICES else ""
+        voice = (payload.voice or default_voice or "").strip()
+        if not voice:
+            raise HTTPException(status_code=400, detail="voice is required for ElevenLabs TTS preview")
+        resolved_model = payload.model or "eleven_multilingual_v2"
+        openai_client = None
+        eleven_api_key = _elevenlabs_key_or_500()
+        max_workers = 1
+    else:
+        sentence_key = AUDIO_SENTENCE_INSTRUCTION_DEFAULT
+        instruction_payloads = {"sentence": AUDIO_TTS_INSTRUCTIONS.get(sentence_key, "")}
+        instruction_keys = {"sentence": sentence_key}
+        voice = (payload.voice or (AUDIO_VOICES[0]["id"] if AUDIO_VOICES else "alloy")).strip()
+        resolved_model = payload.model or AUDIO_TTS_MODEL
+        openai_client = _openai_client_or_500()
+        eleven_api_key = None
+        max_workers = 1
+
+    cards = [
+        {
+            "id": "preview",
+            "L2_word": "",
+            "L2_cloze": preview_text,
+            "AudioWord": "",
+            "AudioSentence": "",
+        }
+    ]
+
+    synth_started = time.time()
+    try:
+        media_map, summary = ensure_audio_for_cards(
+            cards,
+            provider=provider,
+            voice=voice,
+            include_word=False,
+            include_sentence=True,
+            instruction_payloads=instruction_payloads,
+            instruction_keys=instruction_keys,
+            openai_client=openai_client,
+            openai_model=resolved_model if provider == "openai" else None,
+            openai_fallback_model=AUDIO_TTS_FALLBACK if provider == "openai" else None,
+            eleven_api_key=eleven_api_key,
+            eleven_model=resolved_model if provider == "elevenlabs" else None,
+            max_workers=max_workers,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"TTS preview failed: {exc}") from exc
+
+    filename = ""
+    error = ""
+    for clip in summary.clip_results:
+        if clip.kind == "sentence":
+            filename = (clip.filename or "").strip()
+            error = (clip.error or "").strip()
+            break
+    if not filename:
+        filename = _extract_sound_filename(cards[0].get("AudioSentence", ""))
+    audio_bytes = media_map.get(filename, b"") if filename else b""
+    if not filename or not audio_bytes:
+        detail = error or "TTS preview did not return audio bytes"
+        raise HTTPException(status_code=502, detail=detail)
+
+    cost_by_model: Dict[str, Dict[str, Any]] = {}
+    audio_cost_total = 0.0
+    for model_name, data in (summary.model_usage or {}).items():
+        chars = int(data.get("chars", 0) or 0)
+        pricing = resolve_audio_pricing(model_name)
+        est = None
+        if pricing and chars:
+            est = (chars / 1_000_000.0) * pricing
+            audio_cost_total += est
+        cost_by_model[model_name] = {"estimated_usd": est, "characters": chars}
+
+    summary_errors = [str(err).strip() for err in (summary.errors or []) if str(err).strip()]
+    summary_block = TTSSummary(
+        ok=1,
+        failed=0,
+        cached=int(summary.cache_hits or 0),
+        errors=summary_errors,
+        usage={"audio_chars": summary.total_characters},
+        cost={"estimated_usd": round(audio_cost_total, 6) if audio_cost_total else None, "by_model": cost_by_model},
+    )
+
+    try:
+        log_usage_events(
+            user_id=user_id,
+            run_id="tts-preview",
+            events=[
+                {
+                    "kind": "audio_preview",
+                    "provider": provider,
+                    "model": resolved_model,
+                    "audio_chars": summary.total_characters,
+                    "raw_cost_usd": round(audio_cost_total, 6) if audio_cost_total else None,
+                    "input_tokens": None,
+                    "output_tokens": None,
+                    "cached_tokens": None,
+                    "audio_tokens": None,
+                    "seconds": None,
+                    "raw_cost_eur": None,
+                    "charged_cost_eur": None,
+                    "markup_tier": None,
+                    "markup_multiplier": None,
+                    "request_id": None,
+                    "elapsed_ms": int((time.time() - started) * 1000),
+                }
+            ],
+        )
+    except Exception:
+        pass
+
+    return TTSPreviewResponse(
+        provider=provider,
+        model=resolved_model,
+        voice=voice,
+        text=preview_text,
+        filename=filename,
+        audio_b64=base64.b64encode(audio_bytes).decode("ascii"),
+        summary=summary_block,
+        timing={
+            "elapsed_ms": int((time.time() - started) * 1000),
+            "synthesis_ms": int((time.time() - synth_started) * 1000),
+            "provider": provider,
+        },
     )
 
 

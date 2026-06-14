@@ -271,6 +271,47 @@ Notes:
 - The check uses the server-side `ELEVENLABS_API_KEY`; provider keys are never exposed to the browser.
 - The web Settings tab can add a checked voice ID to the local voice dropdown even when it is not returned by `/api/tts/options`.
 
+## `/api/tts/preview` — synthesize one short voice preview
+
+**Request**
+- `POST /api/tts/preview`
+
+```json
+{
+  "provider": "elevenlabs",
+  "model": "eleven_multilingual_v2",
+  "voice": "voice-id-from-library",
+  "text": "Dit is een voorbeeld van deze stem."
+}
+```
+
+**Response (200)**
+```json
+{
+  "provider": "elevenlabs",
+  "model": "eleven_multilingual_v2",
+  "voice": "voice-id-from-library",
+  "text": "Dit is een voorbeeld van deze stem.",
+  "filename": "sentence_preview__voice__hash.mp3",
+  "audio_b64": "...",
+  "summary": {
+    "ok": 1,
+    "failed": 0,
+    "cached": 0,
+    "errors": [],
+    "usage": { "audio_chars": 35 },
+    "cost": { "estimated_usd": null, "by_model": {} }
+  },
+  "timing": { "elapsed_ms": 900, "synthesis_ms": 850, "provider": "elevenlabs" }
+}
+```
+
+Notes:
+- Supports OpenAI and ElevenLabs.
+- Intended for Settings voice audition only.
+- Does not persist preview audio to `run_media_assets` or durable `audio_assets`; it may still use local process/disk cache.
+- Logs usage as `audio_preview`, because it can consume real provider quota.
+
 ## `/api/audio/assets/check` — verify reusable audio filenames
 
 Used by the web UI before TTS/export to avoid trusting stale `[sound:...]` fields from saved cards.

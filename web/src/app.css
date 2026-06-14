@@ -229,6 +229,17 @@ pre {
   padding: var(--space-2);
 }
 
+.voice-preview-panel {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+
+.voice-preview-player {
+  width: 100%;
+  margin-top: var(--space-1);
+}
+
 .btn {
   appearance: none;
   border: 1px solid #c7d4e2;
