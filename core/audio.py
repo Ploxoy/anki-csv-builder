@@ -27,6 +27,7 @@ __all__ = [
     "fetch_elevenlabs_models",
     "fetch_elevenlabs_voice",
     "fetch_elevenlabs_voices",
+    "find_elevenlabs_shared_voice",
     "sentence_for_tts",
     "tts_asset_identity",
 ]
@@ -34,6 +35,7 @@ __all__ = [
 
 _CLOZE_RE = re.compile(r"\{\{c[12]::(.*?)(?:::[^}]*)?\}\}")
 _WHITESPACE_RE = re.compile(r"\s+")
+_ELEVENLABS_VOICE_ID_RE = re.compile(r"(?:voiceId=|/voices/|^)([A-Za-z0-9_-]{12,})")
 
 AUDIO_CACHE_DIR_ENV = "AUDIO_CACHE_DIR"
 
@@ -755,6 +757,67 @@ def _label_from_shared_voice(entry: Dict[str, Any]) -> str:
     return name
 
 
+def _clean_elevenlabs_voice_id(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    match = _ELEVENLABS_VOICE_ID_RE.search(text)
+    if match:
+        return match.group(1).strip()
+    return text
+
+
+def find_elevenlabs_shared_voice(
+    api_key: str,
+    voice_id_or_url: str,
+    *,
+    timeout: float = 20.0,
+) -> Dict[str, str]:
+    """Find a shared/library ElevenLabs voice and return owner metadata."""
+
+    if not api_key:
+        raise ValueError("ElevenLabs API key is required to find a shared voice")
+    cleaned_voice_id = _clean_elevenlabs_voice_id(voice_id_or_url)
+    if not cleaned_voice_id:
+        raise ValueError("voice_id is required to find a shared ElevenLabs voice")
+
+    headers = {
+        "xi-api-key": api_key,
+        "Accept": "application/json",
+    }
+    try:
+        response = requests.get(
+            "https://api.elevenlabs.io/v1/shared-voices",
+            headers=headers,
+            params={"search": cleaned_voice_id, "page_size": 10},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.RequestException as err:  # pragma: no cover - network dependent
+        raise RuntimeError(f"Failed to find ElevenLabs shared voice {cleaned_voice_id}: {err}") from err
+
+    try:
+        payload = response.json()
+    except ValueError as err:  # pragma: no cover - network dependent
+        raise RuntimeError("ElevenLabs shared voices response was not valid JSON") from err
+
+    voices = payload.get("voices")
+    if not isinstance(voices, list) or not voices:
+        raise RuntimeError(f"ElevenLabs shared voice {cleaned_voice_id} was not found in Voice Library search")
+
+    entry = next(
+        (item for item in voices if isinstance(item, dict) and str(item.get("voice_id") or "").strip() == cleaned_voice_id),
+        voices[0] if isinstance(voices[0], dict) else {},
+    )
+    found_voice_id = str(entry.get("voice_id") or cleaned_voice_id).strip()
+    public_owner_id = str(entry.get("public_owner_id") or "").strip()
+    label = _label_from_shared_voice(entry) or found_voice_id
+    if not found_voice_id or not public_owner_id:
+        raise RuntimeError("ElevenLabs shared voice response did not include voice_id/public_owner_id")
+
+    return {"id": found_voice_id, "label": label, "public_owner_id": public_owner_id}
+
+
 def fetch_elevenlabs_voice(
     api_key: str,
     voice_id: str,
@@ -766,7 +829,7 @@ def fetch_elevenlabs_voice(
     if not api_key:
         raise ValueError("ElevenLabs API key is required to fetch a voice")
 
-    cleaned_voice_id = (voice_id or "").strip()
+    cleaned_voice_id = _clean_elevenlabs_voice_id(voice_id)
     if not cleaned_voice_id:
         raise ValueError("ElevenLabs voice ID is required")
 
@@ -853,7 +916,7 @@ def add_elevenlabs_shared_voice(
     if not api_key:
         raise ValueError("ElevenLabs API key is required to add a shared voice")
     cleaned_public_user_id = (public_user_id or "").strip()
-    cleaned_voice_id = (voice_id or "").strip()
+    cleaned_voice_id = _clean_elevenlabs_voice_id(voice_id)
     cleaned_name = (new_name or "").strip()
     if not cleaned_public_user_id:
         raise ValueError("public_user_id is required to add a shared ElevenLabs voice")

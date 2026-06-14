@@ -105,6 +105,7 @@ from core.audio import (
     ensure_audio_for_cards,
     fetch_elevenlabs_models,
     fetch_elevenlabs_voice,
+    find_elevenlabs_shared_voice,
     sentence_for_tts,
     tts_asset_identity,
 )
@@ -1553,11 +1554,20 @@ def api_tts_voice_add_shared(
     _require_user(request, x_api_key)
 
     try:
+        api_key = _elevenlabs_key_or_500()
+        public_user_id = (payload.public_user_id or "").strip()
+        voice_id = (payload.voice_id or "").strip()
+        new_name = (payload.new_name or "").strip()
+        if not public_user_id or not new_name:
+            shared_voice = find_elevenlabs_shared_voice(api_key, voice_id)
+            public_user_id = public_user_id or shared_voice["public_owner_id"]
+            voice_id = shared_voice["id"]
+            new_name = new_name or shared_voice["label"]
         voice = add_elevenlabs_shared_voice(
-            _elevenlabs_key_or_500(),
-            public_user_id=payload.public_user_id,
-            voice_id=payload.voice_id,
-            new_name=payload.new_name,
+            api_key,
+            public_user_id=public_user_id,
+            voice_id=voice_id,
+            new_name=new_name,
             bookmarked=payload.bookmarked,
         )
     except ValueError as exc:

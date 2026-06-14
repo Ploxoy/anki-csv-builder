@@ -169,9 +169,9 @@ export type TTSVoiceCheckResponse = {
 };
 
 export type TTSSharedVoiceAddRequest = {
-  public_user_id: string;
+  public_user_id?: string | null;
   voice_id: string;
-  new_name: string;
+  new_name?: string | null;
   bookmarked?: boolean;
 };
 

@@ -795,8 +795,8 @@ export default function App() {
     const publicUserId = params.publicUserId.trim();
     const voiceId = params.voiceId.trim();
     const newName = params.newName.trim();
-    if (!publicUserId || !voiceId || !newName) {
-      setSettingsNotice("audio", "warning", "Public user ID, voice ID, and name are required to add a shared ElevenLabs voice.");
+    if (!voiceId) {
+      setSettingsNotice("audio", "warning", "Voice ID or ElevenLabs public link is required to add a shared voice.");
       return;
     }
     if (!settings.userToken.trim()) {
@@ -807,9 +807,9 @@ export default function App() {
     setTtsOptionsBusy(true);
     try {
       const payload: TTSSharedVoiceAddRequest = {
-        public_user_id: publicUserId,
+        public_user_id: publicUserId || undefined,
         voice_id: voiceId,
-        new_name: newName,
+        new_name: newName || undefined,
         bookmarked: true,
       };
       const res = await fetch(`${settings.apiBase || ""}/api/tts/voice/add-shared`, {

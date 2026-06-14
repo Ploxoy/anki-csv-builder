@@ -354,7 +354,7 @@ export function SettingsTab({
                 <input
                   value={customVoiceId}
                   onChange={(e) => setCustomVoiceId(e.target.value)}
-                  placeholder="paste voice_id from your ElevenLabs library"
+                  placeholder="paste voice_id or public Voice Library link"
                 />
                 <button
                   className="btn"
@@ -367,26 +367,26 @@ export function SettingsTab({
               </div>
             </label>
             <p className="hint subtle">
-              If the voice is already in your ElevenLabs workspace, check the voice ID here. For a shared library voice, add it to your
-              workspace first.
+              If the voice is already in your ElevenLabs workspace, check it here. For a shared library voice, paste its public link or
+              voice ID and add it to your workspace first.
             </p>
             <details className="advanced-panel">
               <summary>Add shared/library voice</summary>
               <div className="grid two-col">
                 <label>
-                  <span>Public user ID</span>
+                  <span>Public user ID (optional)</span>
                   <input
                     value={sharedVoicePublicUserId}
                     onChange={(e) => setSharedVoicePublicUserId(e.target.value)}
-                    placeholder="public_user_id from ElevenLabs share"
+                    placeholder="auto-detected when possible"
                   />
                 </label>
                 <label>
-                  <span>Display name</span>
+                  <span>Display name (optional)</span>
                   <input
                     value={sharedVoiceName}
                     onChange={(e) => setSharedVoiceName(e.target.value)}
-                    placeholder="name to save in your voice list"
+                    placeholder="auto-filled from Voice Library when empty"
                   />
                 </label>
               </div>
@@ -395,13 +395,13 @@ export function SettingsTab({
                   className="btn"
                   type="button"
                   onClick={addSharedVoice}
-                  disabled={busy || ttsOptionsBusy || !customVoiceId.trim() || !sharedVoicePublicUserId.trim() || !sharedVoiceName.trim()}
+                  disabled={busy || ttsOptionsBusy || !customVoiceId.trim()}
                 >
                   Add shared voice
                 </button>
               </div>
               <p className="hint subtle">
-                ElevenLabs requires both the voice ID and the creator public user ID to add a Voice Library voice to your account.
+                If public user ID is empty, Doedutch searches ElevenLabs Voice Library by the pasted voice ID/link and uses the returned owner ID.
               </p>
             </details>
           </div>

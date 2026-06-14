@@ -284,9 +284,9 @@ Notes:
 
 ```json
 {
-  "public_user_id": "public-user-id",
-  "voice_id": "voice-id-from-library",
-  "new_name": "Readable voice name",
+  "public_user_id": null,
+  "voice_id": "https://elevenlabs.io/app/voice-library?voiceId=voice-id-from-library",
+  "new_name": null,
   "bookmarked": true
 }
 ```
@@ -303,7 +303,9 @@ Notes:
 
 Notes:
 - This calls ElevenLabs `POST /v1/voices/add/:public_user_id/:voice_id`.
-- ElevenLabs requires both `public_user_id` and `voice_id`; voice ID alone is not sufficient for adding a shared Voice Library voice.
+- The UI accepts either a raw `voice_id` or an ElevenLabs public Voice Library link containing `voiceId=...`.
+- If `public_user_id` or `new_name` is omitted, the backend searches `GET /v1/shared-voices?search=<voice_id>` and uses the returned `public_owner_id` / voice name.
+- ElevenLabs ultimately requires both `public_owner_id` and `voice_id`; the search step is how Doedutch tries to discover the owner ID automatically.
 - After adding, the UI selects the returned voice ID and stores the display label locally.
 
 ## `/api/tts/preview` — synthesize one short voice preview

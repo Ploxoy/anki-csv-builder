@@ -324,9 +324,9 @@ class TTSVoiceCheckResponse(BaseModel):
 
 
 class TTSSharedVoiceAddRequest(BaseModel):
-    public_user_id: str
+    public_user_id: Optional[str] = None
     voice_id: str
-    new_name: str
+    new_name: Optional[str] = None
     bookmarked: bool = True
 
 

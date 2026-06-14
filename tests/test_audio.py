@@ -189,6 +189,41 @@ def test_add_elevenlabs_shared_voice(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result == {"id": "added-voice", "label": "Saved Library Voice"}
 
 
+def test_find_elevenlabs_shared_voice_from_public_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_get(url: str, headers: Dict[str, str], params: Dict[str, Any], timeout: float):  # type: ignore[override]
+        seen["url"] = url
+        seen["params"] = params
+        return _DummyResponse(
+            {
+                "voices": [
+                    {
+                        "public_owner_id": "owner-123",
+                        "voice_id": "tvFp0BgJPrEXGoDhDIA4",
+                        "name": "Library Voice",
+                        "language": "nl",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(audio.requests, "get", fake_get)
+
+    result = audio.find_elevenlabs_shared_voice(
+        "secret-key",
+        "https://elevenlabs.io/app/voice-library?voiceId=tvFp0BgJPrEXGoDhDIA4",
+    )
+
+    assert seen["url"] == "https://api.elevenlabs.io/v1/shared-voices"
+    assert seen["params"] == {"search": "tvFp0BgJPrEXGoDhDIA4", "page_size": 10}
+    assert result == {
+        "id": "tvFp0BgJPrEXGoDhDIA4",
+        "label": "Library Voice — nl",
+        "public_owner_id": "owner-123",
+    }
+
+
 def _set_temp_audio_cache(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     cache_dir = tmp_path / "audio-cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
