@@ -206,6 +206,7 @@ const STARTER_INPUT = "aanraken\tiets voelen\tto touch\nbegrijpen\tsnappen wat i
 const TTS_OPTIONS_AUTO_REFRESH_MS = 3 * 60 * 1000;
 const OPENAI_TTS_BATCH_TIMEOUT_MS = 30_000;
 const ELEVENLABS_TTS_BATCH_TIMEOUT_MS = 45_000;
+const CUSTOM_AUDIO_VOICE_LABELS_KEY = "doedutch.customAudioVoiceLabels.v1";
 
 export default function App() {
   const loadedSettings = useMemo<Settings>(() => ({ ...DEFAULT_SETTINGS, ...loadJson(SETTINGS_KEY, DEFAULT_SETTINGS) }), []);
@@ -231,7 +232,9 @@ export default function App() {
   const [ttsOptions, setTtsOptions] = useState<TTSOptionsResponse | null>(null);
   const [ttsOptionsBusy, setTtsOptionsBusy] = useState(false);
   const [ttsOptionsLoadedAt, setTtsOptionsLoadedAt] = useState<number | null>(null);
-  const [customAudioVoiceLabels, setCustomAudioVoiceLabels] = useState<Record<string, string>>({});
+  const [customAudioVoiceLabels, setCustomAudioVoiceLabels] = useState<Record<string, string>>(() =>
+    loadJson(CUSTOM_AUDIO_VOICE_LABELS_KEY, {})
+  );
   const [notices, setNotices] = useState<ScopedNotices>({
     generate: { ...EMPTY_NOTICES.generate },
     settings: { ...EMPTY_NOTICES.settings },
@@ -765,7 +768,11 @@ export default function App() {
       const checked = data as TTSVoiceCheckResponse;
       const elevenOptions = ttsOptions?.by_provider?.elevenlabs;
       const elevenModels = elevenOptions?.models || [];
-      setCustomAudioVoiceLabels((current) => ({ ...current, [checked.id]: checked.label || checked.id }));
+      setCustomAudioVoiceLabels((current) => {
+        const next = { ...current, [checked.id]: checked.label || checked.id };
+        saveJson(CUSTOM_AUDIO_VOICE_LABELS_KEY, next);
+        return next;
+      });
       setSettings((current) => ({
         ...current,
         audioProvider: "elevenlabs",

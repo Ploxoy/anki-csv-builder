@@ -15,15 +15,27 @@ from core import audio
 
 
 class _DummyResponse:
-    def __init__(self, payload: Dict[str, Any]):
+    def __init__(self, payload: Any):
         self._payload = payload
         self.status_code = 200
 
     def raise_for_status(self) -> None:  # pragma: no cover - matches requests API
         return
 
-    def json(self) -> Dict[str, Any]:
+    def json(self) -> Any:
         return self._payload
+
+
+class _DummyErrorResponse:
+    def __init__(self, message: str):
+        self._message = message
+        self.status_code = 400
+
+    def raise_for_status(self) -> None:
+        raise audio.requests.HTTPError(self._message)
+
+    def json(self) -> Dict[str, Any]:  # pragma: no cover - should not be used
+        return {}
 
 
 def test_fetch_elevenlabs_voices_filters_and_deduplicates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,6 +111,55 @@ def test_fetch_elevenlabs_voice_by_id(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen["headers"]["xi-api-key"] == "secret-key"
     assert seen["timeout"] == 7
     assert voice == {"id": "voice-123", "label": "Library Voice"}
+
+
+def test_fetch_elevenlabs_voice_falls_back_to_v2_voice_search(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, Any]] = []
+
+    def fake_get(url: str, headers: Dict[str, str], timeout: float, params: Any = None):  # type: ignore[override]
+        seen.append((url, params))
+        if url.endswith("/v1/voices/library-voice"):
+            return _DummyErrorResponse("400 Bad Request")
+        assert url == "https://api.elevenlabs.io/v2/voices"
+        return _DummyResponse({"voices": [{"voice_id": "library-voice", "name": "Saved Library Voice"}]})
+
+    monkeypatch.setattr(audio.requests, "get", fake_get)
+
+    voice = audio.fetch_elevenlabs_voice("secret-key", "library-voice")
+
+    assert seen[0][0] == "https://api.elevenlabs.io/v1/voices/library-voice"
+    assert seen[1][0] == "https://api.elevenlabs.io/v2/voices"
+    assert ("voice_ids", "library-voice") in seen[1][1]
+    assert voice == {"id": "library-voice", "label": "Saved Library Voice"}
+
+
+def test_fetch_elevenlabs_models_returns_tts_models_sorted_by_cost(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = [
+        {
+            "model_id": "eleven_v3",
+            "can_do_text_to_speech": True,
+            "model_rates": {"character_cost_multiplier": 2},
+        },
+        {
+            "model_id": "eleven_flash_v2_5",
+            "can_do_text_to_speech": True,
+            "model_rates": {"character_cost_multiplier": 0.5},
+        },
+        {
+            "model_id": "scribe_v1",
+            "can_do_text_to_speech": False,
+            "model_rates": {"character_cost_multiplier": 0.1},
+        },
+    ]
+
+    def fake_get(url: str, headers: Dict[str, str], timeout: float):  # type: ignore[override]
+        assert url == "https://api.elevenlabs.io/v1/models"
+        assert headers["xi-api-key"] == "secret-key"
+        return _DummyResponse(payload)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(audio.requests, "get", fake_get)
+
+    assert audio.fetch_elevenlabs_models("secret-key") == ["eleven_flash_v2_5", "eleven_v3"]
 
 
 def _set_temp_audio_cache(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

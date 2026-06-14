@@ -296,3 +296,16 @@ def test_filter_openai_tts_models_uses_fallback_when_discovery_empty() -> None:
     filtered = api_main._filter_openai_tts_models([])
     assert filtered
     assert api_main.AUDIO_TTS_MODEL in filtered
+
+
+def test_api_tts_options_uses_dynamic_elevenlabs_models(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    monkeypatch.setattr(api_main, "_list_openai_model_ids", lambda: ["gpt-4.1-mini", "gpt-4o-tts"])
+    monkeypatch.setattr(api_main, "_elevenlabs_key_or_500", lambda: "eleven-secret")
+    monkeypatch.setattr(api_main, "fetch_elevenlabs_models", lambda api_key: ["eleven_flash_v2_5", "eleven_v3"])
+
+    result = api_main.api_tts_options(request=_dummy_request(), x_api_key=None)
+
+    assert result.by_provider["elevenlabs"].models == ["eleven_flash_v2_5", "eleven_v3"]
+    assert result.by_provider["elevenlabs"].default_model == "eleven_flash_v2_5"

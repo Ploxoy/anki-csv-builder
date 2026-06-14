@@ -23,6 +23,7 @@ __all__ = [
     "AudioClipResult",
     "AudioSynthesisSummary",
     "ensure_audio_for_cards",
+    "fetch_elevenlabs_models",
     "fetch_elevenlabs_voice",
     "fetch_elevenlabs_voices",
     "sentence_for_tts",
@@ -772,6 +773,7 @@ def fetch_elevenlabs_voice(
         "xi-api-key": api_key,
         "Accept": "application/json",
     }
+    first_error = ""
     try:
         response = requests.get(
             f"https://api.elevenlabs.io/v1/voices/{cleaned_voice_id}",
@@ -780,19 +782,118 @@ def fetch_elevenlabs_voice(
         )
         response.raise_for_status()
     except requests.RequestException as err:  # pragma: no cover - network dependent
-        raise RuntimeError(f"Failed to fetch ElevenLabs voice {cleaned_voice_id}: {err}") from err
+        first_error = str(err)
+    else:
+        try:
+            payload = response.json()
+        except ValueError as err:  # pragma: no cover - network dependent
+            raise RuntimeError("ElevenLabs voice response was not valid JSON") from err
+
+        payload_voice_id = str(payload.get("voice_id") or cleaned_voice_id).strip()
+        name = str(payload.get("name") or payload_voice_id).strip()
+        if not payload_voice_id:
+            raise RuntimeError("ElevenLabs voice response did not include a voice_id")
+
+        return {"id": payload_voice_id, "label": name or payload_voice_id}
+
+    try:
+        response = requests.get(
+            "https://api.elevenlabs.io/v2/voices",
+            headers=headers,
+            params=[
+                ("voice_ids", cleaned_voice_id),
+                ("page_size", "1"),
+                ("include_total_count", "false"),
+            ],
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.RequestException as err:  # pragma: no cover - network dependent
+        detail = f"Failed to fetch ElevenLabs voice {cleaned_voice_id}: {err}"
+        if first_error:
+            detail += f" (v1 lookup also failed: {first_error})"
+        raise RuntimeError(detail) from err
 
     try:
         payload = response.json()
     except ValueError as err:  # pragma: no cover - network dependent
         raise RuntimeError("ElevenLabs voice response was not valid JSON") from err
 
-    payload_voice_id = str(payload.get("voice_id") or cleaned_voice_id).strip()
-    name = str(payload.get("name") or payload_voice_id).strip()
+    voices = payload.get("voices")
+    if not isinstance(voices, list) or not voices:
+        detail = f"ElevenLabs voice {cleaned_voice_id} was not found in voices available to this API key"
+        if first_error:
+            detail += f" (v1 lookup failed: {first_error})"
+        raise RuntimeError(detail)
+
+    entry = next(
+        (item for item in voices if isinstance(item, dict) and str(item.get("voice_id") or "").strip() == cleaned_voice_id),
+        voices[0] if isinstance(voices[0], dict) else {},
+    )
+    payload_voice_id = str(entry.get("voice_id") or cleaned_voice_id).strip()
+    name = str(entry.get("name") or payload_voice_id).strip()
     if not payload_voice_id:
         raise RuntimeError("ElevenLabs voice response did not include a voice_id")
 
     return {"id": payload_voice_id, "label": name or payload_voice_id}
+
+
+def fetch_elevenlabs_models(
+    api_key: str,
+    *,
+    timeout: float = 20.0,
+) -> List[str]:
+    """Return ElevenLabs model IDs that support text-to-speech."""
+
+    if not api_key:
+        raise ValueError("ElevenLabs API key is required to fetch models")
+
+    headers = {
+        "xi-api-key": api_key,
+        "Accept": "application/json",
+    }
+    try:
+        response = requests.get(
+            "https://api.elevenlabs.io/v1/models",
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.RequestException as err:  # pragma: no cover - network dependent
+        raise RuntimeError(f"Failed to list ElevenLabs models: {err}") from err
+
+    try:
+        payload = response.json()
+    except ValueError as err:  # pragma: no cover - network dependent
+        raise RuntimeError("ElevenLabs models response was not valid JSON") from err
+
+    if not isinstance(payload, list):
+        return []
+
+    candidates: List[Tuple[float, str]] = []
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        model_id = str(entry.get("model_id") or "").strip()
+        if not model_id or not entry.get("can_do_text_to_speech"):
+            continue
+        model_rates = entry.get("model_rates") if isinstance(entry.get("model_rates"), dict) else {}
+        rate_multiplier = model_rates.get("character_cost_multiplier")
+        token_cost = entry.get("token_cost_factor")
+        try:
+            cost_key = float(rate_multiplier if rate_multiplier is not None else token_cost if token_cost is not None else 1.0)
+        except (TypeError, ValueError):
+            cost_key = 1.0
+        candidates.append((cost_key, model_id))
+
+    seen: Set[str] = set()
+    result: List[str] = []
+    for _cost, model_id in sorted(candidates, key=lambda item: (item[0], item[1])):
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        result.append(model_id)
+    return result
 
 
 def fetch_elevenlabs_voices(

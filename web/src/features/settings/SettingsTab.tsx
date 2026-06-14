@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { UsageListResponse } from "../../types";
 import { NoticeMessage } from "../../lib/messages";
 import { Settings, TemperatureParseResult, shortJson } from "../../lib/uiState";
@@ -67,6 +67,11 @@ export function SettingsTab({
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const audioProviderKey = (settings.audioProvider || "").trim().toLowerCase();
+
+  useEffect(() => {
+    setPreviewAudioUrl("");
+    setPreviewError("");
+  }, [settings.audioProvider, settings.audioModel, settings.audioVoice, previewText]);
 
   async function runVoicePreview() {
     setPreviewBusy(true);

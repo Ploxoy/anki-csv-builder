@@ -100,6 +100,7 @@ from core.audio import (
     AudioClipResult,
     AudioSynthesisSummary,
     ensure_audio_for_cards,
+    fetch_elevenlabs_models,
     fetch_elevenlabs_voice,
     sentence_for_tts,
     tts_asset_identity,
@@ -552,6 +553,15 @@ def _filter_openai_tts_models(model_ids: List[str]) -> List[str]:
         if clean and clean not in fallback:
             fallback.append(clean)
     return fallback
+
+
+def _fallback_elevenlabs_tts_models() -> List[str]:
+    return [
+        "eleven_flash_v2_5",
+        "eleven_turbo_v2_5",
+        "eleven_multilingual_v2",
+        "eleven_v3",
+    ]
 
 
 @app.get("/health")
@@ -1473,7 +1483,12 @@ def api_tts_options(
         for voice in AUDIO_ELEVEN_VOICES
         if (voice.get("id") or "").strip()
     ]
-    eleven_models = ["eleven_multilingual_v2"]
+    try:
+        eleven_models = fetch_elevenlabs_models(_elevenlabs_key_or_500())
+    except Exception:
+        eleven_models = []
+    if not eleven_models:
+        eleven_models = _fallback_elevenlabs_tts_models()
 
     return TTSOptionsResponse(
         text_models=text_models,

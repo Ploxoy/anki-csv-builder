@@ -234,14 +234,18 @@ Notes:
       "default_voice": "alloy"
     },
     "elevenlabs": {
-      "models": ["eleven_multilingual_v2"],
+      "models": ["eleven_flash_v2_5", "eleven_multilingual_v2", "eleven_v3"],
       "voices": [{ "id": "voice-id", "label": "Voice label" }],
-      "default_model": "eleven_multilingual_v2",
+      "default_model": "eleven_flash_v2_5",
       "default_voice": "voice-id"
     }
   }
 }
 ```
+
+Notes:
+- ElevenLabs models are loaded dynamically from `GET /v1/models` and filtered by `can_do_text_to_speech`.
+- If live discovery fails, the backend falls back to a small known TTS list so the UI is not stuck on one legacy model.
 
 ## `/api/tts/voice/check` — validate a manual TTS voice ID
 
@@ -269,6 +273,7 @@ Notes:
 Notes:
 - Currently supported for ElevenLabs only.
 - The check uses the server-side `ELEVENLABS_API_KEY`; provider keys are never exposed to the browser.
+- The backend first tries `GET /v1/voices/{voice_id}` and then falls back to `GET /v2/voices?voice_ids=...`, because library/saved voices can fail on the older single-voice endpoint.
 - The web Settings tab can add a checked voice ID to the local voice dropdown even when it is not returned by `/api/tts/options`.
 
 ## `/api/tts/preview` — synthesize one short voice preview

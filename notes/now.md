@@ -1,6 +1,6 @@
 # Now — Anki CSV Builder
 
-Updated: 2026-06-14T10:18:55
+Updated: 2026-06-14T10:48:34
 
 ## Quick pointers
 - notes/status.md (project status)
@@ -11,24 +11,22 @@ Updated: 2026-06-14T10:18:55
 ```
 ## versel...origin/versel
  M api/main.py
- M core/api_schemas.py
+ M core/audio.py
  M notes/api_contracts.md
- M notes/audio_panel_spec.md
  M notes/status.md
  M tests/test_api_tts.py
+ M tests/test_audio.py
  M web/src/App.tsx
- M web/src/app.css
  M web/src/features/settings/SettingsTab.tsx
- M web/src/types.ts
 ```
 
 ## Recent commits
 ```
+d830884 voices preview
 7bef345 ElevenLabsVoiceID
 1bf307a updated docs
 6a80210 ui cache calculation
 759db19 modified timeouts
-74ff4b2 OpenAI TTS request
 ```
 
 ## Status (head)
@@ -67,12 +65,12 @@ Updated: 2026-06-14T10:18:55
 - **TTS hang guard**: для OpenAI TTS добавлен явный request timeout (`OPENAI_TTS_TIMEOUT_SECONDS`, default 12s), backend-параллельность по умолчанию: OpenAI 4 workers, ElevenLabs 2 workers; web отправляет TTS батчами по 6 клипов и обрывает зависший `/api/tts` батч через 30s для OpenAI / 45s для ElevenLabs с диагностикой.
 - **Review summary labels**: в web Review разделены показатели text-card reuse и audio-library reuse: `reused saved cards` относится только к `generated_card_assets`, а аудио отображается как `reused audio clips` / `saved audio clips`.
 - **ElevenLabs manual voiceID**: добавлен `POST /api/tts/voice/check`, который валидирует голос через серверный `ELEVENLABS_API_KEY`; Settings умеет проверить voiceID из ElevenLabs library, добавить его в dropdown и сохранить как `audio_voice`.
+- **ElevenLabs model/voice discovery hardening**: список TTS-моделей ElevenLabs теперь берётся из `GET /v1/models` (`can_do_text_to_speech`) с fallback-списком, а проверка voiceID умеет fallback на `GET /v2/voices?voice_ids=...` для library/saved voices.
 - **TTS voice preview**: добавлен `POST /api/tts/preview` и аудиоплеер в Settings для короткой проверки текущего `provider/model/voice` без полной генерации карточек и без долговременного сохранения preview audio.
 - **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
 - **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse`, durable TTS cache-hit и generated-card cache-hit без вызова провайдера.
 
 ## Свежие изменения (март 2026)
-- **Synology deploy/docs**: обновлён пакет деплоя для NAS — `deploy/synology/REVERSE_PROXY.md` (gate-check public IP vs CGNAT), `deploy/synology/CLOUDFLARE_TUNNEL.md` (fallback), `deploy/synology/docker-compose.cloudflared.yml`, шаблон `deploy/synology/.env.cloudflare.example`.
 ```
 
 ## Tasks (head)
@@ -120,7 +118,7 @@ Updated: 2026-06-14T10:18:55
 ```
 
 ## Session scratchpad
-- What I changed: implemented manual ElevenLabs voiceID validation/selection and Settings voice preview via `/api/tts/preview`; updated docs/tasks/status.
-- Why: catalogue discovery can miss library voices, and users need to audition a voice before spending a full deck run.
-- Next steps: deploy and test Settings -> Audio defaults -> Custom ElevenLabs voice ID -> Preview voice; then continue with Review audio preview (N8) or durable long-list TTS jobs (V6b).
-- Open questions: whether previewed/manual voices should become a persistent favorites list with labels/quality notes.
+- What I changed: hardened ElevenLabs model discovery (`/v1/models`), voiceID validation (`v1` then `v2/voices?voice_ids` fallback), dropdown voice preview, and local label persistence for custom voices.
+- Why: ElevenLabs v3/Flash/Turbo models were hidden by a hardcoded model list, and library voice IDs can fail on the older single-voice endpoint.
+- Next steps: deploy and test Reload models & voices, library voiceID check, browser refresh label persistence, and preview for dropdown/manual voices.
+- Open questions: whether to add an explicit favorites/library manager for custom voices instead of only preserving labels in localStorage.
