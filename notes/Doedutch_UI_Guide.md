@@ -87,6 +87,10 @@ a:hover, .stButton>button:hover {
 - Keep progress compact by default; expose batch/stage details via explicit toggle.
 - For long provider calls, show explicit waiting status (`waiting provider...`) in progress details.
 - Keep spacing on 8/12/16/24 scale and avoid oversized gaps between checkbox and label.
+- Keep text-card reuse and audio-library reuse visually distinct:
+  - Text cards: `reused saved cards`, `saved cards`
+  - Audio: `reused audio clips`, `saved audio clips`
+- In `Review`, card details may expose JSON diagnostics, but should also provide direct actions next to the card: audio preview/playback for `AudioWord` and `AudioSentence` when available.
 
 ---
 

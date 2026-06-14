@@ -1,5 +1,11 @@
 # Audio Panel Rewrite — Technical Specification
 
+Status note (2026-06-14):
+- This document started as the legacy Streamlit audio-panel spec. The active web implementation now also uses FastAPI + Postgres-backed audio persistence.
+- Current durable stores: `run_media_assets` for per-run export media and `audio_assets` for reusable global TTS clips.
+- Current unresolved gap: long TTS runs on Vercel are guarded by batching/timeouts/cache, but not yet handled by a durable `audio_jobs` queue with clip-level resume.
+- Planned UX additions: manual ElevenLabs `voiceID` selection and inline audio preview in the web Review card details.
+
 ## Goal
 Build a streamlined post-generation audio workflow that lets users synthesize Dutch (nl-NL) word and sentence audio after cards are generated, with a clean separation between UI and core audio logic.
 
@@ -46,7 +52,7 @@ Build a streamlined post-generation audio workflow that lets users synthesize Du
 - Summary data (`audio_summary`) is kept until user runs another synthesis or clears results.
 
 ## Non-Goals
-- No new backends, queues, or databases.
+- Legacy spec note: originally no new backends, queues, or databases. This is superseded for the web/Vercel path by Postgres persistence (`run_media_assets`, `audio_assets`); durable TTS job queues remain future work.
 - No automatic background synthesis; user must trigger every run explicitly.
 - No multilingual support beyond Dutch for this iteration.
 

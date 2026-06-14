@@ -1,6 +1,6 @@
 # Now — Anki CSV Builder
 
-Updated: 2026-06-12T00:00:00
+Updated: 2026-06-14T09:29:18
 
 ## Quick pointers
 - notes/status.md (project status)
@@ -9,25 +9,30 @@ Updated: 2026-06-12T00:00:00
 
 ## Git status
 ```
-## dev...origin/dev
+## versel...origin/versel
+ M notes/Doedutch_UI_Guide.md
+ M notes/api_contracts.md
+ M notes/audio_panel_spec.md
+ M notes/now.md
  M notes/status.md
  M notes/tasks.md
+ M notes/vision_v2.md
 ```
 
 ## Recent commits
 ```
-88fccca multithreadintg
-3d11f55 time outs fix
-c47b3af power sfe modes
-37c4a79 deploy pipline
-8904787  implement silent mode
+6a80210 ui cache calculation
+759db19 modified timeouts
+74ff4b2 OpenAI TTS request
+a23835b working with audio cash
+a74057f ext generation теперь идёт direct mode, без async job queue.
 ```
 
 ## Status (head)
 ```
 # Status — Anki CSV Builder
 
-*(обновлено: 2026-03-30)*
+*(обновлено: 2026-06-14)*
 
 ## Кратко
 - MVP закрывает генерацию NL карточек с CSV/APKG экспортом, пакетной обработкой и базовой панелью диагностики.
@@ -45,26 +50,26 @@ c47b3af power sfe modes
 - **Secrets**: `OPENAI_API_KEY` и `ELEVENLABS_API_KEY` подтягиваются из secrets/env при старте, без ручного ввода.
 - **Тесты**: `pytest` зелёный, включая свежие проверки API-контрактов TTS.
 
+## Свежие изменения (июнь 2026)
+- **Vercel APKG export**: убран критичный bottleneck с большим `media_map` в теле запроса. `/api/tts` теперь сохраняет озвучку server-side в Postgres (`run_media_assets`) по `user_id + run_id + filename`.
+- **Server-side media reuse**: `/api/export/apkg` умеет добирать аудио из persisted storage по `run_id`, поэтому браузер больше не обязан пересылать base64-клипы обратно на API для крупных колод.
+- **Web export UX**: фронтенд предпочитает persisted-media путь для APKG, а inline `media_map` оставляет только как fallback для локальных/малых сценариев; в Generate теперь виден статус `Server storage` для аудио.
+- **TTS diagnostics for Vercel**: `/api/tts` теперь возвращает `timing` (`elapsed_ms`, `synthesis_ms`, `storage_ms`, `cache_hits`, `unique_media_files`), а web UI показывает batch-level diagnostics для аудио. Это нужно для точного разбора долгих ElevenLabs-прогонов без больших повторных затрат.
+- **Durable TTS asset store v1**: добавлена глобальная таблица `audio_assets` и deterministic asset key по `provider/model/voice/type/text/style`. `/api/tts` сначала ищет уже готовое аудио в Postgres, cache hits возвращает как `status="cached"` и не вызывает TTS-провайдера; новые клипы сохраняются обратно в asset store.
+- **Optional generated-card reuse v1**: добавлена таблица `generated_card_assets` и флаг `reuse_text_cache`. При включении `Reuse saved cards` API переиспользует уже готовую карточку, если совпадают input (`woord/def_nl/translation`) и generation settings (`provider/model/prompt_version/CEFR/profile/L1/temperature`); UI показывает `reused saved cards` и `saved cards` в Review.
+- **Long-list tuning**: web generate batches для 40+ строк укрупнены (меньше job/worker/poll кругов), worker chunk увеличен до 8 строк (до 12 при text reuse), backend default `GENERATE_JOB_MAX_ITEMS_PER_WORKER` поднят до 6. Text reuse preload теперь делает один batch lookup по карточкам на chunk.
+- **Repeat-run 504 fix**: при `Reuse saved cards` web теперь использует direct text mode вместо async job queue, чтобы не тратить минуты на queue/poll при 100% text-cache hits. TTS больше не пересинтезирует clips, если `AudioWord/AudioSentence` уже прикреплены к сохранённой карточке; APKG export умеет добирать такие mp3 из глобального `audio_assets` по filename.
+- **TTS 504 hardening**: retryable HTTP `429/502/503/504` дробит batch на меньшие части, а ошибка одиночного clip не помечает весь оставшийся хвост failed.
+- **Audio asset consistency gate**: добавлен `/api/audio/assets/check`; перед TTS web проверяет, что уже прикреплённые `[sound:...]` реально существуют в `audio_assets`, и досинтезирует только отсутствующие клипы вместо тихого пропуска.
+- **TTS hang guard**: для OpenAI TTS добавлен явный request timeout (`OPENAI_TTS_TIMEOUT_SECONDS`, default 12s), backend-параллельность по умолчанию: OpenAI 4 workers, ElevenLabs 2 workers; web отправляет TTS батчами по 6 клипов и обрывает зависший `/api/tts` батч через 30s для OpenAI / 45s для ElevenLabs с диагностикой.
+- **Review summary labels**: в web Review разделены показатели text-card reuse и audio-library reuse: `reused saved cards` относится только к `generated_card_assets`, а аудио отображается как `reused audio clips` / `saved audio clips`.
+- **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
+- **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse`, durable TTS cache-hit и generated-card cache-hit без вызова провайдера.
+
 ## Свежие изменения (март 2026)
 - **Synology deploy/docs**: обновлён пакет деплоя для NAS — `deploy/synology/REVERSE_PROXY.md` (gate-check public IP vs CGNAT), `deploy/synology/CLOUDFLARE_TUNNEL.md` (fallback), `deploy/synology/docker-compose.cloudflared.yml`, шаблон `deploy/synology/.env.cloudflare.example`.
 - **Проверочные скрипты**: добавлены `deploy/synology/scripts/check_wan_mode.sh` и `deploy/synology/scripts/check_public_endpoints.sh` для верификации internet-stage.
 - **Runbook**: зафиксирован персональный чеклист `deploy/synology/RUNBOOK_192.168.2.10.md` c актуальным пользователем `VKotenok` и шагами внешнего доступа.
-- **Windows/LAN pipeline**: добавлен `deploy/synology/Deploy-FromLan.ps1` (update-only) — SSH preflight, `git fetch/checkout/pull --ff-only`, `validate_env`, `docker compose up --build`, smoke + локальные HTTP health-checks с retry.
-- **Web TTS options UX**: `Reload model list` в web теперь обновляет и text-модели, и TTS-модели/голоса из backend; добавлен тихий авто-refresh списка по мере работы backend.
-- **API TTS options**: `_filter_openai_tts_models` сначала возвращает live-discovered список, fallback к дефолтным моделям используется только если discovery недоступен/пуст.
-- **Тесты**: расширен `tests/test_api_tts.py` (покрытие фильтра TTS-моделей).
-- **Synology power-save stack (2026-03-30)**:
-  - Добавлен front-door сервис `waker` + `socket-proxy` в `deploy/synology/docker-compose.synology.yml` для авто-пробуждения и авто-сна (`WAKER_IDLE_*`).
-  - `web` теперь публикуется через `waker`, добавлен статус-эндпойнт `/_waker/status`.
-  - Добавлены one-command install сценарии: `deploy/synology/scripts/install.sh` (NAS) и `deploy/synology/scripts/install.ps1` (Windows -> SSH sync + remote install).
-  - Скрипты `sleep.sh` / `wake.sh` / `update.sh` переведены на общий helper `deploy/synology/scripts/docker_cmd.sh` для DSM-окружений с нестандартным `PATH`.
-  - Введён hotfix таймаутов для длинных запусков: `WAKER_PROXY_TIMEOUT_SECONDS=600` + таймауты в `web/deploy/nginx.synology.conf`, чтобы снизить HTTP 504 при длинной генерации.
-- **Resolved long-run 504 (2026-03-30)**: подтверждён успешный запуск длинного списка (52 записи, audio off). Корневая причина была составной: один длинный HTTP-запрос `/api/generate` и неприменённый deploy (compose не выполнялся из-за `docker.sock` permissions без `sudo`). Исправление: batched text-generation в `web/src/App.tsx` + перезапуск стека через `sudo`.
-
-## Свежие изменения (февраль 2026)
-- Deep UI Rework v1 (web): интерфейс переведён на light theme по `notes/Doedutch_UI_Guide.md`, логика вкладок сохранена (`Generate / Settings / Admin`).
-- `web/src/App.tsx` декомпозирован на `AppShell`, табовые фичи (`GenerateTab/SettingsTab/AdminTab`), `Notice` и `ProgressPanel`; добавлены `web/src/lib/uiState.ts` и `web/src/lib/messages.ts`.
-- Сообщения/ошибки изолированы по вкладкам и секциям (scoped notices), убрано глобальное смешивание статусов между Generate/Settings/Admin.
 ```
 
 ## Tasks (head)
@@ -94,34 +99,39 @@ c47b3af power sfe modes
 - [x] N3 — Добавить ручное редактирование в превью (② Preview & fix): редактирование и сохранение полей `L2_word/L2_cloze/L1_sentence/L2_collocations/L2_definition/L1_gloss/L1_hint` в `session_state.results` (`app/preview_panel.py`).
 - [x] N4 — `Reload model list` в web теперь обновляет и текстовые, и TTS-модели из backend (без постоянного показа fallback-списка по умолчанию при успешном live-fetch) (`api/main.py`, `web/src/App.tsx`, `web/src/features/settings/SettingsTab.tsx`).
 - [x] N5 — Добавить авто-актуализацию model/voice list в web: тихий периодический refresh настроек TTS при активном токене, чтобы backend-изменения подхватывались без ручного клика (`web/src/App.tsx`).
+- [ ] N6 — Перенести ввод `X-API-Key`/`API_SHARED_SECRET` из `Settings` в `Admin` tab (или добавить зеркальный контрол в `Admin`), чтобы админ-действия (`Create invite`, `List users`, `Rotate`) настраивались в том же контексте.
+- [ ] N7 — ElevenLabs voiceID UX: добавить в Settings возможность вручную указать ElevenLabs `voiceID`, проверить/сохранить этот голос и использовать его даже если live catalogue/filter его не показывает.
+- [ ] N8 — Review audio preview: в раскрывающейся карточке/JSON-сводке Review добавить inline проигрывание `AudioWord` и `AudioSentence` при наличии audio asset/media.
 - [x] D1 — Synology internet-stage toolkit: gate-check/reachability скрипты (`check_wan_mode.sh`, `check_public_endpoints.sh`), direct path docs (`REVERSE_PROXY.md`) и Cloudflare fallback (`CLOUDFLARE_TUNNEL.md`, `docker-compose.cloudflared.yml`).
 - [x] D2 — Windows LAN deployment pipeline: `deploy/synology/Deploy-FromLan.ps1` (SSH-key preflight, `git pull --ff-only`, `validate_env`, `compose up --build`, smoke + local health retries) + обновлён runbook `RUNBOOK_192.168.2.10.md`.
 - [x] D3 — Power-save layer на Synology: добавлены `waker` + `socket-proxy` (auto sleep/wake, front-door на WEB_PORT), новые env-параметры `WAKER_IDLE_*` и статус `/_waker/status`.
 - [x] D4 — One-command install для Synology: `deploy/synology/scripts/install.sh` (NAS) и `deploy/synology/scripts/install.ps1` (Windows -> SSH sync + remote install), плюс унификация docker-вызовов через `deploy/synology/scripts/docker_cmd.sh`.
 - [x] D5 — Timeout hotfix для длинных запусков: `WAKER_PROXY_TIMEOUT_SECONDS=600` + timeout в `web/deploy/nginx.synology.conf` (снижение риска HTTP 504 на длинной генерации).
 - [x] D6 — Инцидент после внедрения sleep/wake закрыт: проблема 504 на длинной text-generation воспроизводилась при одном длинном `/api/generate`; исправлено батчевой генерацией в `web/src/App.tsx` + корректным `sudo`-перезапуском контейнеров на Synology; подтверждён успешный прогон длинного списка (52 записи, audio off).
-
-## 🧪 Beta readiness (Phase 0.5)
-- [x] B1 — Invite-token auth v0: `/api/admin/invite` (admin) + `Authorization: Bearer <token>` (user), без Supabase.
-- [x] B2 — Persist settings v1: `/api/settings` (read/write) + хранение `settings_json` по user_id в Postgres.
-- [x] B3 — Usage view v0: `/api/usage` (read-only) на базе `usage_events` (по user_id/run_id).
-- [x] B4 — Web UI: хранить invite token локально, грузить/сохранять settings и показывать usage.
-- [x] B5 — Admin в web: создавать инвайты, листать пользователей, блок/разблок, ротация токена, просмотр usage по user_id.
-
-## 🚀 Productization (vNext)
+- [x] V1 — Vercel Plan C (async generate): добавлены queue/job endpoints (`/api/jobs/generate`, `/api/jobs/generate/{id}`, `/api/jobs/generate/worker`), storage таблица `generation_jobs` и polling-worker flow в web (`web/src/App.tsx`) для избежания длинных синхронных таймаутов.
+- [x] V2 — Vercel bootstrap: добавлены `vercel.json`, `api/index.py`, `api/requirements.txt` (FastAPI function + static web build + cron endpoint wiring).
+- [x] V4 — TTS diagnostics for Vercel: добавить timing в `/api/tts` и batch-level diagnostics в web UI для анализа долгих ElevenLabs-прогонов.
+- [x] V3 — Vercel large-APKG path: `/api/tts` сохраняет audio clips server-side в Postgres (`run_media_assets`), а `/api/export/apkg` переиспользует их по `run_id`, чтобы не упираться в request-size limit при больших колодах с аудио.
+- [x] V5 — Durable TTS asset store v1: глобальная таблица `audio_assets` по deterministic asset key (`provider/model/voice/type/text/style`) + reuse в `/api/tts`, чтобы повторные озвучки не вызывали TTS-провайдера заново.
+- [x] V5a — Audio asset consistency gate: `/api/audio/assets/check` + web preflight для attached `[sound:...]`, чтобы отсутствующие mp3 из `audio_assets` досинтезировались, а не пропускались UI.
 ```
 
 ## Session scratchpad
 - What I changed:
-- Updated `notes/tasks.md`: marked D6 as completed (504 incident closed).
-- Updated `notes/status.md`: added closure note for long-run 504 and switched next-step #1 to monitoring.
-- Regenerated this file via `python scripts/update_context.py`.
+- Updated `/notes` to match the current Vercel/web state.
+- Marked Vercel + long-list reliability as not fully solved.
+- Added TODOs for provider abstraction, manual ElevenLabs `voiceID`, and Review audio preview.
+- Updated API contracts with async generate jobs, TTS options, audio asset check, and export endpoints.
+- Updated UI/audio docs with separated text-card vs audio-library reuse wording.
 - Why:
-- Capture that long list generation now works in production conditions after deploy + web batching fix.
+- Keep project memory accurate before the next implementation cycle.
+- Avoid treating cache/timeout hardening as a complete solution for 1000+ row runs.
+- Make the next priorities explicit and discoverable from `notes/status.md` + `notes/tasks.md`.
 - Next steps:
-- Monitor a few additional long runs (>50 rows) to confirm stability and usage consistency.
-- Keep Synology deploy path with `sudo` for compose operations to avoid false-positive "updated but not rebuilt" states.
+- Design durable `run_items` / `audio_jobs` resume flow for Vercel long-list reliability.
+- Plan provider interfaces and candidate evaluation for text generation and TTS.
+- Implement ElevenLabs manual `voiceID` configuration in Settings.
+- Add inline audio playback in Review card details.
 - Open questions:
-- None critical; incident is currently considered resolved based on successful long-list run.
-
-- Current focus: Vercel export path now uses persisted TTS media in Postgres (`run_media_assets`) so APKG downloads do not need a huge base64 request body.
+- Which provider should be evaluated first for text generation after OpenAI baseline: Gemini Flash or another low-cost structured-output option?
+- Which TTS provider should be the first non-OpenAI/non-ElevenLabs candidate: Azure Neural TTS or another NL-focused provider?

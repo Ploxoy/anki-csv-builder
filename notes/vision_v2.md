@@ -230,10 +230,16 @@ We support alternative providers only if they satisfy:
 - reliable usage reporting
 - stable batching / retry semantics
 - transparent pricing unit
+- deployability under the current Vercel/FastAPI constraints, or a clear reason to move that provider path to a different worker runtime
 
 **First evaluation candidates**
 - Text: **Gemini Flash** (goal: cheaper € per valid card than OpenAI baseline)
 - TTS: **Azure Neural TTS** (goal: better NL voice + per-character billing)
+
+**Current product requirements**
+- Text generation and TTS provider selection should share a capability/health model: available models, voices, pricing units, last provider error, and cache/retry semantics.
+- ElevenLabs must support a manual `voiceID` override from the user's own library, not only backend-discovered voices.
+- Long-list generation on Vercel remains an open reliability topic: durable `run_items` and `audio_jobs`/resume should precede serious 1000+ row workflows.
 
 ## 9) Phased migration plan (from MVP → vNext)
 

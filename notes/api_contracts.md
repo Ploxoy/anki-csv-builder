@@ -1,6 +1,6 @@
 # API Contracts (Phase 0 targets)
 
-*(draft — align with Vision 2.0, last updated: 2026-02-17)*
+*(draft — align with Vision 2.0, last updated: 2026-06-14)*
 
 ## Auth (Phase 0)
 
@@ -98,6 +98,44 @@ Notes:
 { "status": "ok" }
 ```
 
+## `/api/jobs/generate` — async text-generation job
+
+Vercel-oriented async wrapper around `/api/generate`.
+
+**Create job**
+- `POST /api/jobs/generate`
+- Body: same as `/api/generate`.
+- Response:
+```json
+{
+  "job_id": "uuid",
+  "run_id": "uuid",
+  "status": "queued"
+}
+```
+
+**Poll job**
+- `GET /api/jobs/generate/{job_id}`
+- Response:
+```json
+{
+  "job_id": "uuid",
+  "run_id": "uuid",
+  "status": "queued|running|done|failed",
+  "processed_items": 8,
+  "total_items": 20,
+  "error": null,
+  "result": null
+}
+```
+
+**Worker tick**
+- `POST /api/jobs/generate/worker`
+- Used by Vercel cron/manual worker tick. The web UI may also trigger worker ticks while polling.
+
+Current limitation:
+- This avoids one long `/api/generate` request, but it is not yet a full durable `run_items` resume model for 1000+ rows.
+
 ## `/api/tts` — cards → audio
 
 **Request (JSON)**
@@ -119,6 +157,8 @@ Notes:
 - Server applies a single automatic retry only for transient synthesis errors (`429/5xx/timeout`).
 - Audio reuse is durable across runs when `provider + model + voice + clip type + text + style/instructions`
   match exactly after server normalization. Durable hits return `status: "cached"` and do not call the TTS provider.
+- `/api/tts` persists per-run media in `run_media_assets` when `run_id` is present, and stores reusable global audio in `audio_assets`.
+- Current Vercel limitation: long TTS runs still happen as web-managed batches of `/api/tts` calls. Cache/resume reduces repeated work, but there is no durable server-side `audio_jobs` queue yet.
 
 **Response (200)**
 ```json
@@ -175,6 +215,100 @@ Notes:
 - `ok`: generated in this run.
 - `cached`: reused from cache.
 - `failed`: synthesis failed; check per-clip `error` and `summary.errors`.
+
+## `/api/tts/options` — text/TTS model and voice options
+
+**Request**
+- `GET /api/tts/options`
+
+**Response (200)**
+```json
+{
+  "text_models": ["gpt-4.1-mini"],
+  "providers": ["openai", "elevenlabs"],
+  "by_provider": {
+    "openai": {
+      "models": ["gpt-4o-tts"],
+      "voices": [{ "id": "alloy", "label": "alloy" }],
+      "default_model": "gpt-4o-tts",
+      "default_voice": "alloy"
+    },
+    "elevenlabs": {
+      "models": ["eleven_multilingual_v2"],
+      "voices": [{ "id": "voice-id", "label": "Voice label" }],
+      "default_model": "eleven_multilingual_v2",
+      "default_voice": "voice-id"
+    }
+  }
+}
+```
+
+Current limitation:
+- ElevenLabs voices are discovered/filtered by the backend. Manual “use this voiceID from my ElevenLabs library” is a planned UI/API improvement.
+
+## `/api/audio/assets/check` — verify reusable audio filenames
+
+Used by the web UI before TTS/export to avoid trusting stale `[sound:...]` fields from saved cards.
+
+**Request**
+```json
+{
+  "filenames": ["word_voorbeeld__alloy__abcd1234.mp3"]
+}
+```
+
+**Response (200)**
+```json
+{
+  "found": ["word_voorbeeld__alloy__abcd1234.mp3"],
+  "missing": [],
+  "error": null
+}
+```
+
+## `/api/export/csv` and `/api/export/apkg` — cards → downloadable files
+
+Both endpoints accept generated cards plus export settings. APKG can load persisted media by `run_id`, avoiding large browser-to-server `media_map` payloads.
+
+**Request core fields**
+```json
+{
+  "run_id": "uuid-optional",
+  "l1": "RU",
+  "cefr": "B1",
+  "profile": "balanced",
+  "model": "gpt-4.1-mini",
+  "deck_name": "Dutch",
+  "guid_policy": "stable",
+  "include_basic_reversed": true,
+  "include_basic_typein": true,
+  "use_persisted_media": true,
+  "media_map": null,
+  "cards": [
+    {
+      "L2_word": "voorbeeld",
+      "L2_cloze": "Dit is een {{c1::voorbeeld}}.",
+      "L1_sentence": "Это пример.",
+      "L2_collocations": "...",
+      "L2_definition": "...",
+      "L1_gloss": "пример",
+      "L1_hint": "",
+      "AudioWord": "[sound:word_voorbeeld.mp3]",
+      "AudioSentence": "[sound:sentence_voorbeeld.mp3]"
+    }
+  ]
+}
+```
+
+**CSV response**
+- JSON `ExportFileResponse` with `content_b64`.
+
+**APKG response**
+- Binary streaming response with `Content-Disposition`.
+
+Important APKG errors:
+- `413`: request body is too large for Vercel.
+- `409`: referenced audio is missing from `media_map`, `run_media_assets`, and global `audio_assets`.
 
 ## Error envelope (shared)
 

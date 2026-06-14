@@ -1,6 +1,6 @@
 # Status — Anki CSV Builder
 
-*(обновлено: 2026-06-12)*
+*(обновлено: 2026-06-14)*
 
 ## Кратко
 - MVP закрывает генерацию NL карточек с CSV/APKG экспортом, пакетной обработкой и базовой панелью диагностики.
@@ -30,6 +30,7 @@
 - **TTS 504 hardening**: retryable HTTP `429/502/503/504` дробит batch на меньшие части, а ошибка одиночного clip не помечает весь оставшийся хвост failed.
 - **Audio asset consistency gate**: добавлен `/api/audio/assets/check`; перед TTS web проверяет, что уже прикреплённые `[sound:...]` реально существуют в `audio_assets`, и досинтезирует только отсутствующие клипы вместо тихого пропуска.
 - **TTS hang guard**: для OpenAI TTS добавлен явный request timeout (`OPENAI_TTS_TIMEOUT_SECONDS`, default 12s), backend-параллельность по умолчанию: OpenAI 4 workers, ElevenLabs 2 workers; web отправляет TTS батчами по 6 клипов и обрывает зависший `/api/tts` батч через 30s для OpenAI / 45s для ElevenLabs с диагностикой.
+- **Review summary labels**: в web Review разделены показатели text-card reuse и audio-library reuse: `reused saved cards` относится только к `generated_card_assets`, а аудио отображается как `reused audio clips` / `saved audio clips`.
 - **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
 - **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse`, durable TTS cache-hit и generated-card cache-hit без вызова провайдера.
 
@@ -125,29 +126,23 @@
 
 ## Ограничения и риски
 - **Контракт состояния**: `generation_section` опирается на `st.session_state` (input_data/results/run_stats); нужно зафиксировать интерфейсы перед дальнейшими UI-рефакторами.
-- **Streaming**: прогресс TTS обновляется батчами (через ThreadPool), но нет live-progress на отдельное задание.
+- **Vercel + длинные списки**: проблему больших списков и Vercel считаем пока не полностью решённой. Text-cache и audio-cache снижают повторную стоимость, но длинный TTS всё ещё идёт через серию HTTP batch-запросов и может упираться в function timeout/provider latency. Нужен durable resume/job слой для генерации и особенно TTS.
+- **Streaming/job model**: прогресс TTS обновляется батчами, нет durable job/resume на уровне отдельного audio clip; при сбое можно продолжить за счёт кэша, но нет полноценного resumable run на 1000+ строк.
 - **Каталог ElevenLabs**: фильтр по NL может вернуть мало голосов — отображаем fallback, но хорошо бы добавить режим «все голоса».
+- **ElevenLabs voice library UX**: нельзя вручную добавить/закрепить голос из ElevenLabs library по `voiceID`; это нужно для реальных голосов, которые API discovery/фильтр не показывает.
 - **Качество TTS**: OpenAI даёт надёжный baseline, но голоса звучат плоско; ElevenLabs выразительнее, однако требует отдельного биллинга по токенам/месяцам, и оба провайдера иногда читают отдельные слова с англоязычным акцентом.
 - **AnkiWeb + Chrome forced dark mode**: если в Chrome включён «auto dark theme for sites»/`chrome://flags/#enable-force-dark`, встроенный CSS AnkiWeb перекрашивает контент в белый, и наши cloze/def поля становятся невидимыми. Решение: отключить forced dark (или использовать стандартный режим/Edge). В шаблоны вмешиваться не планируем.
 - **Инцидент 504 после внедрения sleep/wake (закрыт)**: проблема подтверждена и закрыта; длинный список теперь проходит успешно после применения batched `/api/generate` и корректного `sudo`-перезапуска контейнеров.
 
 ## Следующие шаги (предлагаемые)
-1. **Мониторинг после фикса 504**: на ближайших прогонах держать контроль за длинными списками (>50 строк), проверять отсутствие 504 и целостность usage/events.
-2. **Проверить timeout hotfix end-to-end**: подтвердить, что `WAKER_PROXY_TIMEOUT_SECONDS=600` и nginx timeout реально применились после rebuild/restart.
-3. **Прогнать end-to-end Windows pipeline в LAN**: `Deploy-FromLan.ps1` на реальном ключе/пользователе, зафиксировать типовые ошибки (SSH key, branch drift, compose health).
-4. **Internet stage production-check**: после стабилизации LAN пройти `check_wan_mode.sh` + выбранный путь (direct или Cloudflare Tunnel), затем `check_public_endpoints.sh` с внешней сети.
-5. **Users + персональные настройки + учёт usage (Phase 0.5, без платежей)**: invite-token auth (admin создаёт инвайты, пользователи ходят с `Authorization: Bearer ...`), settings/usage в Postgres, read-only просмотр usage.
-6. **Максимально упростить интерфейс**: сделать “happy path” в web UI (Generate → Preview → Export) и держать Streamlit как legacy/dev-панель до миграции.
-7. **Фиксировать контракт данных между UI и core**: описать state/DTO (в т.ч. `generation_section`) для дальнейших рефакторингов без регрессий.
-8. **Дожать preview UX**: решить политику для ручного снятия `error` после редактирования (когда запись считать исправленной и экспортируемой).
-9. **N2 (ElevenLabs UX)**: intentionally deferred на неопределённый срок; вероятен внешний фактор (изменения ElevenLabs API), вернуться после стабилизации API-контракта.
-10. **TTS-опыт**: curated список голосов, предпрослушка, быстрые метки качества/акцента.
-11. **Streaming/async для TTS**: прогресс по каждому запросу (очередь/asyncio — по необходимости).
-12. **Обновление прайс-листа**: автоматизировать/проверять `config/pricing.py` при появлении новых моделей и дублировать краткую инструкцию в README.
-13. **SQLite cache (фича-флаг)**: подготовить слой, но не включать по умолчанию.
-14. **Standalone launcher**: `setup_env.bat/.sh` + `run_app` сценарии (без dev-контейнера) для “non-dev” запуска.
-15. **Vision 2.0**: держать актуальным `notes/vision_v2.md`.
-16. **Multi-provider (post-MVP)**: добавлять альтернативы только при strict JSON + usage + прозрачной тарификации.
+1. **Long-list reliability on Vercel**: спроектировать durable `run_items`/`audio_jobs` resume flow, чтобы списки 1000+ строк и длинная озвучка не зависели от одного browser/API session.
+2. **Provider abstraction**: проработать подключение альтернативных провайдеров для генерации текстов и генерации аудио через единые `TextProvider`/`TTSProvider`, usage/cost и capability discovery.
+3. **ElevenLabs voiceID UX**: добавить возможность вручную указать ElevenLabs `voiceID`, сохранить выбор в Settings и использовать его даже если голос не попал в live catalogue.
+4. **Review audio preview**: в раскрывающейся JSON-сводке по карточке добавить предпрослушивание `AudioWord`/`AudioSentence`.
+5. **TTS-опыт**: curated список голосов, предпрослушка, быстрые метки качества/акцента.
+6. **Users + персональные настройки + учёт usage (Phase 0.5, без платежей)**: продолжить invite-token auth/settings/usage как текущую beta-модель до полноценного auth/billing.
+7. **Обновление прайс-листа**: автоматизировать/проверять `config/pricing.py` при появлении новых моделей и дублировать краткую инструкцию в README.
+8. **Vision 2.0**: держать актуальным `notes/vision_v2.md`.
 
 ## Проверка окружения (smoke)
 1. `pip install -r requirements.txt`

@@ -24,6 +24,8 @@
 - [x] N4 — `Reload model list` в web теперь обновляет и текстовые, и TTS-модели из backend (без постоянного показа fallback-списка по умолчанию при успешном live-fetch) (`api/main.py`, `web/src/App.tsx`, `web/src/features/settings/SettingsTab.tsx`).
 - [x] N5 — Добавить авто-актуализацию model/voice list в web: тихий периодический refresh настроек TTS при активном токене, чтобы backend-изменения подхватывались без ручного клика (`web/src/App.tsx`).
 - [ ] N6 — Перенести ввод `X-API-Key`/`API_SHARED_SECRET` из `Settings` в `Admin` tab (или добавить зеркальный контрол в `Admin`), чтобы админ-действия (`Create invite`, `List users`, `Rotate`) настраивались в том же контексте.
+- [ ] N7 — ElevenLabs voiceID UX: добавить в Settings возможность вручную указать ElevenLabs `voiceID`, проверить/сохранить этот голос и использовать его даже если live catalogue/filter его не показывает.
+- [ ] N8 — Review audio preview: в раскрывающейся карточке/JSON-сводке Review добавить inline проигрывание `AudioWord` и `AudioSentence` при наличии audio asset/media.
 - [x] D1 — Synology internet-stage toolkit: gate-check/reachability скрипты (`check_wan_mode.sh`, `check_public_endpoints.sh`), direct path docs (`REVERSE_PROXY.md`) и Cloudflare fallback (`CLOUDFLARE_TUNNEL.md`, `docker-compose.cloudflared.yml`).
 - [x] D2 — Windows LAN deployment pipeline: `deploy/synology/Deploy-FromLan.ps1` (SSH-key preflight, `git pull --ff-only`, `validate_env`, `compose up --build`, smoke + local health retries) + обновлён runbook `RUNBOOK_192.168.2.10.md`.
 - [x] D3 — Power-save layer на Synology: добавлены `waker` + `socket-proxy` (auto sleep/wake, front-door на WEB_PORT), новые env-параметры `WAKER_IDLE_*` и статус `/_waker/status`.
@@ -39,6 +41,7 @@
 - [x] V5b — TTS hang guard: OpenAI speech timeout, provider-specific worker caps, web TTS batches по 6 clips и provider-specific abort/diagnostics.
 - [x] V6a — Optional generated-card reuse v1: глобальная таблица `generated_card_assets` и флаг `reuse_text_cache`; при совпадении input+generation settings `/api/generate` возвращает сохранённую карточку без вызова LLM. Batch lookup/touch оптимизированы, чтобы повторные длинные списки не делали DB roundtrip на каждую строку.
 - [ ] V6 — Long-run generation persistence: durable `run_items`/resume flow для списков 1000+ строк, чтобы один сбой не требовал перегенерации уже готовых карточек.
+- [ ] V6b — Vercel long-list/TTS reliability: проблему больших списков и Vercel считаем не полностью решённой; нужен durable `audio_jobs`/resume flow, clip-level persistence/progress и безопасное продолжение после timeout без повторной оплаты уже готовых клипов.
 - [ ] V7 — Lexical memory v1: спроектировать словарный слой (`lexeme_entries`, examples, translations by L1, quality flags) поверх накопленных генераций.
 
 ## 🧪 Beta readiness (Phase 0.5)
@@ -58,11 +61,13 @@
 - [x] A0 — Vision 2.0: сформулировать product vision + phased migration plan (`notes/vision_v2.md`).
 
 ## 🧩 Multi-provider (post-MVP)
+- [ ] M0 — Provider discovery plan: выбрать 1–2 альтернативных провайдера для text generation и 1–2 для TTS, описать критерии допуска (structured output, latency, NL quality, usage/cost visibility, Vercel compatibility).
 - [ ] M1 — Provider interfaces: `TextProvider`/`TTSProvider` + нормализованный `UsageEvent`.
 - [ ] M2 — Pricing 2.0: хранить цены по `(provider, model)` + единицы (tokens/chars/seconds) + FX USD→EUR.
 - [ ] M3 — Evaluate Text provider #2 (Gemini Flash): strict JSON + usage + дешевле OpenAI на нашем workload.
 - [ ] M4 — Evaluate TTS provider #2 (Azure Neural TTS): NL voice quality + прозрачная тарификация; добавить за флагом.
 - [ ] M5 — Decide ElevenLabs policy: либо BYOK для TTS, либо отдельный paid add-on с прозрачным лимитом.
+- [ ] M6 — Capability/health UI: показывать доступность провайдера, модели, голоса, лимитов и последней ошибки без запуска генерации.
 
 ## 📜 API Contracts (Phase 0)
 - [x] C1 — Зафиксировать JSON-примеры `/api/generate` и `/api/tts` + `UsageEvent` (см. `notes/api_contracts.md`).
