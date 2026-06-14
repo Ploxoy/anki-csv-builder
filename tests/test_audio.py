@@ -162,6 +162,33 @@ def test_fetch_elevenlabs_models_returns_tts_models_sorted_by_cost(monkeypatch: 
     assert audio.fetch_elevenlabs_models("secret-key") == ["eleven_flash_v2_5", "eleven_v3"]
 
 
+def test_add_elevenlabs_shared_voice(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_post(url: str, headers: Dict[str, str], json: Dict[str, Any], timeout: float):  # type: ignore[override]
+        seen["url"] = url
+        seen["headers"] = headers
+        seen["json"] = json
+        seen["timeout"] = timeout
+        return _DummyResponse({"voice_id": "added-voice"})
+
+    monkeypatch.setattr(audio.requests, "post", fake_post)
+
+    result = audio.add_elevenlabs_shared_voice(
+        "secret-key",
+        public_user_id="public-user",
+        voice_id="library-voice",
+        new_name="Saved Library Voice",
+        timeout=9,
+    )
+
+    assert seen["url"] == "https://api.elevenlabs.io/v1/voices/add/public-user/library-voice"
+    assert seen["headers"]["xi-api-key"] == "secret-key"
+    assert seen["json"] == {"new_name": "Saved Library Voice", "bookmarked": True}
+    assert seen["timeout"] == 9
+    assert result == {"id": "added-voice", "label": "Saved Library Voice"}
+
+
 def _set_temp_audio_cache(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     cache_dir = tmp_path / "audio-cache"
     cache_dir.mkdir(parents=True, exist_ok=True)

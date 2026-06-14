@@ -22,6 +22,7 @@ import requests
 __all__ = [
     "AudioClipResult",
     "AudioSynthesisSummary",
+    "add_elevenlabs_shared_voice",
     "ensure_audio_for_cards",
     "fetch_elevenlabs_models",
     "fetch_elevenlabs_voice",
@@ -836,6 +837,56 @@ def fetch_elevenlabs_voice(
         raise RuntimeError("ElevenLabs voice response did not include a voice_id")
 
     return {"id": payload_voice_id, "label": name or payload_voice_id}
+
+
+def add_elevenlabs_shared_voice(
+    api_key: str,
+    *,
+    public_user_id: str,
+    voice_id: str,
+    new_name: str,
+    bookmarked: bool = True,
+    timeout: float = 20.0,
+) -> Dict[str, str]:
+    """Add a shared/library ElevenLabs voice to the API key's voice collection."""
+
+    if not api_key:
+        raise ValueError("ElevenLabs API key is required to add a shared voice")
+    cleaned_public_user_id = (public_user_id or "").strip()
+    cleaned_voice_id = (voice_id or "").strip()
+    cleaned_name = (new_name or "").strip()
+    if not cleaned_public_user_id:
+        raise ValueError("public_user_id is required to add a shared ElevenLabs voice")
+    if not cleaned_voice_id:
+        raise ValueError("voice_id is required to add a shared ElevenLabs voice")
+    if not cleaned_name:
+        raise ValueError("new_name is required to add a shared ElevenLabs voice")
+
+    headers = {
+        "xi-api-key": api_key,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = requests.post(
+            f"https://api.elevenlabs.io/v1/voices/add/{cleaned_public_user_id}/{cleaned_voice_id}",
+            headers=headers,
+            json={"new_name": cleaned_name, "bookmarked": bool(bookmarked)},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.RequestException as err:  # pragma: no cover - network dependent
+        raise RuntimeError(f"Failed to add ElevenLabs shared voice {cleaned_voice_id}: {err}") from err
+
+    try:
+        payload = response.json()
+    except ValueError as err:  # pragma: no cover - network dependent
+        raise RuntimeError("ElevenLabs add shared voice response was not valid JSON") from err
+
+    added_voice_id = str(payload.get("voice_id") or cleaned_voice_id).strip()
+    if not added_voice_id:
+        raise RuntimeError("ElevenLabs add shared voice response did not include a voice_id")
+    return {"id": added_voice_id, "label": cleaned_name}
 
 
 def fetch_elevenlabs_models(

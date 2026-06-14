@@ -168,6 +168,20 @@ export type TTSVoiceCheckResponse = {
   source?: string;
 };
 
+export type TTSSharedVoiceAddRequest = {
+  public_user_id: string;
+  voice_id: string;
+  new_name: string;
+  bookmarked?: boolean;
+};
+
+export type TTSSharedVoiceAddResponse = {
+  provider: string;
+  id: string;
+  label: string;
+  source?: string;
+};
+
 export type TTSPreviewRequest = {
   provider: string;
   model?: string;

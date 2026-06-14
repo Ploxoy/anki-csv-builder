@@ -1,6 +1,6 @@
 # Now — Anki CSV Builder
 
-Updated: 2026-06-14T10:48:34
+Updated: 2026-06-14T11:13:42
 
 ## Quick pointers
 - notes/status.md (project status)
@@ -11,6 +11,7 @@ Updated: 2026-06-14T10:48:34
 ```
 ## versel...origin/versel
  M api/main.py
+ M core/api_schemas.py
  M core/audio.py
  M notes/api_contracts.md
  M notes/status.md
@@ -18,15 +19,16 @@ Updated: 2026-06-14T10:48:34
  M tests/test_audio.py
  M web/src/App.tsx
  M web/src/features/settings/SettingsTab.tsx
+ M web/src/types.ts
 ```
 
 ## Recent commits
 ```
+1cac0d8 audi issues
 d830884 voices preview
 7bef345 ElevenLabsVoiceID
 1bf307a updated docs
 6a80210 ui cache calculation
-759db19 modified timeouts
 ```
 
 ## Status (head)
@@ -66,11 +68,11 @@ d830884 voices preview
 - **Review summary labels**: в web Review разделены показатели text-card reuse и audio-library reuse: `reused saved cards` относится только к `generated_card_assets`, а аудио отображается как `reused audio clips` / `saved audio clips`.
 - **ElevenLabs manual voiceID**: добавлен `POST /api/tts/voice/check`, который валидирует голос через серверный `ELEVENLABS_API_KEY`; Settings умеет проверить voiceID из ElevenLabs library, добавить его в dropdown и сохранить как `audio_voice`.
 - **ElevenLabs model/voice discovery hardening**: список TTS-моделей ElevenLabs теперь берётся из `GET /v1/models` (`can_do_text_to_speech`) с fallback-списком, а проверка voiceID умеет fallback на `GET /v2/voices?voice_ids=...` для library/saved voices.
+- **ElevenLabs shared voice import**: добавлен `POST /api/tts/voice/add-shared` и UI-блок `Add shared/library voice`; для Voice Library теперь можно добавить голос в workspace по `public_user_id + voice_id + display name`, после чего выбрать/preview его как обычный голос.
 - **TTS voice preview**: добавлен `POST /api/tts/preview` и аудиоплеер в Settings для короткой проверки текущего `provider/model/voice` без полной генерации карточек и без долговременного сохранения preview audio.
 - **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
 - **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse`, durable TTS cache-hit и generated-card cache-hit без вызова провайдера.
 
-## Свежие изменения (март 2026)
 ```
 
 ## Tasks (head)
@@ -118,7 +120,7 @@ d830884 voices preview
 ```
 
 ## Session scratchpad
-- What I changed: hardened ElevenLabs model discovery (`/v1/models`), voiceID validation (`v1` then `v2/voices?voice_ids` fallback), dropdown voice preview, and local label persistence for custom voices.
-- Why: ElevenLabs v3/Flash/Turbo models were hidden by a hardcoded model list, and library voice IDs can fail on the older single-voice endpoint.
-- Next steps: deploy and test Reload models & voices, library voiceID check, browser refresh label persistence, and preview for dropdown/manual voices.
-- Open questions: whether to add an explicit favorites/library manager for custom voices instead of only preserving labels in localStorage.
+- What I changed: added explicit preview quota warning and ElevenLabs shared voice import via `/api/tts/voice/add-shared` (`public_user_id + voice_id + display name`).
+- Why: some Voice Library IDs are not available to the API key until added to the workspace; checking by voice_id alone cannot import them.
+- Next steps: deploy, get `public_user_id` for the desired ElevenLabs library voice, add shared voice in Settings, then preview/select it.
+- Open questions: whether to parse ElevenLabs share URLs automatically to extract `public_user_id`/`voice_id` when possible.

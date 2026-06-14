@@ -323,6 +323,20 @@ class TTSVoiceCheckResponse(BaseModel):
     source: str = "manual"
 
 
+class TTSSharedVoiceAddRequest(BaseModel):
+    public_user_id: str
+    voice_id: str
+    new_name: str
+    bookmarked: bool = True
+
+
+class TTSSharedVoiceAddResponse(BaseModel):
+    provider: str = "elevenlabs"
+    id: str
+    label: str
+    source: str = "shared_voice"
+
+
 class TTSPreviewRequest(BaseModel):
     provider: str
     model: Optional[str] = None

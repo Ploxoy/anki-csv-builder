@@ -17,6 +17,8 @@ import {
   TTSPreviewResponse,
   TTSRequest,
   TTSResponse,
+  TTSSharedVoiceAddRequest,
+  TTSSharedVoiceAddResponse,
   TTSVoiceCheckRequest,
   TTSVoiceCheckResponse,
   UsageListResponse,
@@ -782,6 +784,61 @@ export default function App() {
         audioVoice: checked.id,
       }));
       setSettingsNotice("audio", "success", `ElevenLabs voice selected: ${checked.label || checked.id}.`);
+    } catch (e: any) {
+      setSettingsNotice("audio", "error", e?.message || String(e));
+    } finally {
+      setTtsOptionsBusy(false);
+    }
+  }
+
+  async function onAddElevenLabsSharedVoice(params: { publicUserId: string; voiceId: string; newName: string }): Promise<void> {
+    const publicUserId = params.publicUserId.trim();
+    const voiceId = params.voiceId.trim();
+    const newName = params.newName.trim();
+    if (!publicUserId || !voiceId || !newName) {
+      setSettingsNotice("audio", "warning", "Public user ID, voice ID, and name are required to add a shared ElevenLabs voice.");
+      return;
+    }
+    if (!settings.userToken.trim()) {
+      setSettingsNotice("access", "warning", "Invite token is required to add ElevenLabs shared voices.");
+      return;
+    }
+
+    setTtsOptionsBusy(true);
+    try {
+      const payload: TTSSharedVoiceAddRequest = {
+        public_user_id: publicUserId,
+        voice_id: voiceId,
+        new_name: newName,
+        bookmarked: true,
+      };
+      const res = await fetch(`${settings.apiBase || ""}/api/tts/voice/add-shared`, {
+        method: "POST",
+        headers: apiHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(apiErrorText(data, res.status));
+      }
+
+      const added = data as TTSSharedVoiceAddResponse;
+      const elevenOptions = ttsOptions?.by_provider?.elevenlabs;
+      const elevenModels = elevenOptions?.models || [];
+      setCustomAudioVoiceLabels((current) => {
+        const next = { ...current, [added.id]: added.label || added.id };
+        saveJson(CUSTOM_AUDIO_VOICE_LABELS_KEY, next);
+        return next;
+      });
+      setSettings((current) => ({
+        ...current,
+        audioProvider: "elevenlabs",
+        audioModel: elevenModels.includes(current.audioModel)
+          ? current.audioModel
+          : elevenOptions?.default_model || elevenModels[0] || "eleven_multilingual_v2",
+        audioVoice: added.id,
+      }));
+      setSettingsNotice("audio", "success", `Shared ElevenLabs voice added and selected: ${added.label || added.id}.`);
     } catch (e: any) {
       setSettingsNotice("audio", "error", e?.message || String(e));
     } finally {
@@ -1814,6 +1871,7 @@ export default function App() {
           ttsOptionsBusy={ttsOptionsBusy}
           onReloadTtsOptions={() => onLoadTtsOptions(false)}
           onCheckElevenLabsVoiceId={onCheckElevenLabsVoiceId}
+          onAddElevenLabsSharedVoice={onAddElevenLabsSharedVoice}
           onPreviewTtsVoice={onPreviewTtsVoice}
           notices={notices.settings}
           adminEnabled={adminEnabled}

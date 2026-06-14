@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 import api.main as api_main
-from core.api_schemas import TTSPreviewRequest, TTSRequest, TTSVoiceCheckRequest
+from core.api_schemas import TTSPreviewRequest, TTSRequest, TTSSharedVoiceAddRequest, TTSVoiceCheckRequest
 from core.audio import AudioClipResult, AudioSynthesisSummary
 from core import audio as audio_core
 
@@ -113,6 +113,36 @@ def test_api_tts_voice_check_validates_elevenlabs_voice(
     assert result.id == "voice-123"
     assert result.label == "Library Voice"
     assert result.valid is True
+
+
+def test_api_tts_voice_add_shared_adds_and_returns_voice(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    monkeypatch.setattr(api_main, "_elevenlabs_key_or_500", lambda: "eleven-secret")
+
+    def fake_add(api_key: str, **kwargs: Any):
+        seen["api_key"] = api_key
+        seen.update(kwargs)
+        return {"id": "added-voice", "label": "Saved Voice"}
+
+    monkeypatch.setattr(api_main, "add_elevenlabs_shared_voice", fake_add)
+
+    payload = TTSSharedVoiceAddRequest(
+        public_user_id="public-user",
+        voice_id="library-voice",
+        new_name="Saved Voice",
+    )
+
+    result = api_main.api_tts_voice_add_shared(payload, request=_dummy_request(), x_api_key=None)
+
+    assert seen["api_key"] == "eleven-secret"
+    assert seen["public_user_id"] == "public-user"
+    assert seen["voice_id"] == "library-voice"
+    assert seen["new_name"] == "Saved Voice"
+    assert result.id == "added-voice"
+    assert result.label == "Saved Voice"
 
 
 def test_api_tts_preview_returns_audio_without_storage(

@@ -50,6 +50,8 @@ from core.api_schemas import (
     TTSOption,
     TTSPreviewRequest,
     TTSPreviewResponse,
+    TTSSharedVoiceAddRequest,
+    TTSSharedVoiceAddResponse,
     TTSVoiceCheckRequest,
     TTSVoiceCheckResponse,
     TTSResponse,
@@ -99,6 +101,7 @@ from config.settings import (
 from core.audio import (
     AudioClipResult,
     AudioSynthesisSummary,
+    add_elevenlabs_shared_voice,
     ensure_audio_for_cards,
     fetch_elevenlabs_models,
     fetch_elevenlabs_voice,
@@ -1538,6 +1541,33 @@ def api_tts_voice_check(
         label=voice.get("label") or voice["id"],
         valid=True,
         source="elevenlabs",
+    )
+
+
+@app.post("/api/tts/voice/add-shared", response_model=TTSSharedVoiceAddResponse)
+def api_tts_voice_add_shared(
+    payload: TTSSharedVoiceAddRequest,
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> TTSSharedVoiceAddResponse:
+    _require_user(request, x_api_key)
+
+    try:
+        voice = add_elevenlabs_shared_voice(
+            _elevenlabs_key_or_500(),
+            public_user_id=payload.public_user_id,
+            voice_id=payload.voice_id,
+            new_name=payload.new_name,
+            bookmarked=payload.bookmarked,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return TTSSharedVoiceAddResponse(
+        id=voice["id"],
+        label=voice.get("label") or voice["id"],
     )
 
 

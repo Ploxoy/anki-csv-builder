@@ -275,6 +275,36 @@ Notes:
 - The check uses the server-side `ELEVENLABS_API_KEY`; provider keys are never exposed to the browser.
 - The backend first tries `GET /v1/voices/{voice_id}` and then falls back to `GET /v2/voices?voice_ids=...`, because library/saved voices can fail on the older single-voice endpoint.
 - The web Settings tab can add a checked voice ID to the local voice dropdown even when it is not returned by `/api/tts/options`.
+- If a Voice Library voice is not yet available to the API key, it must be added first through `/api/tts/voice/add-shared` with the creator `public_user_id`.
+
+## `/api/tts/voice/add-shared` — add an ElevenLabs shared/library voice
+
+**Request**
+- `POST /api/tts/voice/add-shared`
+
+```json
+{
+  "public_user_id": "public-user-id",
+  "voice_id": "voice-id-from-library",
+  "new_name": "Readable voice name",
+  "bookmarked": true
+}
+```
+
+**Response (200)**
+```json
+{
+  "provider": "elevenlabs",
+  "id": "voice-id-returned-by-elevenlabs",
+  "label": "Readable voice name",
+  "source": "shared_voice"
+}
+```
+
+Notes:
+- This calls ElevenLabs `POST /v1/voices/add/:public_user_id/:voice_id`.
+- ElevenLabs requires both `public_user_id` and `voice_id`; voice ID alone is not sufficient for adding a shared Voice Library voice.
+- After adding, the UI selects the returned voice ID and stores the display label locally.
 
 ## `/api/tts/preview` — synthesize one short voice preview
 
