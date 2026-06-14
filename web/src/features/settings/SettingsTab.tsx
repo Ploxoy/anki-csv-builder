@@ -23,6 +23,7 @@ type SettingsTabProps = {
   audioVoiceLabels: Record<string, string>;
   ttsOptionsBusy: boolean;
   onReloadTtsOptions: () => void;
+  onCheckElevenLabsVoiceId: (voiceId: string) => void;
   notices: {
     toolbar: NoticeMessage | null;
     access: NoticeMessage | null;
@@ -52,11 +53,14 @@ export function SettingsTab({
   audioVoiceLabels,
   ttsOptionsBusy,
   onReloadTtsOptions,
+  onCheckElevenLabsVoiceId,
   notices,
   adminEnabled,
 }: SettingsTabProps) {
   const [showUserToken, setShowUserToken] = useState(false);
   const [showXApiKey, setShowXApiKey] = useState(false);
+  const [customVoiceId, setCustomVoiceId] = useState("");
+  const audioProviderKey = (settings.audioProvider || "").trim().toLowerCase();
 
   return (
     <section className="tab-layout">
@@ -304,6 +308,32 @@ export function SettingsTab({
             </select>
           </label>
         </div>
+
+        {audioProviderKey === "elevenlabs" && (
+          <div className="manual-voice-panel">
+            <label>
+              <span>Custom ElevenLabs voice ID</span>
+              <div className="inline-actions">
+                <input
+                  value={customVoiceId}
+                  onChange={(e) => setCustomVoiceId(e.target.value)}
+                  placeholder="paste voice_id from your ElevenLabs library"
+                />
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => onCheckElevenLabsVoiceId(customVoiceId)}
+                  disabled={busy || ttsOptionsBusy || !customVoiceId.trim()}
+                >
+                  Check & use voice ID
+                </button>
+              </div>
+            </label>
+            <p className="hint subtle">
+              Use this when a library voice is available to your ElevenLabs API key but does not appear in the loaded catalogue.
+            </p>
+          </div>
+        )}
 
         {availableAudioModelOptions.length === 0 && (
           <p className="hint subtle">Reload models & voices to fetch available TTS models. The list also refreshes automatically.</p>

@@ -48,6 +48,8 @@ from core.api_schemas import (
     TTSOptionsResponse,
     TTSProviderOptions,
     TTSOption,
+    TTSVoiceCheckRequest,
+    TTSVoiceCheckResponse,
     TTSResponse,
     TTSAudio,
     TTSSummary,
@@ -92,7 +94,14 @@ from config.settings import (
     get_allowed_prefixes,
     get_block_substrings,
 )
-from core.audio import AudioClipResult, AudioSynthesisSummary, ensure_audio_for_cards, sentence_for_tts, tts_asset_identity
+from core.audio import (
+    AudioClipResult,
+    AudioSynthesisSummary,
+    ensure_audio_for_cards,
+    fetch_elevenlabs_voice,
+    sentence_for_tts,
+    tts_asset_identity,
+)
 from core.export_csv import generate_csv
 from core.export_anki import HAS_GENANKI, build_anki_package
 from core.run_report import build_run_report, resolve_audio_pricing
@@ -1481,6 +1490,37 @@ def api_tts_options(
                 default_voice=eleven_voices[0].id if eleven_voices else None,
             ),
         },
+    )
+
+
+@app.post("/api/tts/voice/check", response_model=TTSVoiceCheckResponse)
+def api_tts_voice_check(
+    payload: TTSVoiceCheckRequest,
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> TTSVoiceCheckResponse:
+    _require_user(request, x_api_key)
+
+    provider = (payload.provider or "").strip().lower()
+    voice_id = (payload.voice_id or "").strip()
+    if not voice_id:
+        raise HTTPException(status_code=400, detail="voice_id is required")
+    if provider != "elevenlabs":
+        raise HTTPException(status_code=400, detail="Manual voice ID check is supported for ElevenLabs only")
+
+    try:
+        voice = fetch_elevenlabs_voice(_elevenlabs_key_or_500(), voice_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return TTSVoiceCheckResponse(
+        provider="elevenlabs",
+        id=voice["id"],
+        label=voice.get("label") or voice["id"],
+        valid=True,
+        source="elevenlabs",
     )
 
 

@@ -24,7 +24,7 @@
 - [x] N4 — `Reload model list` в web теперь обновляет и текстовые, и TTS-модели из backend (без постоянного показа fallback-списка по умолчанию при успешном live-fetch) (`api/main.py`, `web/src/App.tsx`, `web/src/features/settings/SettingsTab.tsx`).
 - [x] N5 — Добавить авто-актуализацию model/voice list в web: тихий периодический refresh настроек TTS при активном токене, чтобы backend-изменения подхватывались без ручного клика (`web/src/App.tsx`).
 - [ ] N6 — Перенести ввод `X-API-Key`/`API_SHARED_SECRET` из `Settings` в `Admin` tab (или добавить зеркальный контрол в `Admin`), чтобы админ-действия (`Create invite`, `List users`, `Rotate`) настраивались в том же контексте.
-- [ ] N7 — ElevenLabs voiceID UX: добавить в Settings возможность вручную указать ElevenLabs `voiceID`, проверить/сохранить этот голос и использовать его даже если live catalogue/filter его не показывает.
+- [x] N7 — ElevenLabs voiceID UX: в Settings можно вручную указать ElevenLabs `voiceID`, проверить его через серверный API, сохранить этот голос и использовать его даже если live catalogue/filter его не показывает.
 - [ ] N8 — Review audio preview: в раскрывающейся карточке/JSON-сводке Review добавить inline проигрывание `AudioWord` и `AudioSentence` при наличии audio asset/media.
 - [x] D1 — Synology internet-stage toolkit: gate-check/reachability скрипты (`check_wan_mode.sh`, `check_public_endpoints.sh`), direct path docs (`REVERSE_PROXY.md`) и Cloudflare fallback (`CLOUDFLARE_TUNNEL.md`, `docker-compose.cloudflared.yml`).
 - [x] D2 — Windows LAN deployment pipeline: `deploy/synology/Deploy-FromLan.ps1` (SSH-key preflight, `git pull --ff-only`, `validate_env`, `compose up --build`, smoke + local health retries) + обновлён runbook `RUNBOOK_192.168.2.10.md`.

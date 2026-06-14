@@ -243,8 +243,33 @@ Notes:
 }
 ```
 
-Current limitation:
-- ElevenLabs voices are discovered/filtered by the backend. Manual “use this voiceID from my ElevenLabs library” is a planned UI/API improvement.
+## `/api/tts/voice/check` — validate a manual TTS voice ID
+
+**Request**
+- `POST /api/tts/voice/check`
+
+```json
+{
+  "provider": "elevenlabs",
+  "voice_id": "voice-id-from-library"
+}
+```
+
+**Response (200)**
+```json
+{
+  "provider": "elevenlabs",
+  "id": "voice-id-from-library",
+  "label": "Voice label",
+  "valid": true,
+  "source": "elevenlabs"
+}
+```
+
+Notes:
+- Currently supported for ElevenLabs only.
+- The check uses the server-side `ELEVENLABS_API_KEY`; provider keys are never exposed to the browser.
+- The web Settings tab can add a checked voice ID to the local voice dropdown even when it is not returned by `/api/tts/options`.
 
 ## `/api/audio/assets/check` — verify reusable audio filenames
 

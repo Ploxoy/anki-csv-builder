@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 import api.main as api_main
-from core.api_schemas import TTSRequest
+from core.api_schemas import TTSRequest, TTSVoiceCheckRequest
 from core.audio import AudioClipResult, AudioSynthesisSummary
 from core import audio as audio_core
 
@@ -88,6 +88,31 @@ def test_api_tts_returns_clip_level_status_and_error(monkeypatch: pytest.MonkeyP
     assert result.storage is not None
     assert result.storage.persisted is True
     assert result.storage.stored_clips == 1
+
+
+def test_api_tts_voice_check_validates_elevenlabs_voice(
+    monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
+) -> None:
+    seen: dict[str, str] = {}
+
+    monkeypatch.setattr(api_main, "_elevenlabs_key_or_500", lambda: "eleven-secret")
+
+    def fake_fetch(api_key: str, voice_id: str):
+        seen["api_key"] = api_key
+        seen["voice_id"] = voice_id
+        return {"id": voice_id, "label": "Library Voice"}
+
+    monkeypatch.setattr(api_main, "fetch_elevenlabs_voice", fake_fetch)
+
+    payload = TTSVoiceCheckRequest(provider="elevenlabs", voice_id="voice-123")
+
+    result = api_main.api_tts_voice_check(payload, request=_dummy_request(), x_api_key=None)
+
+    assert seen == {"api_key": "eleven-secret", "voice_id": "voice-123"}
+    assert result.provider == "elevenlabs"
+    assert result.id == "voice-123"
+    assert result.label == "Library Voice"
+    assert result.valid is True
 
 
 def test_api_tts_retries_transient_error_once(

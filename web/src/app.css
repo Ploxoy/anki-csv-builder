@@ -221,6 +221,14 @@ pre {
   align-items: center;
 }
 
+.manual-voice-panel {
+  margin-top: var(--space-2);
+  border: 1px dashed #c7d4e2;
+  border-radius: var(--radius-sm);
+  background: #f7fbff;
+  padding: var(--space-2);
+}
+
 .btn {
   appearance: none;
   border: 1px solid #c7d4e2;

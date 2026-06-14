@@ -1,6 +1,6 @@
 # Now — Anki CSV Builder
 
-Updated: 2026-06-14T09:29:18
+Updated: 2026-06-14T09:48:21
 
 ## Quick pointers
 - notes/status.md (project status)
@@ -10,22 +10,28 @@ Updated: 2026-06-14T09:29:18
 ## Git status
 ```
 ## versel...origin/versel
- M notes/Doedutch_UI_Guide.md
+ M api/main.py
+ M core/api_schemas.py
+ M core/audio.py
  M notes/api_contracts.md
  M notes/audio_panel_spec.md
- M notes/now.md
  M notes/status.md
  M notes/tasks.md
- M notes/vision_v2.md
+ M tests/test_api_tts.py
+ M tests/test_audio.py
+ M web/src/App.tsx
+ M web/src/app.css
+ M web/src/features/settings/SettingsTab.tsx
+ M web/src/types.ts
 ```
 
 ## Recent commits
 ```
+1bf307a updated docs
 6a80210 ui cache calculation
 759db19 modified timeouts
 74ff4b2 OpenAI TTS request
 a23835b working with audio cash
-a74057f ext generation теперь идёт direct mode, без async job queue.
 ```
 
 ## Status (head)
@@ -63,13 +69,13 @@ a74057f ext generation теперь идёт direct mode, без async job queue
 - **Audio asset consistency gate**: добавлен `/api/audio/assets/check`; перед TTS web проверяет, что уже прикреплённые `[sound:...]` реально существуют в `audio_assets`, и досинтезирует только отсутствующие клипы вместо тихого пропуска.
 - **TTS hang guard**: для OpenAI TTS добавлен явный request timeout (`OPENAI_TTS_TIMEOUT_SECONDS`, default 12s), backend-параллельность по умолчанию: OpenAI 4 workers, ElevenLabs 2 workers; web отправляет TTS батчами по 6 клипов и обрывает зависший `/api/tts` батч через 30s для OpenAI / 45s для ElevenLabs с диагностикой.
 - **Review summary labels**: в web Review разделены показатели text-card reuse и audio-library reuse: `reused saved cards` относится только к `generated_card_assets`, а аудио отображается как `reused audio clips` / `saved audio clips`.
+- **ElevenLabs manual voiceID**: добавлен `POST /api/tts/voice/check`, который валидирует голос через серверный `ELEVENLABS_API_KEY`; Settings умеет проверить voiceID из ElevenLabs library, добавить его в dropdown и сохранить как `audio_voice`.
 - **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
 - **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse`, durable TTS cache-hit и generated-card cache-hit без вызова провайдера.
 
 ## Свежие изменения (март 2026)
 - **Synology deploy/docs**: обновлён пакет деплоя для NAS — `deploy/synology/REVERSE_PROXY.md` (gate-check public IP vs CGNAT), `deploy/synology/CLOUDFLARE_TUNNEL.md` (fallback), `deploy/synology/docker-compose.cloudflared.yml`, шаблон `deploy/synology/.env.cloudflare.example`.
 - **Проверочные скрипты**: добавлены `deploy/synology/scripts/check_wan_mode.sh` и `deploy/synology/scripts/check_public_endpoints.sh` для верификации internet-stage.
-- **Runbook**: зафиксирован персональный чеклист `deploy/synology/RUNBOOK_192.168.2.10.md` c актуальным пользователем `VKotenok` и шагами внешнего доступа.
 ```
 
 ## Tasks (head)
@@ -100,7 +106,7 @@ a74057f ext generation теперь идёт direct mode, без async job queue
 - [x] N4 — `Reload model list` в web теперь обновляет и текстовые, и TTS-модели из backend (без постоянного показа fallback-списка по умолчанию при успешном live-fetch) (`api/main.py`, `web/src/App.tsx`, `web/src/features/settings/SettingsTab.tsx`).
 - [x] N5 — Добавить авто-актуализацию model/voice list в web: тихий периодический refresh настроек TTS при активном токене, чтобы backend-изменения подхватывались без ручного клика (`web/src/App.tsx`).
 - [ ] N6 — Перенести ввод `X-API-Key`/`API_SHARED_SECRET` из `Settings` в `Admin` tab (или добавить зеркальный контрол в `Admin`), чтобы админ-действия (`Create invite`, `List users`, `Rotate`) настраивались в том же контексте.
-- [ ] N7 — ElevenLabs voiceID UX: добавить в Settings возможность вручную указать ElevenLabs `voiceID`, проверить/сохранить этот голос и использовать его даже если live catalogue/filter его не показывает.
+- [x] N7 — ElevenLabs voiceID UX: в Settings можно вручную указать ElevenLabs `voiceID`, проверить его через серверный API, сохранить этот голос и использовать его даже если live catalogue/filter его не показывает.
 - [ ] N8 — Review audio preview: в раскрывающейся карточке/JSON-сводке Review добавить inline проигрывание `AudioWord` и `AudioSentence` при наличии audio asset/media.
 - [x] D1 — Synology internet-stage toolkit: gate-check/reachability скрипты (`check_wan_mode.sh`, `check_public_endpoints.sh`), direct path docs (`REVERSE_PROXY.md`) и Cloudflare fallback (`CLOUDFLARE_TUNNEL.md`, `docker-compose.cloudflared.yml`).
 - [x] D2 — Windows LAN deployment pipeline: `deploy/synology/Deploy-FromLan.ps1` (SSH-key preflight, `git pull --ff-only`, `validate_env`, `compose up --build`, smoke + local health retries) + обновлён runbook `RUNBOOK_192.168.2.10.md`.
@@ -117,21 +123,7 @@ a74057f ext generation теперь идёт direct mode, без async job queue
 ```
 
 ## Session scratchpad
-- What I changed:
-- Updated `/notes` to match the current Vercel/web state.
-- Marked Vercel + long-list reliability as not fully solved.
-- Added TODOs for provider abstraction, manual ElevenLabs `voiceID`, and Review audio preview.
-- Updated API contracts with async generate jobs, TTS options, audio asset check, and export endpoints.
-- Updated UI/audio docs with separated text-card vs audio-library reuse wording.
-- Why:
-- Keep project memory accurate before the next implementation cycle.
-- Avoid treating cache/timeout hardening as a complete solution for 1000+ row runs.
-- Make the next priorities explicit and discoverable from `notes/status.md` + `notes/tasks.md`.
-- Next steps:
-- Design durable `run_items` / `audio_jobs` resume flow for Vercel long-list reliability.
-- Plan provider interfaces and candidate evaluation for text generation and TTS.
-- Implement ElevenLabs manual `voiceID` configuration in Settings.
-- Add inline audio playback in Review card details.
-- Open questions:
-- Which provider should be evaluated first for text generation after OpenAI baseline: Gemini Flash or another low-cost structured-output option?
-- Which TTS provider should be the first non-OpenAI/non-ElevenLabs candidate: Azure Neural TTS or another NL-focused provider?
+- What I changed: implemented manual ElevenLabs voiceID validation/selection in FastAPI + web Settings; updated docs/tasks/status.
+- Why: live catalogue/filter can miss library voices, but TTS can use a valid voice_id if checked against the server-side ElevenLabs API key.
+- Next steps: deploy and test Settings -> Audio defaults -> Custom ElevenLabs voice ID; then continue with Review audio preview (N8) or durable long-list TTS jobs (V6b).
+- Open questions: whether manual voices should become a persistent favorites list with labels/preview, instead of only storing the selected `audio_voice`.

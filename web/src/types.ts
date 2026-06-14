@@ -155,6 +155,19 @@ export type TTSOptionsResponse = {
   by_provider: Record<string, TTSProviderOptions>;
 };
 
+export type TTSVoiceCheckRequest = {
+  provider: string;
+  voice_id: string;
+};
+
+export type TTSVoiceCheckResponse = {
+  provider: string;
+  id: string;
+  label: string;
+  valid: boolean;
+  source?: string;
+};
+
 export type TTSAudio = {
   card_id: string;
   type: TTSItemType;

@@ -31,6 +31,7 @@
 - **Audio asset consistency gate**: добавлен `/api/audio/assets/check`; перед TTS web проверяет, что уже прикреплённые `[sound:...]` реально существуют в `audio_assets`, и досинтезирует только отсутствующие клипы вместо тихого пропуска.
 - **TTS hang guard**: для OpenAI TTS добавлен явный request timeout (`OPENAI_TTS_TIMEOUT_SECONDS`, default 12s), backend-параллельность по умолчанию: OpenAI 4 workers, ElevenLabs 2 workers; web отправляет TTS батчами по 6 клипов и обрывает зависший `/api/tts` батч через 30s для OpenAI / 45s для ElevenLabs с диагностикой.
 - **Review summary labels**: в web Review разделены показатели text-card reuse и audio-library reuse: `reused saved cards` относится только к `generated_card_assets`, а аудио отображается как `reused audio clips` / `saved audio clips`.
+- **ElevenLabs manual voiceID**: добавлен `POST /api/tts/voice/check`, который валидирует голос через серверный `ELEVENLABS_API_KEY`; Settings умеет проверить voiceID из ElevenLabs library, добавить его в dropdown и сохранить как `audio_voice`.
 - **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
 - **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse`, durable TTS cache-hit и generated-card cache-hit без вызова провайдера.
 
@@ -129,7 +130,7 @@
 - **Vercel + длинные списки**: проблему больших списков и Vercel считаем пока не полностью решённой. Text-cache и audio-cache снижают повторную стоимость, но длинный TTS всё ещё идёт через серию HTTP batch-запросов и может упираться в function timeout/provider latency. Нужен durable resume/job слой для генерации и особенно TTS.
 - **Streaming/job model**: прогресс TTS обновляется батчами, нет durable job/resume на уровне отдельного audio clip; при сбое можно продолжить за счёт кэша, но нет полноценного resumable run на 1000+ строк.
 - **Каталог ElevenLabs**: фильтр по NL может вернуть мало голосов — отображаем fallback, но хорошо бы добавить режим «все голоса».
-- **ElevenLabs voice library UX**: нельзя вручную добавить/закрепить голос из ElevenLabs library по `voiceID`; это нужно для реальных голосов, которые API discovery/фильтр не показывает.
+- **ElevenLabs voice library UX**: ручное добавление `voiceID` в Settings реализовано; следующая итерация — preview/quality labels и более удобная библиотека избранных голосов.
 - **Качество TTS**: OpenAI даёт надёжный baseline, но голоса звучат плоско; ElevenLabs выразительнее, однако требует отдельного биллинга по токенам/месяцам, и оба провайдера иногда читают отдельные слова с англоязычным акцентом.
 - **AnkiWeb + Chrome forced dark mode**: если в Chrome включён «auto dark theme for sites»/`chrome://flags/#enable-force-dark`, встроенный CSS AnkiWeb перекрашивает контент в белый, и наши cloze/def поля становятся невидимыми. Решение: отключить forced dark (или использовать стандартный режим/Edge). В шаблоны вмешиваться не планируем.
 - **Инцидент 504 после внедрения sleep/wake (закрыт)**: проблема подтверждена и закрыта; длинный список теперь проходит успешно после применения batched `/api/generate` и корректного `sudo`-перезапуска контейнеров.
@@ -137,7 +138,7 @@
 ## Следующие шаги (предлагаемые)
 1. **Long-list reliability on Vercel**: спроектировать durable `run_items`/`audio_jobs` resume flow, чтобы списки 1000+ строк и длинная озвучка не зависели от одного browser/API session.
 2. **Provider abstraction**: проработать подключение альтернативных провайдеров для генерации текстов и генерации аудио через единые `TextProvider`/`TTSProvider`, usage/cost и capability discovery.
-3. **ElevenLabs voiceID UX**: добавить возможность вручную указать ElevenLabs `voiceID`, сохранить выбор в Settings и использовать его даже если голос не попал в live catalogue.
+3. **ElevenLabs voice library UX v2**: добавить избранные голоса, preview и quality labels поверх уже реализованного manual `voiceID`.
 4. **Review audio preview**: в раскрывающейся JSON-сводке по карточке добавить предпрослушивание `AudioWord`/`AudioSentence`.
 5. **TTS-опыт**: curated список голосов, предпрослушка, быстрые метки качества/акцента.
 6. **Users + персональные настройки + учёт usage (Phase 0.5, без платежей)**: продолжить invite-token auth/settings/usage как текущую beta-модель до полноценного auth/billing.

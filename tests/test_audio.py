@@ -82,6 +82,25 @@ def test_fetch_elevenlabs_voices_filters_and_deduplicates(monkeypatch: pytest.Mo
     ]
 
 
+def test_fetch_elevenlabs_voice_by_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_get(url: str, headers: Dict[str, str], timeout: float):  # type: ignore[override]
+        seen["url"] = url
+        seen["headers"] = headers
+        seen["timeout"] = timeout
+        return _DummyResponse({"voice_id": "voice-123", "name": "Library Voice"})
+
+    monkeypatch.setattr(audio.requests, "get", fake_get)
+
+    voice = audio.fetch_elevenlabs_voice("secret-key", "voice-123", timeout=7)
+
+    assert seen["url"] == "https://api.elevenlabs.io/v1/voices/voice-123"
+    assert seen["headers"]["xi-api-key"] == "secret-key"
+    assert seen["timeout"] == 7
+    assert voice == {"id": "voice-123", "label": "Library Voice"}
+
+
 def _set_temp_audio_cache(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     cache_dir = tmp_path / "audio-cache"
     cache_dir.mkdir(parents=True, exist_ok=True)

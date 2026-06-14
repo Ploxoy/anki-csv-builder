@@ -23,6 +23,7 @@ __all__ = [
     "AudioClipResult",
     "AudioSynthesisSummary",
     "ensure_audio_for_cards",
+    "fetch_elevenlabs_voice",
     "fetch_elevenlabs_voices",
     "sentence_for_tts",
     "tts_asset_identity",
@@ -750,6 +751,48 @@ def _label_from_shared_voice(entry: Dict[str, Any]) -> str:
     if tag:
         return f"{name} — {tag}"
     return name
+
+
+def fetch_elevenlabs_voice(
+    api_key: str,
+    voice_id: str,
+    *,
+    timeout: float = 20.0,
+) -> Dict[str, str]:
+    """Return metadata for one ElevenLabs voice ID available to the API key."""
+
+    if not api_key:
+        raise ValueError("ElevenLabs API key is required to fetch a voice")
+
+    cleaned_voice_id = (voice_id or "").strip()
+    if not cleaned_voice_id:
+        raise ValueError("ElevenLabs voice ID is required")
+
+    headers = {
+        "xi-api-key": api_key,
+        "Accept": "application/json",
+    }
+    try:
+        response = requests.get(
+            f"https://api.elevenlabs.io/v1/voices/{cleaned_voice_id}",
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.RequestException as err:  # pragma: no cover - network dependent
+        raise RuntimeError(f"Failed to fetch ElevenLabs voice {cleaned_voice_id}: {err}") from err
+
+    try:
+        payload = response.json()
+    except ValueError as err:  # pragma: no cover - network dependent
+        raise RuntimeError("ElevenLabs voice response was not valid JSON") from err
+
+    payload_voice_id = str(payload.get("voice_id") or cleaned_voice_id).strip()
+    name = str(payload.get("name") or payload_voice_id).strip()
+    if not payload_voice_id:
+        raise RuntimeError("ElevenLabs voice response did not include a voice_id")
+
+    return {"id": payload_voice_id, "label": name or payload_voice_id}
 
 
 def fetch_elevenlabs_voices(

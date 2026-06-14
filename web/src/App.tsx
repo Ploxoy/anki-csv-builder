@@ -15,6 +15,8 @@ import {
   TTSOptionsResponse,
   TTSRequest,
   TTSResponse,
+  TTSVoiceCheckRequest,
+  TTSVoiceCheckResponse,
   UsageListResponse,
   UserListResponse,
   UserSettingsResponse,
@@ -227,6 +229,7 @@ export default function App() {
   const [ttsOptions, setTtsOptions] = useState<TTSOptionsResponse | null>(null);
   const [ttsOptionsBusy, setTtsOptionsBusy] = useState(false);
   const [ttsOptionsLoadedAt, setTtsOptionsLoadedAt] = useState<number | null>(null);
+  const [customAudioVoiceLabels, setCustomAudioVoiceLabels] = useState<Record<string, string>>({});
   const [notices, setNotices] = useState<ScopedNotices>({
     generate: { ...EMPTY_NOTICES.generate },
     settings: { ...EMPTY_NOTICES.settings },
@@ -287,11 +290,14 @@ export default function App() {
     for (const voice of audioVoiceOptions) {
       if (voice.id) map[voice.id] = voice.label || voice.id;
     }
+    for (const [voiceId, label] of Object.entries(customAudioVoiceLabels)) {
+      if (voiceId) map[voiceId] = label || voiceId;
+    }
     if (settings.audioVoice && !map[settings.audioVoice]) {
       map[settings.audioVoice] = settings.audioVoice;
     }
     return map;
-  }, [audioVoiceOptions, settings.audioVoice]);
+  }, [audioVoiceOptions, customAudioVoiceLabels, settings.audioVoice]);
 
   const exportCards = useMemo(() => {
     const items = response?.items || [];
@@ -708,13 +714,12 @@ export default function App() {
         const currentVoice = (current.audioVoice || "").trim();
         const textModelInList = !!currentTextModel && textModels.includes(currentTextModel);
         const modelInList = !!currentModel && (selected?.models || []).includes(currentModel);
-        const voiceInList = !!currentVoice && (selected?.voices || []).some((voice) => voice.id === currentVoice);
         return {
           ...current,
           model: currentTextModel && textModelInList ? currentTextModel : textModels[0] || currentTextModel || "gpt-4.1-mini",
           audioProvider: provider,
           audioModel: currentModel && modelInList ? currentModel : selected?.default_model || currentModel,
-          audioVoice: currentVoice && voiceInList ? currentVoice : selected?.default_voice || currentVoice,
+          audioVoice: currentVoice || selected?.default_voice || "",
         };
       });
 
@@ -725,6 +730,51 @@ export default function App() {
       if (!silent) {
         setSettingsNotice("audio", "error", e?.message || String(e));
       }
+    } finally {
+      setTtsOptionsBusy(false);
+    }
+  }
+
+  async function onCheckElevenLabsVoiceId(voiceId: string) {
+    const cleanedVoiceId = voiceId.trim();
+    if (!cleanedVoiceId) {
+      setSettingsNotice("audio", "warning", "Paste an ElevenLabs voice ID before checking it.");
+      return;
+    }
+    if (!settings.userToken.trim()) {
+      setSettingsNotice("access", "warning", "Invite token is required to check ElevenLabs voices.");
+      return;
+    }
+
+    setTtsOptionsBusy(true);
+    try {
+      const payload: TTSVoiceCheckRequest = { provider: "elevenlabs", voice_id: cleanedVoiceId };
+      const url = `${settings.apiBase || ""}/api/tts/voice/check`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: apiHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(apiErrorText(data, res.status));
+      }
+
+      const checked = data as TTSVoiceCheckResponse;
+      const elevenOptions = ttsOptions?.by_provider?.elevenlabs;
+      const elevenModels = elevenOptions?.models || [];
+      setCustomAudioVoiceLabels((current) => ({ ...current, [checked.id]: checked.label || checked.id }));
+      setSettings((current) => ({
+        ...current,
+        audioProvider: "elevenlabs",
+        audioModel: elevenModels.includes(current.audioModel)
+          ? current.audioModel
+          : elevenOptions?.default_model || elevenModels[0] || "eleven_multilingual_v2",
+        audioVoice: checked.id,
+      }));
+      setSettingsNotice("audio", "success", `ElevenLabs voice selected: ${checked.label || checked.id}.`);
+    } catch (e: any) {
+      setSettingsNotice("audio", "error", e?.message || String(e));
     } finally {
       setTtsOptionsBusy(false);
     }
@@ -1714,6 +1764,7 @@ export default function App() {
           audioVoiceLabels={audioVoiceLabels}
           ttsOptionsBusy={ttsOptionsBusy}
           onReloadTtsOptions={() => onLoadTtsOptions(false)}
+          onCheckElevenLabsVoiceId={onCheckElevenLabsVoiceId}
           notices={notices.settings}
           adminEnabled={adminEnabled}
         />

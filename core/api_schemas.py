@@ -310,6 +310,19 @@ class TTSOptionsResponse(BaseModel):
     by_provider: Dict[str, TTSProviderOptions] = Field(default_factory=dict)
 
 
+class TTSVoiceCheckRequest(BaseModel):
+    provider: str
+    voice_id: str
+
+
+class TTSVoiceCheckResponse(BaseModel):
+    provider: str
+    id: str
+    label: str
+    valid: bool = True
+    source: str = "manual"
+
+
 class TTSAudio(BaseModel):
     card_id: str
     type: Literal["word", "sentence"]
