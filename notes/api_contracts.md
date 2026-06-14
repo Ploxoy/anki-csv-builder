@@ -275,12 +275,13 @@ Notes:
 - The check uses the server-side `ELEVENLABS_API_KEY`; provider keys are never exposed to the browser.
 - The backend first tries `GET /v1/voices/{voice_id}` and then falls back to `GET /v2/voices?voice_ids=...`, because library/saved voices can fail on the older single-voice endpoint.
 - The web Settings tab can add a checked voice ID to the local voice dropdown even when it is not returned by `/api/tts/options`.
-- If a Voice Library voice is not yet available to the API key, it must be added first through `/api/tts/voice/add-shared` with the creator `public_user_id`.
+- If a Voice Library voice is not yet available to the server API key, an admin must add it first through `/api/admin/tts/voice/add-shared`.
 
-## `/api/tts/voice/add-shared` — add an ElevenLabs shared/library voice
+## `/api/admin/tts/voice/add-shared` — add an ElevenLabs shared/library voice
 
 **Request**
-- `POST /api/tts/voice/add-shared`
+- `POST /api/admin/tts/voice/add-shared`
+- Requires `X-API-Key`.
 
 ```json
 {
@@ -306,7 +307,7 @@ Notes:
 - The UI accepts either a raw `voice_id` or an ElevenLabs public Voice Library link containing `voiceId=...`.
 - If `public_user_id` or `new_name` is omitted, the backend searches `GET /v1/shared-voices?search=<voice_id>` and uses the returned `public_owner_id` / voice name.
 - ElevenLabs ultimately requires both `public_owner_id` and `voice_id`; the search step is how Doedutch tries to discover the owner ID automatically.
-- After adding, the UI selects the returned voice ID and stores the display label locally.
+- After adding, the Admin UI selects the returned voice ID in the current browser session and stores the display label locally.
 
 ## `/api/tts/preview` — synthesize one short voice preview
 

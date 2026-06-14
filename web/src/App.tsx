@@ -349,7 +349,7 @@ export default function App() {
     setNotices((prev) => clearSettingsNotices(prev));
   }
 
-  function setAdminNotice(section: "toolbar" | "invite" | "users" | "usage", level: "info" | "success" | "warning" | "error", message: string, details?: string) {
+  function setAdminNotice(section: "toolbar" | "invite" | "users" | "usage" | "voices", level: "info" | "success" | "warning" | "error", message: string, details?: string) {
     setNotices((prev) => withAdminNotice(prev, section, { level, message, details }));
   }
 
@@ -791,20 +791,20 @@ export default function App() {
     }
   }
 
-  async function onAddElevenLabsSharedVoice(params: { publicUserId: string; voiceId: string; newName: string }): Promise<void> {
+  async function adminAddElevenLabsSharedVoice(params: { publicUserId: string; voiceId: string; newName: string }): Promise<void> {
     const publicUserId = params.publicUserId.trim();
     const voiceId = params.voiceId.trim();
     const newName = params.newName.trim();
     if (!voiceId) {
-      setSettingsNotice("audio", "warning", "Voice ID or ElevenLabs public link is required to add a shared voice.");
+      setAdminNotice("voices", "warning", "Voice ID or ElevenLabs public link is required to add a shared voice.");
       return;
     }
-    if (!settings.userToken.trim()) {
-      setSettingsNotice("access", "warning", "Invite token is required to add ElevenLabs shared voices.");
+    if (!settings.xApiKey.trim()) {
+      setAdminNotice("voices", "warning", "X-API-Key is required to add ElevenLabs shared voices.");
       return;
     }
 
-    setTtsOptionsBusy(true);
+    setAdminBusy(true);
     try {
       const payload: TTSSharedVoiceAddRequest = {
         public_user_id: publicUserId || undefined,
@@ -812,7 +812,7 @@ export default function App() {
         new_name: newName || undefined,
         bookmarked: true,
       };
-      const res = await fetch(`${settings.apiBase || ""}/api/tts/voice/add-shared`, {
+      const res = await fetch(`${settings.apiBase || ""}/api/admin/tts/voice/add-shared`, {
         method: "POST",
         headers: apiHeaders(),
         body: JSON.stringify(payload),
@@ -838,11 +838,11 @@ export default function App() {
           : elevenOptions?.default_model || elevenModels[0] || "eleven_multilingual_v2",
         audioVoice: added.id,
       }));
-      setSettingsNotice("audio", "success", `Shared ElevenLabs voice added and selected: ${added.label || added.id}.`);
+      setAdminNotice("voices", "success", `Shared ElevenLabs voice added and selected: ${added.label || added.id}.`);
     } catch (e: any) {
-      setSettingsNotice("audio", "error", e?.message || String(e));
+      setAdminNotice("voices", "error", e?.message || String(e));
     } finally {
-      setTtsOptionsBusy(false);
+      setAdminBusy(false);
     }
   }
 
@@ -1871,7 +1871,6 @@ export default function App() {
           ttsOptionsBusy={ttsOptionsBusy}
           onReloadTtsOptions={() => onLoadTtsOptions(false)}
           onCheckElevenLabsVoiceId={onCheckElevenLabsVoiceId}
-          onAddElevenLabsSharedVoice={onAddElevenLabsSharedVoice}
           onPreviewTtsVoice={onPreviewTtsVoice}
           notices={notices.settings}
           adminEnabled={adminEnabled}
@@ -1890,6 +1889,7 @@ export default function App() {
           onSetStatus={adminSetStatus}
           onRotate={adminRotate}
           onLoadUsage={adminLoadUsage}
+          onAddSharedVoice={adminAddElevenLabsSharedVoice}
           notices={notices.admin}
         />
       )}

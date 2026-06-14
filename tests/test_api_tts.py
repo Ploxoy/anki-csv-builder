@@ -120,6 +120,7 @@ def test_api_tts_voice_add_shared_adds_and_returns_voice(
 ) -> None:
     seen: dict[str, Any] = {}
 
+    monkeypatch.setattr(api_main, "_require_api_shared_secret", lambda x_api_key: None)
     monkeypatch.setattr(api_main, "_elevenlabs_key_or_500", lambda: "eleven-secret")
 
     def fake_add(api_key: str, **kwargs: Any):
@@ -135,7 +136,7 @@ def test_api_tts_voice_add_shared_adds_and_returns_voice(
         new_name="Saved Voice",
     )
 
-    result = api_main.api_tts_voice_add_shared(payload, request=_dummy_request(), x_api_key=None)
+    result = api_main.api_tts_voice_add_shared(payload, x_api_key=None)
 
     assert seen["api_key"] == "eleven-secret"
     assert seen["public_user_id"] == "public-user"
@@ -150,6 +151,7 @@ def test_api_tts_voice_add_shared_discovers_owner_when_missing(
 ) -> None:
     seen: dict[str, Any] = {}
 
+    monkeypatch.setattr(api_main, "_require_api_shared_secret", lambda x_api_key: None)
     monkeypatch.setattr(api_main, "_elevenlabs_key_or_500", lambda: "eleven-secret")
     monkeypatch.setattr(
         api_main,
@@ -166,7 +168,7 @@ def test_api_tts_voice_add_shared_discovers_owner_when_missing(
 
     payload = TTSSharedVoiceAddRequest(voice_id="https://elevenlabs.io/app/voice-library?voiceId=library-voice")
 
-    result = api_main.api_tts_voice_add_shared(payload, request=_dummy_request(), x_api_key=None)
+    result = api_main.api_tts_voice_add_shared(payload, x_api_key=None)
 
     assert seen["public_user_id"] == "owner-123"
     assert seen["voice_id"] == "library-voice"

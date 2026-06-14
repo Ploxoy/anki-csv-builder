@@ -24,7 +24,6 @@ type SettingsTabProps = {
   ttsOptionsBusy: boolean;
   onReloadTtsOptions: () => void;
   onCheckElevenLabsVoiceId: (voiceId: string) => void;
-  onAddElevenLabsSharedVoice: (params: { publicUserId: string; voiceId: string; newName: string }) => Promise<void>;
   onPreviewTtsVoice: (sampleText: string) => Promise<string>;
   notices: {
     toolbar: NoticeMessage | null;
@@ -56,7 +55,6 @@ export function SettingsTab({
   ttsOptionsBusy,
   onReloadTtsOptions,
   onCheckElevenLabsVoiceId,
-  onAddElevenLabsSharedVoice,
   onPreviewTtsVoice,
   notices,
   adminEnabled,
@@ -64,8 +62,6 @@ export function SettingsTab({
   const [showUserToken, setShowUserToken] = useState(false);
   const [showXApiKey, setShowXApiKey] = useState(false);
   const [customVoiceId, setCustomVoiceId] = useState("");
-  const [sharedVoicePublicUserId, setSharedVoicePublicUserId] = useState("");
-  const [sharedVoiceName, setSharedVoiceName] = useState("");
   const [previewText, setPreviewText] = useState("Dit is een voorbeeld van deze stem.");
   const [previewAudioUrl, setPreviewAudioUrl] = useState("");
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -89,14 +85,6 @@ export function SettingsTab({
     } finally {
       setPreviewBusy(false);
     }
-  }
-
-  async function addSharedVoice() {
-    await onAddElevenLabsSharedVoice({
-      publicUserId: sharedVoicePublicUserId,
-      voiceId: customVoiceId,
-      newName: sharedVoiceName || customVoiceId,
-    });
   }
 
   return (
@@ -367,43 +355,9 @@ export function SettingsTab({
               </div>
             </label>
             <p className="hint subtle">
-              If the voice is already in your ElevenLabs workspace, check it here. For a shared library voice, paste its public link or
-              voice ID and add it to your workspace first.
+              Use this only for voices already available in the server ElevenLabs workspace. Ask an admin to add shared Voice Library
+              voices.
             </p>
-            <details className="advanced-panel">
-              <summary>Add shared/library voice</summary>
-              <div className="grid two-col">
-                <label>
-                  <span>Public user ID (optional)</span>
-                  <input
-                    value={sharedVoicePublicUserId}
-                    onChange={(e) => setSharedVoicePublicUserId(e.target.value)}
-                    placeholder="auto-detected when possible"
-                  />
-                </label>
-                <label>
-                  <span>Display name (optional)</span>
-                  <input
-                    value={sharedVoiceName}
-                    onChange={(e) => setSharedVoiceName(e.target.value)}
-                    placeholder="auto-filled from Voice Library when empty"
-                  />
-                </label>
-              </div>
-              <div className="toolbar-actions compact-top">
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={addSharedVoice}
-                  disabled={busy || ttsOptionsBusy || !customVoiceId.trim()}
-                >
-                  Add shared voice
-                </button>
-              </div>
-              <p className="hint subtle">
-                If public user ID is empty, Doedutch searches ElevenLabs Voice Library by the pasted voice ID/link and uses the returned owner ID.
-              </p>
-            </details>
           </div>
         )}
 

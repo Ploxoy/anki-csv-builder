@@ -15,11 +15,13 @@ type AdminTabProps = {
   onSetStatus: (userId: string, status: "active" | "blocked") => void;
   onRotate: (userId: string) => void;
   onLoadUsage: (userId: string) => void;
+  onAddSharedVoice: (params: { publicUserId: string; voiceId: string; newName: string }) => Promise<void>;
   notices: {
     toolbar: NoticeMessage | null;
     invite: NoticeMessage | null;
     users: NoticeMessage | null;
     usage: NoticeMessage | null;
+    voices: NoticeMessage | null;
   };
 };
 
@@ -34,9 +36,13 @@ export function AdminTab({
   onSetStatus,
   onRotate,
   onLoadUsage,
+  onAddSharedVoice,
   notices,
 }: AdminTabProps) {
   const [copied, setCopied] = useState(false);
+  const [voiceIdOrLink, setVoiceIdOrLink] = useState("");
+  const [voiceOwnerId, setVoiceOwnerId] = useState("");
+  const [voiceLabel, setVoiceLabel] = useState("");
 
   async function copyInviteToken(token: string) {
     try {
@@ -46,6 +52,14 @@ export function AdminTab({
     } catch {
       setCopied(false);
     }
+  }
+
+  async function addSharedVoice() {
+    await onAddSharedVoice({
+      publicUserId: voiceOwnerId,
+      voiceId: voiceIdOrLink,
+      newName: voiceLabel,
+    });
   }
 
   return (
@@ -155,6 +169,57 @@ export function AdminTab({
             </table>
           </div>
         )}
+      </section>
+
+      <section className="card">
+        <div className="section-head">
+          <h2>ElevenLabs voice curation</h2>
+          <span className="muted">Server workspace</span>
+        </div>
+
+        <p className="hint flow-hint">
+          Add Voice Library voices to the server ElevenLabs workspace. Once added, users can reload TTS options and select the voice.
+        </p>
+
+        <div className="grid two-col">
+          <label>
+            <span>Voice ID or public Voice Library link</span>
+            <input
+              value={voiceIdOrLink}
+              onChange={(e) => setVoiceIdOrLink(e.target.value)}
+              placeholder="https://elevenlabs.io/app/voice-library?voiceId=..."
+            />
+          </label>
+          <label>
+            <span>Display name (optional)</span>
+            <input
+              value={voiceLabel}
+              onChange={(e) => setVoiceLabel(e.target.value)}
+              placeholder="auto-filled from Voice Library when empty"
+            />
+          </label>
+          <label>
+            <span>Public owner ID (optional)</span>
+            <input
+              value={voiceOwnerId}
+              onChange={(e) => setVoiceOwnerId(e.target.value)}
+              placeholder="auto-detected when possible"
+            />
+          </label>
+        </div>
+
+        <div className="toolbar-actions compact-top">
+          <button className="btn primary" type="button" onClick={addSharedVoice} disabled={adminBusy || !hasAdminKey || !voiceIdOrLink.trim()}>
+            Add shared voice
+          </button>
+        </div>
+
+        <p className="hint subtle">
+          If owner ID is empty, Doedutch searches ElevenLabs Voice Library by the pasted voice ID/link and uses the returned owner ID.
+          This mutates the server ElevenLabs workspace, so keep this admin-only.
+        </p>
+
+        <Notice notice={notices.voices} />
       </section>
 
       <section className="card">

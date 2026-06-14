@@ -1545,13 +1545,12 @@ def api_tts_voice_check(
     )
 
 
-@app.post("/api/tts/voice/add-shared", response_model=TTSSharedVoiceAddResponse)
+@app.post("/api/admin/tts/voice/add-shared", response_model=TTSSharedVoiceAddResponse)
 def api_tts_voice_add_shared(
     payload: TTSSharedVoiceAddRequest,
-    request: Request,
     x_api_key: str | None = Header(None, alias="X-API-Key"),
 ) -> TTSSharedVoiceAddResponse:
-    _require_user(request, x_api_key)
+    _require_api_shared_secret(x_api_key)
 
     try:
         api_key = _elevenlabs_key_or_500()

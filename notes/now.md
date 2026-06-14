@@ -1,6 +1,6 @@
 # Now — Anki CSV Builder
 
-Updated: 2026-06-14T11:40:07
+Updated: 2026-06-14T12:52:48
 
 ## Quick pointers
 - notes/status.md (project status)
@@ -11,24 +11,22 @@ Updated: 2026-06-14T11:40:07
 ```
 ## versel...origin/versel
  M api/main.py
- M core/api_schemas.py
- M core/audio.py
  M notes/api_contracts.md
  M notes/status.md
  M tests/test_api_tts.py
- M tests/test_audio.py
  M web/src/App.tsx
+ M web/src/features/admin/AdminTab.tsx
  M web/src/features/settings/SettingsTab.tsx
- M web/src/types.ts
+ M web/src/lib/messages.ts
 ```
 
 ## Recent commits
 ```
+a8f6008 added voice public link
 542fe56 public voice correction
 1cac0d8 audi issues
 d830884 voices preview
 7bef345 ElevenLabsVoiceID
-1bf307a updated docs
 ```
 
 ## Status (head)
@@ -68,7 +66,7 @@ d830884 voices preview
 - **Review summary labels**: в web Review разделены показатели text-card reuse и audio-library reuse: `reused saved cards` относится только к `generated_card_assets`, а аудио отображается как `reused audio clips` / `saved audio clips`.
 - **ElevenLabs manual voiceID**: добавлен `POST /api/tts/voice/check`, который валидирует голос через серверный `ELEVENLABS_API_KEY`; Settings умеет проверить voiceID из ElevenLabs library, добавить его в dropdown и сохранить как `audio_voice`.
 - **ElevenLabs model/voice discovery hardening**: список TTS-моделей ElevenLabs теперь берётся из `GET /v1/models` (`can_do_text_to_speech`) с fallback-списком, а проверка voiceID умеет fallback на `GET /v2/voices?voice_ids=...` для library/saved voices.
-- **ElevenLabs shared voice import**: добавлен `POST /api/tts/voice/add-shared` и UI-блок `Add shared/library voice`; для Voice Library теперь можно вставить public link/voiceID, backend попробует найти `public_owner_id` через `/v1/shared-voices?search=...`, добавить голос в workspace и выбрать/preview его как обычный голос.
+- **ElevenLabs shared voice import**: добавлен admin-only `POST /api/admin/tts/voice/add-shared` и блок `ElevenLabs voice curation` в Admin; для Voice Library можно вставить public link/voiceID, backend попробует найти `public_owner_id` через `/v1/shared-voices?search=...`, добавить голос в server workspace и выбрать/preview его как обычный голос.
 - **TTS voice preview**: добавлен `POST /api/tts/preview` и аудиоплеер в Settings для короткой проверки текущего `provider/model/voice` без полной генерации карточек и без долговременного сохранения preview audio.
 - **Диагностика**: если persisted audio не найден, API возвращает явный `409` с указанием, что отсутствует в server-side storage, вместо немого провала/413 на крупном request body.
 - **Тесты**: добавлены проверки `TTS -> persisted storage`, `APKG export -> persisted media reuse`, durable TTS cache-hit и generated-card cache-hit без вызова провайдера.
@@ -120,7 +118,7 @@ d830884 voices preview
 ```
 
 ## Session scratchpad
-- What I changed: shared voice import now accepts raw voice IDs or public Voice Library links, auto-discovers `public_owner_id` through `/v1/shared-voices?search=...`, and makes public user ID/display name optional in Settings.
-- Why: ElevenLabs public links expose `voiceId`, but add-shared ultimately needs owner ID; automatic lookup removes that manual blocker when the voice is searchable via API.
-- Next steps: deploy and test with `https://elevenlabs.io/app/voice-library?voiceId=...` pasted into Custom ElevenLabs voice ID, then Add shared voice.
-- Open questions: whether free-tier/API plan restrictions still block some Voice Library voices even when discoverable in the web UI.
+- What I changed: moved ElevenLabs shared Voice Library import into Admin as `ElevenLabs voice curation`; endpoint is now admin-only at `/api/admin/tts/voice/add-shared`.
+- Why: with a shared server-side ElevenLabs key, adding voices mutates the server workspace and must be an admin-curated action, not a regular user Settings action.
+- Next steps: deploy, open Admin with X-API-Key, paste Voice Library public link into voice curation, add shared voice, then reload/preview in Settings.
+- Open questions: whether to persist admin voice requests/statuses in DB so regular users can submit links for approval.

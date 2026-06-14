@@ -8,7 +8,7 @@ export type NoticeMessage = {
 
 export type GenerateNoticeKey = "input" | "run" | "audio" | "export";
 export type SettingsNoticeKey = "toolbar" | "access" | "generation" | "audio" | "export";
-export type AdminNoticeKey = "toolbar" | "invite" | "users" | "usage";
+export type AdminNoticeKey = "toolbar" | "invite" | "users" | "usage" | "voices";
 
 export type ScopedNotices = {
   generate: Record<GenerateNoticeKey, NoticeMessage | null>;
@@ -19,7 +19,7 @@ export type ScopedNotices = {
 export const EMPTY_NOTICES: ScopedNotices = {
   generate: { input: null, run: null, audio: null, export: null },
   settings: { toolbar: null, access: null, generation: null, audio: null, export: null },
-  admin: { toolbar: null, invite: null, users: null, usage: null },
+  admin: { toolbar: null, invite: null, users: null, usage: null, voices: null },
 };
 
 export function withGenerateNotice(
