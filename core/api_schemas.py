@@ -38,7 +38,7 @@ class UserSettings(BaseModel):
     Intentionally excludes any API keys. Provider keys must live on the server.
     """
 
-    prompt_version: str = "p0"
+    prompt_version: str = "p1"
     provider: str = "openai"
     model: str = "gpt-4.1-mini"
     cefr: str = "B1"

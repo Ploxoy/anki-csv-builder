@@ -15,6 +15,7 @@ __all__ = [
     "force_wrap_first_match",
     "try_separable_verb_wrap",
     "detect_separable_particle",
+    "detect_dutch_word_order_issues",
     "validate_card",
     "is_probably_dutch_word",
 ]
@@ -123,6 +124,123 @@ def detect_separable_particle(lemma: str) -> str:
 # -----------------
 
 _REQUIRED_KEYS = {"L2_word","L2_cloze","L1_sentence","L2_collocations","L2_definition","L1_gloss"}
+WORD_ORDER_ADVERB_PROBLEM = "Dutch word order: target adverb appears before finite verb after subject"
+
+_SIMPLE_SUBJECT_PRONOUNS = {
+    "ik",
+    "je",
+    "jij",
+    "u",
+    "hij",
+    "ze",
+    "zij",
+    "we",
+    "wij",
+    "jullie",
+    "men",
+}
+
+_COMMON_FINITE_VERBS = {
+    "ben",
+    "bent",
+    "is",
+    "zijn",
+    "heb",
+    "hebt",
+    "heeft",
+    "hebben",
+    "kan",
+    "kunt",
+    "kunnen",
+    "mag",
+    "mogen",
+    "moet",
+    "moeten",
+    "wil",
+    "wilt",
+    "willen",
+    "zal",
+    "zult",
+    "zullen",
+    "ga",
+    "gaat",
+    "gaan",
+    "kom",
+    "komt",
+    "komen",
+    "begrijp",
+    "begrijpt",
+    "begrijpen",
+}
+
+_ADVERBIAL_TARGETS = {
+    "daadwerkelijk",
+    "eigenlijk",
+    "waarschijnlijk",
+    "natuurlijk",
+    "uiteindelijk",
+    "onmiddellijk",
+    "letterlijk",
+    "werkelijk",
+    "duidelijk",
+    "mogelijk",
+}
+
+
+def _strip_cloze_markup(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"\{\{c\d+::(.*?)\}\}", r"\1", text)
+
+
+def _word_tokens(text: str) -> List[str]:
+    return re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ']+", text)
+
+
+def _is_adverbial_target(target: str) -> bool:
+    target_lc = target.strip().lower()
+    if not target_lc or " " in target_lc:
+        return False
+    return target_lc in _ADVERBIAL_TARGETS or target_lc.endswith("lijk")
+
+
+def _looks_like_finite_verb(token: str) -> bool:
+    token_lc = token.strip().lower()
+    if token_lc in _COMMON_FINITE_VERBS:
+        return True
+    if len(token_lc) <= 3:
+        return False
+    # Conservative present-tense heuristic for common 3rd-person main-clause forms.
+    return token_lc.endswith("t") and not token_lc.endswith(("lijk", "heid"))
+
+
+def detect_dutch_word_order_issues(card: Dict[str, str]) -> List[str]:
+    """Detect high-confidence Dutch main-clause word-order problems.
+
+    This intentionally catches only narrow cases such as:
+    "Hij daadwerkelijk begrijpt ..." where an adverbial target is placed
+    between a simple subject pronoun and the finite verb.
+    """
+    target = str(card.get("L2_word", "") or "").strip().lower()
+    if not _is_adverbial_target(target):
+        return []
+
+    sentence = _strip_cloze_markup(str(card.get("L2_cloze", "") or ""))
+    tokens = [tok.lower() for tok in _word_tokens(sentence)]
+    if len(tokens) < 3:
+        return []
+
+    problems: List[str] = []
+    for idx in range(0, len(tokens) - 2):
+        subject, candidate, following = tokens[idx], tokens[idx + 1], tokens[idx + 2]
+        if subject not in _SIMPLE_SUBJECT_PRONOUNS:
+            continue
+        if candidate != target:
+            continue
+        if _looks_like_finite_verb(following):
+            problems.append(WORD_ORDER_ADVERB_PROBLEM)
+            break
+    return problems
 
 
 def validate_card(card: Dict[str, str]) -> List[str]:
@@ -143,6 +261,7 @@ def validate_card(card: Dict[str, str]) -> List[str]:
     # Allow up to 6 words in L1_gloss to better fit languages like Russian
     if len(card.get("L1_gloss", "").split()) > 6:
         problems.append("L1_gloss must be ≤ 6 words")
+    problems.extend(detect_dutch_word_order_issues(card))
     return problems
 
 

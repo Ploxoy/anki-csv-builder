@@ -125,3 +125,6 @@ d830884 voices preview
 - What I changed: added admin-only curated voice removal (`DELETE /api/admin/tts/voices/{voice_id}`) and a Remove action in the Admin voice table.
 - Why: the curated voice list needs lifecycle management before it grows too large.
 - Note: removal only hides the voice from Doedutch curated options; it does not delete the voice from ElevenLabs.
+- What I changed: added Dutch word-order hardening v1 (`prompt_version=p1`), prompt guidance, a high-precision validator gate for `subject + target adverb + finite verb`, and targeted repair instructions.
+- Why: A2 examples could pass formal validation while still sounding like English word order translated into Dutch.
+- Next steps: test with `daadwerkelijk` and similar adverbs; broaden the gate only if we collect clear false negatives without false positives.

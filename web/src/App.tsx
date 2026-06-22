@@ -30,6 +30,7 @@ import {
 import {
   apiErrorText,
   appendUniqueError,
+  CURRENT_PROMPT_VERSION,
   AudioRunSummary,
   decodeBase64ToArrayBuffer,
   DEFAULT_SETTINGS,
@@ -184,7 +185,7 @@ function mergeTtsIntoResponse(generated: GenerateResponse, tts: TTSResponse): Ge
 function mapServerSettings(base: Settings, payload: UserSettingsResponse): Settings {
   return {
     ...base,
-    promptVersion: payload.settings.prompt_version,
+    promptVersion: payload.settings.prompt_version && payload.settings.prompt_version !== "p0" ? payload.settings.prompt_version : CURRENT_PROMPT_VERSION,
     provider: payload.settings.provider,
     model: payload.settings.model,
     cefr: payload.settings.cefr,
@@ -212,7 +213,13 @@ const ELEVENLABS_TTS_BATCH_TIMEOUT_MS = 45_000;
 const CUSTOM_AUDIO_VOICE_LABELS_KEY = "doedutch.customAudioVoiceLabels.v1";
 
 export default function App() {
-  const loadedSettings = useMemo<Settings>(() => ({ ...DEFAULT_SETTINGS, ...loadJson(SETTINGS_KEY, DEFAULT_SETTINGS) }), []);
+  const loadedSettings = useMemo<Settings>(() => {
+    const loaded = { ...DEFAULT_SETTINGS, ...loadJson(SETTINGS_KEY, DEFAULT_SETTINGS) };
+    return {
+      ...loaded,
+      promptVersion: loaded.promptVersion && loaded.promptVersion !== "p0" ? loaded.promptVersion : CURRENT_PROMPT_VERSION,
+    };
+  }, []);
 
   const [settings, setSettings] = useState<Settings>(loadedSettings);
   const [initialSettingsSnapshot, setInitialSettingsSnapshot] = useState<Settings>(loadedSettings);

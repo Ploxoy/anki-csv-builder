@@ -86,7 +86,7 @@ class GenerationSettings:
     signalword_count: int = 3
     signalword_seed: Optional[int] = None
     allow_response_format: bool = True
-    prompt_version: str = "p0"
+    prompt_version: str = "p1"
     prompt_cache_retention: Optional[str] = None
 
 
@@ -602,11 +602,18 @@ def generate_card(
 
     if problems_initial:
         repair_attempted = True
+        word_order_repair_hint = ""
+        if any("Dutch word order" in problem for problem in problems_initial):
+            word_order_repair_hint = (
+                " For Dutch word-order issues, rewrite L2_cloze with natural Dutch main-clause order. "
+                "Keep the target word, cloze markup, meaning, CEFR level, and all non-problematic fields."
+            )
         repair_prompt = (
             instructions
             + "\n\nREPAIR: The previous JSON has issues: "
             + "; ".join(problems_initial)
             + ". Fix ONLY the problematic fields and return STRICT JSON again."
+            + word_order_repair_hint
         )
         repair_input = "Previous JSON:\n" + json.dumps(card, ensure_ascii=False)
         repair_meta: Dict[str, Any] = {}

@@ -21,6 +21,8 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 import core.generation as gen
+from core.api_schemas import UserSettings
+from core.sanitize_validate import WORD_ORDER_ADVERB_PROBLEM, validate_card
 
 
 class _DummyResponse:
@@ -169,6 +171,96 @@ def test_generate_card_repair_from_text(monkeypatch, dummy_row, settings):
     assert meta["allowed_signalwords"] == ["omdat"]
     assert meta["response_format_removed"], "ожидали флаг удаления schema"
     assert meta["error"] == ""
+
+
+def _valid_card(**overrides: str) -> Dict[str, str]:
+    card = {
+        "L2_word": "daadwerkelijk",
+        "L2_cloze": "Hij begrijpt de uitleg {{c1::daadwerkelijk}}.",
+        "L1_sentence": "He actually understands the explanation.",
+        "L2_collocations": "daadwerkelijk begrijpen; daadwerkelijk gebeuren; daadwerkelijk bestaan",
+        "L2_definition": "echt en in werkelijkheid",
+        "L1_gloss": "actually",
+    }
+    card.update(overrides)
+    return card
+
+
+def test_validate_card_flags_english_style_adverb_word_order():
+    problems = validate_card(
+        _valid_card(L2_cloze="Hij {{c1::daadwerkelijk}} begrijpt de uitleg van de docent.")
+    )
+
+    assert WORD_ORDER_ADVERB_PROBLEM in problems
+
+
+def test_validate_card_accepts_natural_adverb_word_order():
+    problems = validate_card(
+        _valid_card(L2_cloze="Hij begrijpt de uitleg van de docent {{c1::daadwerkelijk}}.")
+    )
+
+    assert WORD_ORDER_ADVERB_PROBLEM not in problems
+
+
+def test_validate_card_does_not_flag_finite_verb_target_after_subject():
+    problems = validate_card(
+        _valid_card(
+            L2_word="begrijpen",
+            L2_cloze="Hij {{c1::begrijpt}} de uitleg van de docent.",
+            L2_collocations="iets begrijpen; goed begrijpen; snel begrijpen",
+            L2_definition="snappen wat iets betekent",
+            L1_gloss="understand",
+        )
+    )
+
+    assert WORD_ORDER_ADVERB_PROBLEM not in problems
+
+
+def test_generate_card_repairs_dutch_word_order_issue(monkeypatch, settings):
+    settings = gen.GenerationSettings(
+        model=settings.model,
+        L1_code=settings.L1_code,
+        L1_name=settings.L1_name,
+        level="A2",
+        profile=settings.profile,
+        temperature=settings.temperature,
+        max_output_tokens=settings.max_output_tokens,
+        include_signalword=False,
+        signalword_seed=settings.signalword_seed,
+    )
+    row = {
+        "woord": "daadwerkelijk",
+        "def_nl": "echt en in werkelijkheid",
+        "translation": "actually",
+    }
+    bad_card = _valid_card(L2_cloze="Hij {{c1::daadwerkelijk}} begrijpt de uitleg van de docent.")
+    repaired_card = _valid_card(L2_cloze="Hij begrijpt de uitleg van de docent {{c1::daadwerkelijk}}.")
+    calls: list[Dict[str, Any]] = []
+    responses = [
+        (_DummyResponse(parsed=bad_card, text=json.dumps(bad_card)), {"response_format_removed": False, "temperature_removed": False}),
+        (_DummyResponse(parsed=repaired_card, text=json.dumps(repaired_card)), {"response_format_removed": False, "temperature_removed": False}),
+    ]
+
+    def fake_send(*args, **kwargs):
+        calls.append(kwargs)
+        return responses.pop(0)
+
+    monkeypatch.setattr(gen, "send_responses_request", fake_send)
+    monkeypatch.setattr(gen, "pick_allowed_for_level", lambda *a, **k: [])
+
+    result = gen.generate_card(client=object(), row=row, settings=settings, signalword_groups=None)
+
+    meta = result.card["meta"]
+    assert meta["repair_attempted"]
+    assert WORD_ORDER_ADVERB_PROBLEM in meta["problems_initial"]
+    assert not meta["problems_final"]
+    assert result.card["L2_cloze"] == "Hij begrijpt de uitleg van de docent {{c1::daadwerkelijk}}."
+    assert "natural Dutch main-clause order" in calls[1]["instructions"]
+
+
+def test_prompt_version_defaults_to_p1():
+    assert gen.GenerationSettings(model="gpt-4o-mini", L1_code="EN", L1_name="English", level="B1", profile="balanced").prompt_version == "p1"
+    assert UserSettings().prompt_version == "p1"
 
 
 def test_raw_response_truncation(monkeypatch, dummy_row, settings):

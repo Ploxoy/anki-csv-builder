@@ -19,7 +19,7 @@ Local development override:
 ```json
 {
   "run_id": "uuid-optional",
-  "prompt_version": "vX.Y",
+  "prompt_version": "p1",
   "provider": "openai",
   "model": "gpt-4.1-mini",
   "cefr": "B1",
@@ -50,12 +50,14 @@ Notes:
 - `flags.reuse_text_cache=true` enables optional generated-card reuse. A saved card is reused only when normalized
   input (`woord/def_nl/translation`) and generation settings (`provider/model/prompt_version/CEFR/profile/L1/temperature`)
   match. Cache hits do not call the text provider and are reported in `timing.text_cache_hits`.
+- Current default `prompt_version` is `p1`. It includes Dutch word-order quality guidance and a high-precision local gate
+  that can trigger the existing repair pass for suspicious main-clause adverb placement.
 
 **Response (200)**
 ```json
 {
   "run_id": "uuid",
-  "prompt_version": "vX.Y",
+  "prompt_version": "p1",
   "provider": "openai",
   "model": "gpt-4.1-mini",
   "items": [

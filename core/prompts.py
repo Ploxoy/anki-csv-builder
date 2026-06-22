@@ -20,7 +20,6 @@ GLOBAL HARD RULES
 - Output JSON ONLY. No comments, no extra keys, no trailing text.
 - No field may be empty. Do NOT use the '|' character anywhere.
 - Modern Dutch only; avoid names, digits, and quotes. Punctuation (commas, ellipses, etc.) is allowed when natural.
-- Present tense by default unless the sentence truly requires otherwise.
 
 INPUT FIELDS (FROM DATA_JSON)
 - The input JSON contains:
@@ -88,6 +87,14 @@ GOOD / BAD TARGET FORM EXAMPLES
 CEFR & STYLE
 - Sentence length/grammar must follow CEFR constraints for this request: $LEVEL_RULE
 - Style guidance: $PROFILE_RULE
+
+DUTCH WORD ORDER QUALITY
+- L2_cloze must use natural Dutch word order, not English-style word order translated word-for-word.
+- In Dutch main clauses, do NOT place a target adverb between a simple subject and the finite verb.
+- For A1/A2, prefer simple main clauses with subject + finite verb + objects/adverbials.
+- BAD  : Hij {{c1::daadwerkelijk}} begrijpt de uitleg van de docent.
+- GOOD : Hij begrijpt de uitleg van de docent {{c1::daadwerkelijk}}.
+- GOOD : Hij begrijpt {{c1::daadwerkelijk}} wat de docent bedoelt.
 
 GOOD / BAD EXAMPLES
 - Regular verb:

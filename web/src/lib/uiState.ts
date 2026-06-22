@@ -60,12 +60,13 @@ export type Settings = {
 };
 
 export const SETTINGS_KEY = "doedutch.settings.v1";
+export const CURRENT_PROMPT_VERSION = "p1";
 
 export const DEFAULT_SETTINGS: Settings = {
   apiBase: "",
   xApiKey: "",
   userToken: "",
-  promptVersion: "p0",
+  promptVersion: CURRENT_PROMPT_VERSION,
   provider: "openai",
   model: "gpt-4.1-mini",
   cefr: "B1",
