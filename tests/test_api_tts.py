@@ -473,6 +473,55 @@ def test_filter_openai_tts_models_uses_fallback_when_discovery_empty() -> None:
     assert api_main.AUDIO_TTS_MODEL in filtered
 
 
+def test_filter_text_models_includes_current_flagship_models_in_preferred_order() -> None:
+    models = [
+        "gpt-5.6-luna",
+        "gpt-5.5-pro",
+        "gpt-5.4-nano",
+        "gpt-4o-mini",
+        "gpt-5.4-mini",
+        "gpt-5.5",
+        "gpt-5.6-terra",
+        "gpt-5.4",
+        "gpt-5.6-sol",
+        "gpt-5.6-sol-preview",
+        "gpt-5.6-terra-search-api",
+        "gpt-4o-tts",
+    ]
+
+    filtered = api_main._filter_text_models(models)
+
+    assert filtered[:8] == [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+    ]
+    assert "gpt-5.6-sol-preview" not in filtered
+    assert "gpt-5.6-terra-search-api" not in filtered
+    assert "gpt-4o-tts" not in filtered
+
+
+def test_filter_text_models_fallback_contains_current_flagship_models() -> None:
+    filtered = api_main._filter_text_models([])
+
+    assert filtered == [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5.4-pro",
+    ]
+
+
 def test_api_tts_options_uses_dynamic_elevenlabs_models(
     monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
 ) -> None:

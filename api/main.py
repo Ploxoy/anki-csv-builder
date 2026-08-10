@@ -473,7 +473,7 @@ def _export_cards_to_dict(cards: List[Any]) -> List[Dict[str, str]]:
 
 
 def _sort_model_id(model_id: str, preferred_order: Dict[str, int]) -> tuple[int, str]:
-    for prefix, rank in preferred_order.items():
+    for prefix, rank in sorted(preferred_order.items(), key=lambda item: len(item[0]), reverse=True):
         if model_id.startswith(prefix):
             return (rank, model_id)
     return (999, model_id)

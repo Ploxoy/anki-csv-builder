@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.run_report import build_run_report, reset_run_report
+from core.run_report import build_run_report, reset_run_report, resolve_text_pricing
 
 
 def _card(meta: dict, error: str = "") -> dict:
@@ -158,3 +158,43 @@ def test_reset_run_report() -> None:
     state = SimpleNamespace(run_report={"foo": "bar"})
     reset_run_report(state)
     assert state.run_report == {}
+
+
+def test_resolve_text_pricing_supports_current_flagship_models() -> None:
+    assert resolve_text_pricing("gpt-5.6-sol") == {"input": 5.0, "cached_input": 0.5, "cache_write": 6.25, "output": 30.0}
+    assert resolve_text_pricing("gpt-5.6") == {"input": 5.0, "cached_input": 0.5, "cache_write": 6.25, "output": 30.0}
+    assert resolve_text_pricing("gpt-5.6-terra") == {"input": 2.0, "cached_input": 0.2, "cache_write": 2.5, "output": 12.0}
+    assert resolve_text_pricing("gpt-5.6-luna") == {"input": 0.2, "cached_input": 0.02, "cache_write": 0.25, "output": 1.2}
+    assert resolve_text_pricing("gpt-5.6-terra-2026-08-10") == {"input": 2.0, "cached_input": 0.2, "cache_write": 2.5, "output": 12.0}
+    assert resolve_text_pricing("gpt-5.5") == {"input": 5.0, "cached_input": 0.5, "output": 30.0}
+    assert resolve_text_pricing("gpt-5.5-pro") == {"input": 30.0, "output": 180.0}
+    assert resolve_text_pricing("gpt-5.4") == {"input": 2.5, "cached_input": 0.25, "output": 15.0}
+    assert resolve_text_pricing("gpt-5.4-mini") == {"input": 0.75, "cached_input": 0.075, "output": 4.5}
+    assert resolve_text_pricing("gpt-5.4-nano") == {"input": 0.2, "cached_input": 0.02, "output": 1.25}
+    assert resolve_text_pricing("gpt-5.4-pro") == {"input": 30.0, "output": 180.0}
+
+
+def test_build_run_report_uses_cached_input_pricing_when_available() -> None:
+    state = SimpleNamespace()
+    state.results = [
+        _card(
+            {
+                "model": "gpt-5.6-terra",
+                "request": {
+                    "prompt_tokens": 1000,
+                    "cached_tokens": 400,
+                    "completion_tokens": 200,
+                    "total_tokens": 1200,
+                },
+            }
+        )
+    ]
+    state.sig_usage = {}
+    state.audio_summary = {}
+    state.run_stats = {}
+
+    report = build_run_report(state)
+
+    # Terra: 600 uncached input * $2/M + 400 cached input * $0.20/M + 200 output * $12/M.
+    assert report["cost"]["text"]["estimated_usd"] == pytest.approx(0.00368, rel=1e-6)
+    assert report["cost"]["text"]["by_model"]["gpt-5.6-terra"]["cached_tokens"] == 400

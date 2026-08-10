@@ -19,6 +19,7 @@
 - **Тесты**: `pytest` зелёный, включая свежие проверки API-контрактов TTS.
 
 ## Свежие изменения (июнь 2026)
+- **OpenAI flagship model discovery/pricing**: текстовый model discovery теперь явно поддерживает актуальные flagship text-модели (`gpt-5.6-*`, `gpt-5.5*`, `gpt-5.4*`) и сортирует варианты по preferred order; `config/pricing.py` обновлён текущими USD/1M token ценами для Sol/Terra/Luna и GPT-5.5/5.4, включая cached input rates для run report; cache-write rates сохранены в pricing table для GPT-5.6.
 - **Vercel APKG export**: убран критичный bottleneck с большим `media_map` в теле запроса. `/api/tts` теперь сохраняет озвучку server-side в Postgres (`run_media_assets`) по `user_id + run_id + filename`.
 - **Server-side media reuse**: `/api/export/apkg` умеет добирать аудио из persisted storage по `run_id`, поэтому браузер больше не обязан пересылать base64-клипы обратно на API для крупных колод.
 - **Web export UX**: фронтенд предпочитает persisted-media путь для APKG, а inline `media_map` оставляет только как fallback для локальных/малых сценариев; в Generate теперь виден статус `Server storage` для аудио.

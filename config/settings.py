@@ -14,24 +14,36 @@ from .pricing import AUDIO_MODEL_PRICING_USD_PER_1M_CHAR, MODEL_PRICING_USD_PER_
 # ==========================
 
 DEFAULT_MODELS: List[str] = [
-    "gpt-5",
-    "gpt-5-mini",
-    "gpt-5-nano",
-    "gpt-4.1",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "o3-mini",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.5-pro",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.4-pro",
 ]
 
 _PREFERRED_ORDER: Dict[str, int] = {  # lower number = higher in list
-    "gpt-5": 0,
-    "gpt-5-mini": 1,
-    "gpt-5-nano": 2,
-    "gpt-4.1": 3,
-    "gpt-4o": 4,
-    "gpt-4o-mini": 5,
-    "o3": 6,
-    "o3-mini": 7,
+    "gpt-5.6-sol": 0,
+    "gpt-5.6": 1,
+    "gpt-5.6-terra": 2,
+    "gpt-5.6-luna": 3,
+    "gpt-5.5": 4,
+    "gpt-5.5-pro": 5,
+    "gpt-5.4": 6,
+    "gpt-5.4-mini": 7,
+    "gpt-5.4-nano": 8,
+    "gpt-5.4-pro": 9,
+    "gpt-5": 20,
+    "gpt-5-mini": 21,
+    "gpt-5-nano": 22,
+    "gpt-4.1": 30,
+    "gpt-4o": 31,
+    "gpt-4o-mini": 32,
+    "o3": 40,
+    "o3-mini": 41,
 }
 
 # Models to exclude by substring in ID (we need text generators only)
@@ -47,7 +59,7 @@ _BLOCK_SUBSTRINGS: Tuple[str, ...] = (
 )
 
 # Allowed families (by prefix) for text generation
-_ALLOWED_PREFIXES: Tuple[str, ...] = ("gpt-5", "gpt-4.1", "gpt-4o", "o3")
+_ALLOWED_PREFIXES: Tuple[str, ...] = ("gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5", "gpt-4.1", "gpt-4o", "o3")
 
 # ==========================
 # Signal words and prompt profiles

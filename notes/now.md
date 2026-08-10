@@ -128,3 +128,6 @@ d830884 voices preview
 - What I changed: added Dutch word-order hardening v1 (`prompt_version=p1`), prompt guidance, a high-precision validator gate for `subject + target adverb + finite verb`, and targeted repair instructions.
 - Why: A2 examples could pass formal validation while still sounding like English word order translated into Dutch.
 - Next steps: test with `daadwerkelijk` and similar adverbs; broaden the gate only if we collect clear false negatives without false positives.
+- What I changed: updated OpenAI text model discovery and pricing for current OpenAI flagship text models (GPT-5.6/5.5/5.4).
+- Why: current OpenAI flagship models should appear in Settings/Reload model list automatically and run reports should not mark them as missing pricing.
+- Note: current cached input pricing is now applied in run report estimates when cached_tokens are present; cache-write rates are stored for GPT-5.6 but are not yet included in cost estimates because billed cache writes are not tracked separately.

@@ -4,9 +4,19 @@ from __future__ import annotations
 from typing import Dict
 
 # Approximate Responses API pricing (USD per 1M tokens), aligned with
-# https://platform.openai.com/docs/pricing?latest-pricing=standard#text-tokens
+# https://developers.openai.com/api/docs/pricing?latest-pricing=standard#text-tokens
 # Update these values when OpenAI adjusts rates.
 MODEL_PRICING_USD_PER_1M: Dict[str, Dict[str, float]] = {
+    "gpt-5.6-sol": {"input": 5.0, "cached_input": 0.5, "cache_write": 6.25, "output": 30.0},
+    "gpt-5.6": {"input": 5.0, "cached_input": 0.5, "cache_write": 6.25, "output": 30.0},  # alias routes to GPT-5.6 Sol
+    "gpt-5.6-terra": {"input": 2.0, "cached_input": 0.2, "cache_write": 2.5, "output": 12.0},
+    "gpt-5.6-luna": {"input": 0.2, "cached_input": 0.02, "cache_write": 0.25, "output": 1.2},
+    "gpt-5.5": {"input": 5.0, "cached_input": 0.5, "output": 30.0},
+    "gpt-5.5-pro": {"input": 30.0, "output": 180.0},
+    "gpt-5.4": {"input": 2.5, "cached_input": 0.25, "output": 15.0},
+    "gpt-5.4-mini": {"input": 0.75, "cached_input": 0.075, "output": 4.5},
+    "gpt-5.4-nano": {"input": 0.2, "cached_input": 0.02, "output": 1.25},
+    "gpt-5.4-pro": {"input": 30.0, "output": 180.0},
     "gpt-5.1": {"input": 1.25, "output": 10.0},
     "gpt-5.1-chat-latest": {"input": 1.25, "output": 10.0},
     "gpt-5.1-codex-max": {"input": 1.25, "output": 10.0},

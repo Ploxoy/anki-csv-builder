@@ -375,10 +375,17 @@ def build_run_report(state: Any) -> RunReport:
         prompt_all = usage["prompt"] + usage["prompt_repair"]
         completion_all = usage["completion"] + usage["completion_repair"]
         total_all = usage["total"] + usage["total_repair"]
+        cached_all = min(usage["cached"] + usage["cached_repair"], prompt_all)
         pricing = resolve_text_pricing(model_name if model_name != "unknown" else None)
         estimated = None
         if pricing and (prompt_all or completion_all):
-            estimated = (prompt_all / 1_000_000.0) * pricing["input"] + (completion_all / 1_000_000.0) * pricing["output"]
+            uncached_prompt = max(prompt_all - cached_all, 0)
+            cached_input_rate = pricing.get("cached_input", pricing["input"])
+            estimated = (
+                (uncached_prompt / 1_000_000.0) * pricing["input"]
+                + (cached_all / 1_000_000.0) * cached_input_rate
+                + (completion_all / 1_000_000.0) * pricing["output"]
+            )
             text_total_cost += estimated
             text_cost_available = True
         else:
@@ -386,6 +393,7 @@ def build_run_report(state: Any) -> RunReport:
                 text_missing_pricing.append(model_name)
         text_cost_by_model[model_name] = {
             "prompt_tokens": prompt_all,
+            "cached_tokens": cached_all,
             "completion_tokens": completion_all,
             "total_tokens": total_all,
             "estimated_usd": estimated,
