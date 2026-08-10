@@ -483,7 +483,12 @@ def test_filter_text_models_includes_current_flagship_models_in_preferred_order(
         "gpt-5.5",
         "gpt-5.6-terra",
         "gpt-5.4",
+        "gpt-5.4-2026-03-05",
         "gpt-5.6-sol",
+        "gpt-5",
+        "gpt-5.1",
+        "gpt-5.2",
+        "gpt-5.3-chat-latest",
         "gpt-5.6-sol-preview",
         "gpt-5.6-terra-search-api",
         "gpt-4o-tts",
@@ -498,9 +503,16 @@ def test_filter_text_models_includes_current_flagship_models_in_preferred_order(
         "gpt-5.5",
         "gpt-5.5-pro",
         "gpt-5.4",
+        "gpt-5.4-2026-03-05",
         "gpt-5.4-mini",
-        "gpt-5.4-nano",
     ]
+    assert "gpt-5.4-nano" in filtered
+    assert "gpt-5.4-pro" in filtered
+    assert "gpt-5" not in filtered
+    assert "gpt-5.1" not in filtered
+    assert "gpt-5.2" not in filtered
+    assert "gpt-5.3-chat-latest" not in filtered
+    assert "gpt-4o-mini" not in filtered
     assert "gpt-5.6-sol-preview" not in filtered
     assert "gpt-5.6-terra-search-api" not in filtered
     assert "gpt-4o-tts" not in filtered
@@ -508,6 +520,22 @@ def test_filter_text_models_includes_current_flagship_models_in_preferred_order(
 
 def test_filter_text_models_fallback_contains_current_flagship_models() -> None:
     filtered = api_main._filter_text_models([])
+
+    assert filtered == [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5.4-pro",
+    ]
+
+
+def test_filter_text_models_uses_curated_current_list_when_live_list_is_legacy() -> None:
+    filtered = api_main._filter_text_models(["gpt-5", "gpt-5.1", "gpt-5.2", "gpt-4.1-mini"])
 
     assert filtered == [
         "gpt-5.6-sol",

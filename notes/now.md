@@ -131,3 +131,5 @@ d830884 voices preview
 - What I changed: updated OpenAI text model discovery and pricing for current OpenAI flagship text models (GPT-5.6/5.5/5.4).
 - Why: current OpenAI flagship models should appear in Settings/Reload model list automatically and run reports should not mark them as missing pricing.
 - Note: current cached input pricing is now applied in run report estimates when cached_tokens are present; cache-write rates are stored for GPT-5.6 but are not yet included in cost estimates because billed cache writes are not tracked separately.
+- What I changed: text model options now always include the curated current pricing list and only merge live OpenAI IDs from the same current families (`gpt-5.6`, `gpt-5.5`, `gpt-5.4`).
+- Why: OpenAI `models.list()` can lag or include legacy IDs (`gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3`, `gpt-4.1`), which made Settings look stale despite updated pricing.

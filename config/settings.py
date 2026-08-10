@@ -59,7 +59,7 @@ _BLOCK_SUBSTRINGS: Tuple[str, ...] = (
 )
 
 # Allowed families (by prefix) for text generation
-_ALLOWED_PREFIXES: Tuple[str, ...] = ("gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5", "gpt-4.1", "gpt-4o", "o3")
+_ALLOWED_PREFIXES: Tuple[str, ...] = ("gpt-5.6", "gpt-5.5", "gpt-5.4")
 
 # ==========================
 # Signal words and prompt profiles

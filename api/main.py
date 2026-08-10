@@ -530,14 +530,14 @@ def _filter_text_models(model_ids: List[str]) -> List[str]:
     preferred_order = get_preferred_order()
     allowed_prefixes = get_allowed_prefixes()
     block_substrings = get_block_substrings()
-    ids = [
+    live_ids = [
         mid
         for mid in model_ids
         if any(mid.startswith(p) for p in allowed_prefixes) and not any(b in mid for b in block_substrings)
     ]
-    if not ids:
-        return list(DEFAULT_MODELS)
-    return sorted(set(ids), key=lambda mid: _sort_model_id(mid, preferred_order))
+    ids = set(DEFAULT_MODELS)
+    ids.update(live_ids)
+    return sorted(ids, key=lambda mid: _sort_model_id(mid, preferred_order))
 
 
 def _filter_openai_tts_models(model_ids: List[str]) -> List[str]:
