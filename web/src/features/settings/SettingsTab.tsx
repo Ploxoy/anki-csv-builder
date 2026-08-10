@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { UsageListResponse } from "../../types";
 import { NoticeMessage } from "../../lib/messages";
 import { Settings, TemperatureParseResult, shortJson } from "../../lib/uiState";
+import { formatMultiplier, formatUsd, getBudgetImpact, modelOptionLabel } from "../../lib/pricing";
 import { Notice } from "../../ui/Notice";
 
 type SettingsTabProps = {
@@ -67,6 +68,7 @@ export function SettingsTab({
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const audioProviderKey = (settings.audioProvider || "").trim().toLowerCase();
+  const selectedModelBudget = getBudgetImpact(settings.model);
 
   useEffect(() => {
     setPreviewAudioUrl("");
@@ -183,7 +185,7 @@ export function SettingsTab({
             <select value={settings.model} onChange={(e) => onSettingsPatch({ model: e.target.value })}>
               {textModelOptions.map((modelId) => (
                 <option key={modelId} value={modelId}>
-                  {modelId}
+                  {modelOptionLabel(modelId)}
                 </option>
               ))}
             </select>
@@ -234,6 +236,33 @@ export function SettingsTab({
             </select>
           </label>
         </div>
+
+        <div className={`budget-card tier-${selectedModelBudget.tier}`}>
+          <div>
+            <span className="k">selected model cost</span>
+            <strong>{selectedModelBudget.label}</strong>
+            <p className="hint subtle">
+              Estimated text generation: {formatUsd(selectedModelBudget.estimatedPer100CardsUsd)} / 100 cards,
+              {selectedModelBudget.multiplierVsLuna != null ? ` ${formatMultiplier(selectedModelBudget.multiplierVsLuna)} vs Luna.` : " pricing unknown."}
+            </p>
+          </div>
+          {selectedModelBudget.pricing && (
+            <div className="budget-rates">
+              <span>Input ${selectedModelBudget.pricing.input}/1M</span>
+              {selectedModelBudget.pricing.cached_input != null && <span>Cached ${selectedModelBudget.pricing.cached_input}/1M</span>}
+              <span>Output ${selectedModelBudget.pricing.output}/1M</span>
+            </div>
+          )}
+        </div>
+
+        {selectedModelBudget.tier === "very-high" && (
+          <Notice
+            notice={{
+              level: "warning",
+              message: "This is a very expensive model. For vocabulary cards, try Luna/Terra first unless you explicitly need Pro quality.",
+            }}
+          />
+        )}
 
         <label className="check-tile single">
           <input

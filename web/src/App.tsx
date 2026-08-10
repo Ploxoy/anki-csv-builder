@@ -283,7 +283,7 @@ export default function App() {
     const fromApi = ttsOptions?.text_models || [];
     const fallback = settings.model ? [settings.model] : [];
     const merged = Array.from(new Set([...fromApi, ...fallback].filter(Boolean)));
-    return merged.length > 0 ? merged : ["gpt-4.1-mini"];
+    return merged.length > 0 ? merged : ["gpt-5.6-luna"];
   }, [ttsOptions, settings.model]);
 
   const activeAudioProviderOptions = ttsOptions?.by_provider?.[audioProviderKey];
@@ -743,7 +743,7 @@ export default function App() {
         const modelInList = !!currentModel && (selected?.models || []).includes(currentModel);
         return {
           ...current,
-          model: currentTextModel && textModelInList ? currentTextModel : textModels[0] || currentTextModel || "gpt-4.1-mini",
+          model: currentTextModel && textModelInList ? currentTextModel : textModels[0] || currentTextModel || "gpt-5.6-luna",
           audioProvider: provider,
           audioModel: currentModel && modelInList ? currentModel : selected?.default_model || currentModel,
           audioVoice: currentVoice || selected?.default_voice || "",

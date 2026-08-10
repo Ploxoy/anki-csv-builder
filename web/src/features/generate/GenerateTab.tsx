@@ -10,6 +10,14 @@ import {
   formatPercent,
   shortJson,
 } from "../../lib/uiState";
+import {
+  actualRunCostUsd,
+  buildBudgetComparison,
+  estimateTextCostUsd,
+  formatMultiplier,
+  formatUsd,
+  getBudgetImpact,
+} from "../../lib/pricing";
 import { Notice } from "../../ui/Notice";
 import { ProgressPanel } from "../../ui/ProgressPanel";
 
@@ -81,6 +89,9 @@ export function GenerateTab({
 }: GenerateTabProps) {
   const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
   const [showAllAudioErrors, setShowAllAudioErrors] = useState(false);
+  const selectedModelBudget = useMemo(() => getBudgetImpact(settings.model), [settings.model]);
+  const preRunTextEstimate = useMemo(() => estimateTextCostUsd(settings.model, parsedCount), [settings.model, parsedCount]);
+  const preRunComparison = useMemo(() => buildBudgetComparison(parsedCount), [parsedCount]);
 
   const filteredItems = useMemo(() => {
     const items = response?.items || [];
@@ -134,6 +145,22 @@ export function GenerateTab({
     }),
     [response]
   );
+
+  const actualCost = useMemo(() => actualRunCostUsd(response?.run_report), [response]);
+  const actualComparison = useMemo(
+    () => buildBudgetComparison(response?.items?.length || parsedCount || 1),
+    [response, parsedCount]
+  );
+
+  function handleGenerateClick() {
+    if ((preRunTextEstimate || 0) >= 0.25) {
+      const ok = window.confirm(
+        `Estimated text generation cost is ${formatUsd(preRunTextEstimate)} for this run with ${settings.model}. Continue?`
+      );
+      if (!ok) return;
+    }
+    onGenerate();
+  }
 
   return (
     <div className="tab-layout">
@@ -203,6 +230,9 @@ export function GenerateTab({
 
         <div className="chips">
           <span className="chip">Model: {settings.model}</span>
+          <span className={`chip cost-tier tier-${selectedModelBudget.tier}`}>
+            Cost: {selectedModelBudget.label} · {formatMultiplier(selectedModelBudget.multiplierVsLuna)} Luna
+          </span>
           <span className={`chip ${temperatureState.error ? "danger" : ""}`}>
             Temp: {temperatureState.percent != null ? `${formatPercent(temperatureState.percent)}%` : "default"}
           </span>
@@ -212,6 +242,33 @@ export function GenerateTab({
           <span className="chip">Audio: {settings.audioProvider}</span>
           <span className="chip">Deck: {settings.defaultDeck || "-"}</span>
         </div>
+
+        <div className={`budget-card tier-${selectedModelBudget.tier}`}>
+          <div>
+            <span className="k">estimated text cost before run</span>
+            <strong>{formatUsd(preRunTextEstimate)}</strong>
+            <p className="hint subtle">
+              {parsedCount} row(s), model {settings.model}. Typical estimate; actual cost after generation uses run_report tokens.
+            </p>
+          </div>
+          <div className="budget-comparison">
+            {preRunComparison.map((item) => (
+              <div className="budget-mini" key={item.model}>
+                <span>{item.model.replace("gpt-5.6-", "")}</span>
+                <strong>{formatUsd(item.cost)}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {selectedModelBudget.tier === "very-high" && (
+          <Notice
+            notice={{
+              level: "warning",
+              message: "Very expensive model selected. Pro-class models can consume the budget quickly; try Luna/Terra first for ordinary vocabulary batches.",
+            }}
+          />
+        )}
 
         <div className="toggle-grid">
           <label className="check-tile">
@@ -281,7 +338,7 @@ export function GenerateTab({
           <div className="meta-chip">
             <span className="k">deck preview</span> {deckPreview}
           </div>
-          <button className="btn primary" type="button" onClick={onGenerate} disabled={busy || !canGenerate}>
+          <button className="btn primary" type="button" onClick={handleGenerateClick} disabled={busy || !canGenerate}>
             {busy ? "Generating..." : `Generate (${parsedCount})`}
           </button>
         </div>
@@ -350,6 +407,24 @@ export function GenerateTab({
                 Text cache had {textCacheStats.errors} storage issue(s). Results are usable, but future reuse may be incomplete.
               </div>
             )}
+
+            <div className="budget-card tier-medium">
+              <div>
+                <span className="k">actual cost</span>
+                <strong>{formatUsd(actualCost.total)}</strong>
+                <p className="hint subtle">
+                  Text {formatUsd(actualCost.text)} · Audio {formatUsd(actualCost.audio)}. This is based on actual token/audio usage from run_report.
+                </p>
+              </div>
+              <div className="budget-comparison">
+                {actualComparison.map((item) => (
+                  <div className="budget-mini" key={item.model}>
+                    <span>{item.model.replace("gpt-5.6-", "")}</span>
+                    <strong>{formatUsd(item.cost)}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             <div className="toolbar row-wrap compact-top">
               <div className="toolbar-actions">

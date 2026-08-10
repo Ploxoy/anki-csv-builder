@@ -68,7 +68,7 @@ export const DEFAULT_SETTINGS: Settings = {
   userToken: "",
   promptVersion: CURRENT_PROMPT_VERSION,
   provider: "openai",
-  model: "gpt-4.1-mini",
+  model: "gpt-5.6-luna",
   cefr: "B1",
   profile: "balanced",
   l1: "EN",

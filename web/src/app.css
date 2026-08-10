@@ -748,3 +748,126 @@ pre {
     width: fit-content;
   }
 }
+
+.budget-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border: 1px solid #d6e2ee;
+  border-left: 4px solid #8fb8df;
+  border-radius: var(--radius-sm);
+  background: #f7fbff;
+  padding: 10px 12px;
+  margin: var(--space-2) 0;
+}
+
+.budget-card strong {
+  display: block;
+  margin-top: 2px;
+  color: #24384a;
+  font-size: 18px;
+}
+
+.budget-card .hint {
+  margin-bottom: 0;
+}
+
+.budget-card.tier-low {
+  border-left-color: var(--success);
+  background: #f3fbf5;
+}
+
+.budget-card.tier-medium {
+  border-left-color: #68a6d9;
+}
+
+.budget-card.tier-high {
+  border-left-color: var(--warning);
+  background: #fffaf0;
+}
+
+.budget-card.tier-very-high {
+  border-left-color: var(--danger);
+  background: #fff3f4;
+}
+
+.budget-card.tier-unknown {
+  border-left-color: #a7b4c1;
+  background: #f8fafc;
+}
+
+.budget-rates,
+.budget-comparison {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.budget-rates span,
+.budget-mini {
+  border: 1px solid rgba(49, 120, 198, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #40566b;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.budget-mini {
+  min-width: 92px;
+  border-radius: var(--radius-sm);
+}
+
+.budget-mini span,
+.budget-mini strong {
+  display: block;
+}
+
+.budget-mini strong {
+  margin-top: 2px;
+  font-size: 14px;
+}
+
+.chip.cost-tier.tier-low {
+  border-color: #bfe3c9;
+  background: #ebf8ef;
+  color: #1f7a35;
+}
+
+.chip.cost-tier.tier-medium {
+  border-color: #b7d5ef;
+  background: #f0f7fe;
+  color: #2b6294;
+}
+
+.chip.cost-tier.tier-high {
+  border-color: #f2d380;
+  background: #fff9eb;
+  color: #6d5413;
+}
+
+.chip.cost-tier.tier-very-high {
+  border-color: #efc0c6;
+  background: #fdf0f2;
+  color: #9e2f3b;
+}
+
+.chip.cost-tier.tier-unknown {
+  border-color: #d2dbe5;
+  background: #f8fafc;
+  color: #586879;
+}
+
+@media (max-width: 720px) {
+  .budget-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .budget-rates,
+  .budget-comparison {
+    justify-content: flex-start;
+  }
+}

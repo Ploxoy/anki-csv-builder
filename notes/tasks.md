@@ -19,6 +19,7 @@
 - [x] P5 — Пересмотреть рекомендации batch/workers для очень маленьких списков: сейчас `recommend_batch_params(total<=10)` даёт один батч (`batch_size=total`) с параллельными потоками (`app/ui_helpers.py`).
 - [x] P6 — Добавить сбор и отображение токенов (prompt/output) по моделям в статике/Run report, оценивать стоимость и выводить в UI.
 - [x] P7 — Обновить text model discovery/pricing под актуальные OpenAI flagship text models: `gpt-5.6-*`, `gpt-5.5*`, `gpt-5.4*` попадают в список доступных моделей и имеют актуальные Standard short-context оценки стоимости.
+- [x] P8 — Budget Impact UI: показать пользователю model cost tier, estimate до запуска, actual cost после генерации и предупреждение для Pro-class моделей.
 - [x] N1 — Навигация по ошибкам в превью: фильтр «только ошибки» + кнопка «следующая ошибка» (`app/preview_panel.py`).
 - [ ] N2 — Убрать всплывающее «No results» в ElevenLabs selectbox сразу после ввода ключа: каталог голосов подгружается, но UI показывает пустой список до следующего взаимодействия. *(отложено на неопределённый срок: вероятно связано с изменениями внешнего ElevenLabs API; вернуться после стабилизации интеграции/контракта)*
 - [x] N3 — Добавить ручное редактирование в превью (② Preview & fix): редактирование и сохранение полей `L2_word/L2_cloze/L1_sentence/L2_collocations/L2_definition/L1_gloss/L1_hint` в `session_state.results` (`app/preview_panel.py`).
