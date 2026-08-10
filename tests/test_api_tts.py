@@ -550,6 +550,18 @@ def test_filter_text_models_uses_curated_current_list_when_live_list_is_legacy()
     ]
 
 
+def test_text_model_options_mark_pricing_only_models_unavailable() -> None:
+    options = api_main._text_model_options(["gpt-5.4", "gpt-5", "gpt-4.1-mini"])
+    by_id = {option.id: option for option in options}
+
+    assert by_id["gpt-5.4"].available is True
+    assert by_id["gpt-5.4"].source == "live"
+    assert by_id["gpt-5.4-mini"].available is False
+    assert by_id["gpt-5.4-mini"].source == "pricing"
+    assert "not available" in by_id["gpt-5.4-mini"].label
+    assert "gpt-5" not in by_id
+
+
 def test_api_tts_options_uses_dynamic_elevenlabs_models(
     monkeypatch: pytest.MonkeyPatch, patch_api_auth: None
 ) -> None:

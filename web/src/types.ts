@@ -142,6 +142,13 @@ export type TTSOption = {
   label: string;
 };
 
+export type TextModelOption = {
+  id: string;
+  label: string;
+  available: boolean;
+  source: string;
+};
+
 export type TTSProviderOptions = {
   models: string[];
   voices: TTSOption[];
@@ -151,6 +158,7 @@ export type TTSProviderOptions = {
 
 export type TTSOptionsResponse = {
   text_models: string[];
+  text_model_options?: TextModelOption[];
   providers: string[];
   by_provider: Record<string, TTSProviderOptions>;
 };

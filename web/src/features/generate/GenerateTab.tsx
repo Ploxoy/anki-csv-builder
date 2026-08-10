@@ -30,6 +30,7 @@ type GenerateTabProps = {
   onSettingsPatch: (patch: Partial<Settings>) => void;
   onGenerate: () => void;
   canGenerate: boolean;
+  selectedModelAvailable: boolean;
   busy: boolean;
   onOpenFilePicker: (mode: "replace" | "append") => void;
   fileInputRef: RefObject<HTMLInputElement>;
@@ -67,6 +68,7 @@ export function GenerateTab({
   onSettingsPatch,
   onGenerate,
   canGenerate,
+  selectedModelAvailable,
   busy,
   onOpenFilePicker,
   fileInputRef,
@@ -266,6 +268,15 @@ export function GenerateTab({
             notice={{
               level: "warning",
               message: "Very expensive model selected. Pro-class models can consume the budget quickly; try Luna/Terra first for ordinary vocabulary batches.",
+            }}
+          />
+        )}
+
+        {!selectedModelAvailable && (
+          <Notice
+            notice={{
+              level: "warning",
+              message: "This model is listed for pricing reference but is not available to the current OpenAI project. Reload models or choose an available model before generating.",
             }}
           />
         )}

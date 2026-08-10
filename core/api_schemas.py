@@ -297,6 +297,13 @@ class TTSOption(BaseModel):
     label: str
 
 
+class TextModelOption(BaseModel):
+    id: str
+    label: str
+    available: bool = True
+    source: str = "live"
+
+
 class TTSProviderOptions(BaseModel):
     models: List[str] = Field(default_factory=list)
     voices: List[TTSOption] = Field(default_factory=list)
@@ -306,6 +313,7 @@ class TTSProviderOptions(BaseModel):
 
 class TTSOptionsResponse(BaseModel):
     text_models: List[str] = Field(default_factory=list)
+    text_model_options: List[TextModelOption] = Field(default_factory=list)
     providers: List[str] = Field(default_factory=list)
     by_provider: Dict[str, TTSProviderOptions] = Field(default_factory=dict)
 

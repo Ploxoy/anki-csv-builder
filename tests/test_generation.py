@@ -263,6 +263,15 @@ def test_prompt_version_defaults_to_p1():
     assert UserSettings().prompt_version == "p1"
 
 
+def test_prompt_cache_retention_is_model_aware(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_PROMPT_CACHE_RETENTION", "in_memory")
+
+    assert gen._resolve_prompt_cache_retention(None, "gpt-5.4-mini") == "24h"
+    assert gen._resolve_prompt_cache_retention("in_memory", "gpt-5.5") == "24h"
+    assert gen._resolve_prompt_cache_retention("24h", "gpt-5.6-sol") is None
+    assert gen._resolve_prompt_cache_retention(None, "gpt-4.1") == "in_memory"
+
+
 def test_raw_response_truncation(monkeypatch, dummy_row, settings):
     """Длинный raw-response должен обрезаться и получать флаг truncated."""
 

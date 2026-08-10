@@ -152,3 +152,24 @@ def test_send_request_drops_prompt_cache_params_when_rejected() -> None:
     assert "prompt_cache_key" not in client.responses.calls[1]
     assert "prompt_cache_retention" in client.responses.calls[1]
     assert "prompt_cache_retention" not in client.responses.calls[2]
+
+
+def test_send_request_forces_prompt_cache_retention_24h_when_required() -> None:
+    client = _client_with([
+        RuntimeError("This model is compatible only with 24h extended prompt caching; param: prompt_cache_retention"),
+        SimpleNamespace(ok=True, usage={"input_tokens": 800, "output_tokens": 50}),
+    ])
+
+    response, meta = llm.send_responses_request(
+        client=client,
+        model="gpt-5.4-mini",
+        instructions="instr",
+        input_text="payload",
+        prompt_cache_retention="in_memory",
+    )
+
+    assert response.ok is True
+    assert meta["prompt_cache_retention_forced_24h"] is True
+    assert len(client.responses.calls) == 2
+    assert client.responses.calls[0]["prompt_cache_retention"] == "in_memory"
+    assert client.responses.calls[1]["prompt_cache_retention"] == "24h"

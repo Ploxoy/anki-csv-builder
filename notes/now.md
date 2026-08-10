@@ -135,3 +135,7 @@ d830884 voices preview
 - Why: OpenAI `models.list()` can lag or include legacy IDs (`gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3`, `gpt-4.1`), which made Settings look stale despite updated pricing.
 - What I changed: added Budget Impact UI for text models: model dropdown labels, selected-model cost card, pre-run estimate, high-cost confirmation, and post-run actual/comparison cost display.
 - Why: Pro-class models should visibly signal budget risk before users run large batches.
+- What I changed: split text model options into available live models vs pricing-only references; UI disables unavailable pricing-only models and blocks Generate when selected.
+- Why: pricing table models such as `gpt-5.4-mini` can still return 403 if the OpenAI project does not have model access.
+- What I changed: made prompt cache retention model-aware: GPT-5.4/5.5 force `24h`, GPT-5.6 stops sending deprecated `prompt_cache_retention`, and the OpenAI client retries with `24h` if the API rejects another retention mode.
+- Why: newer project-enabled models can return 400 when `OPENAI_PROMPT_CACHE_RETENTION=in_memory` is sent to models that only support 24h extended caching.

@@ -48,6 +48,7 @@ from core.api_schemas import (
     TTSOptionsResponse,
     TTSProviderOptions,
     TTSOption,
+    TextModelOption,
     TTSPreviewRequest,
     TTSPreviewResponse,
     TTSSharedVoiceAddRequest,
@@ -538,6 +539,29 @@ def _filter_text_models(model_ids: List[str]) -> List[str]:
     ids = set(DEFAULT_MODELS)
     ids.update(live_ids)
     return sorted(ids, key=lambda mid: _sort_model_id(mid, preferred_order))
+
+
+def _text_model_options(model_ids: List[str]) -> List[TextModelOption]:
+    preferred_order = get_preferred_order()
+    allowed_prefixes = get_allowed_prefixes()
+    block_substrings = get_block_substrings()
+    live_ids = {
+        mid
+        for mid in model_ids
+        if any(mid.startswith(p) for p in allowed_prefixes) and not any(b in mid for b in block_substrings)
+    }
+    ids = set(DEFAULT_MODELS)
+    ids.update(live_ids)
+    ordered = sorted(ids, key=lambda mid: _sort_model_id(mid, preferred_order))
+    return [
+        TextModelOption(
+            id=mid,
+            label=mid if mid in live_ids else f"{mid} (not available to this OpenAI project)",
+            available=mid in live_ids,
+            source="live" if mid in live_ids else "pricing",
+        )
+        for mid in ordered
+    ]
 
 
 def _filter_openai_tts_models(model_ids: List[str]) -> List[str]:
@@ -1499,7 +1523,8 @@ def api_tts_options(
     _require_user(request, x_api_key)
 
     all_openai_models = _list_openai_model_ids()
-    text_models = _filter_text_models(all_openai_models)
+    text_model_options = _text_model_options(all_openai_models)
+    text_models = [option.id for option in text_model_options]
     openai_models = _filter_openai_tts_models(all_openai_models)
 
     openai_voices = [
@@ -1522,6 +1547,7 @@ def api_tts_options(
 
     return TTSOptionsResponse(
         text_models=text_models,
+        text_model_options=text_model_options,
         providers=["openai", "elevenlabs"],
         by_provider={
             "openai": TTSProviderOptions(

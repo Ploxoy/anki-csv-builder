@@ -13,6 +13,7 @@ import {
   GenerateJobStatusResponse,
   InviteCreateResponse,
   TTSOptionsResponse,
+  TextModelOption,
   TTSPreviewRequest,
   TTSPreviewResponse,
   TTSRequest,
@@ -264,7 +265,6 @@ export default function App() {
   const adminEnabled = settings.xApiKey.trim().length > 0;
   const canGenerateByInput = parsed.items.length > 0;
   const temperatureState = useMemo(() => parseTemperatureValue(settings.temperature), [settings.temperature]);
-  const canGenerate = canGenerateByInput && !temperatureState.error;
   const isDirty = useMemo(
     () => settingsFingerprint(settings) !== settingsFingerprint(initialSettingsSnapshot),
     [settings, initialSettingsSnapshot]
@@ -280,11 +280,31 @@ export default function App() {
   }, [ttsOptions, settings.audioProvider, audioProviderKey]);
 
   const textModelOptions = useMemo(() => {
-    const fromApi = ttsOptions?.text_models || [];
-    const fallback = settings.model ? [settings.model] : [];
-    const merged = Array.from(new Set([...fromApi, ...fallback].filter(Boolean)));
-    return merged.length > 0 ? merged : ["gpt-5.6-luna"];
+    const richFromApi = ttsOptions?.text_model_options || [];
+    const fallbackIds = ttsOptions?.text_models || [];
+    const options: TextModelOption[] = richFromApi.length
+      ? richFromApi
+      : fallbackIds.map((id) => ({ id, label: id, available: true, source: "legacy" }));
+    const byId = new Map(options.filter((option) => option.id).map((option) => [option.id, option]));
+    if (settings.model && !byId.has(settings.model)) {
+      byId.set(settings.model, {
+        id: settings.model,
+        label: `${settings.model} (current saved value)`,
+        available: false,
+        source: "settings",
+      });
+    }
+    if (byId.size === 0) {
+      byId.set("gpt-5.6-luna", { id: "gpt-5.6-luna", label: "gpt-5.6-luna", available: false, source: "fallback" });
+    }
+    return Array.from(byId.values());
   }, [ttsOptions, settings.model]);
+  const selectedTextModelOption = useMemo(
+    () => textModelOptions.find((option) => option.id === settings.model),
+    [textModelOptions, settings.model]
+  );
+  const selectedTextModelAvailable = selectedTextModelOption ? selectedTextModelOption.available : true;
+  const canGenerate = canGenerateByInput && !temperatureState.error && selectedTextModelAvailable;
 
   const activeAudioProviderOptions = ttsOptions?.by_provider?.[audioProviderKey];
   const audioModelOptions = activeAudioProviderOptions?.models || [];
@@ -735,15 +755,16 @@ export default function App() {
         const providerFromApi = payload.providers[0] || "openai";
         const provider = payload.by_provider[currentProvider] ? currentProvider : providerFromApi;
         const selected = payload.by_provider[provider];
-        const textModels = payload.text_models || [];
+        const textOptions = payload.text_model_options || (payload.text_models || []).map((id) => ({ id, label: id, available: true, source: "legacy" }));
+        const availableTextModels = textOptions.filter((option) => option.available).map((option) => option.id);
         const currentTextModel = (current.model || "").trim();
         const currentModel = (current.audioModel || "").trim();
         const currentVoice = (current.audioVoice || "").trim();
-        const textModelInList = !!currentTextModel && textModels.includes(currentTextModel);
+        const textModelInList = !!currentTextModel && availableTextModels.includes(currentTextModel);
         const modelInList = !!currentModel && (selected?.models || []).includes(currentModel);
         return {
           ...current,
-          model: currentTextModel && textModelInList ? currentTextModel : textModels[0] || currentTextModel || "gpt-5.6-luna",
+          model: currentTextModel && textModelInList ? currentTextModel : availableTextModels[0] || currentTextModel || "gpt-5.6-luna",
           audioProvider: provider,
           audioModel: currentModel && modelInList ? currentModel : selected?.default_model || currentModel,
           audioVoice: currentVoice || selected?.default_voice || "",
@@ -1918,6 +1939,7 @@ export default function App() {
           onSettingsPatch={patchSettings}
           onGenerate={onGenerate}
           canGenerate={canGenerate}
+          selectedModelAvailable={selectedTextModelAvailable}
           busy={busy}
           onOpenFilePicker={openInputFilePicker}
           fileInputRef={fileInputRef}

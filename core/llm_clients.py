@@ -175,6 +175,7 @@ def send_responses_request(
         "temperature_removed": False,
         "prompt_cache_key_removed": False,
         "prompt_cache_retention_removed": False,
+        "prompt_cache_retention_forced_24h": False,
         "retries": 0,
         "cached_tokens": 0,
         "prompt_tokens": 0,
@@ -259,6 +260,22 @@ def send_responses_request(
                         _CACHE_RETENTION_WARNED_MODELS.add(model)
                     kwargs.pop("prompt_cache_retention", None)
                     metadata["prompt_cache_retention_removed"] = True
+                    handled = True
+            if (
+                "prompt_cache_retention" in msg
+                and "24h" in msg
+                and ("only with 24h" in msg or "only supports 24h" in msg or "compatible only with 24h" in msg)
+            ):
+                if kwargs.get("prompt_cache_retention") != "24h":
+                    if warn and model not in _CACHE_RETENTION_WARNED_MODELS:
+                        logger.warning(
+                            "Model %s requires prompt_cache_retention=24h: %s",
+                            model,
+                            exc,
+                        )
+                        _CACHE_RETENTION_WARNED_MODELS.add(model)
+                    kwargs["prompt_cache_retention"] = "24h"
+                    metadata["prompt_cache_retention_forced_24h"] = True
                     handled = True
             if handled:
                 # Retry immediately with downgraded kwargs on the same attempt.

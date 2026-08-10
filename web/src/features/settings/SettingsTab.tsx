@@ -3,6 +3,7 @@ import { UsageListResponse } from "../../types";
 import { NoticeMessage } from "../../lib/messages";
 import { Settings, TemperatureParseResult, shortJson } from "../../lib/uiState";
 import { formatMultiplier, formatUsd, getBudgetImpact, modelOptionLabel } from "../../lib/pricing";
+import { TextModelOption } from "../../types";
 import { Notice } from "../../ui/Notice";
 
 type SettingsTabProps = {
@@ -17,7 +18,7 @@ type SettingsTabProps = {
   busy: boolean;
   isDirty: boolean;
   temperatureState: TemperatureParseResult;
-  textModelOptions: string[];
+  textModelOptions: TextModelOption[];
   availableAudioProviders: string[];
   availableAudioModelOptions: string[];
   availableAudioVoiceOptions: string[];
@@ -69,6 +70,8 @@ export function SettingsTab({
   const [previewError, setPreviewError] = useState("");
   const audioProviderKey = (settings.audioProvider || "").trim().toLowerCase();
   const selectedModelBudget = getBudgetImpact(settings.model);
+  const selectedTextModelOption = textModelOptions.find((option) => option.id === settings.model);
+  const selectedModelUnavailable = selectedTextModelOption ? !selectedTextModelOption.available : false;
 
   useEffect(() => {
     setPreviewAudioUrl("");
@@ -183,9 +186,9 @@ export function SettingsTab({
           <label>
             <span>Model</span>
             <select value={settings.model} onChange={(e) => onSettingsPatch({ model: e.target.value })}>
-              {textModelOptions.map((modelId) => (
-                <option key={modelId} value={modelId}>
-                  {modelOptionLabel(modelId)}
+              {textModelOptions.map((option) => (
+                <option key={option.id} value={option.id} disabled={!option.available}>
+                  {option.available ? modelOptionLabel(option.id) : `${modelOptionLabel(option.id)} · locked for this project`}
                 </option>
               ))}
             </select>
@@ -260,6 +263,15 @@ export function SettingsTab({
             notice={{
               level: "warning",
               message: "This is a very expensive model. For vocabulary cards, try Luna/Terra first unless you explicitly need Pro quality.",
+            }}
+          />
+        )}
+
+        {selectedModelUnavailable && (
+          <Notice
+            notice={{
+              level: "warning",
+              message: "The selected model is in the pricing table but is not available to this OpenAI project. Reload models or choose an available model before generating.",
             }}
           />
         )}

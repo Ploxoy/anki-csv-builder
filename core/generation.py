@@ -282,10 +282,15 @@ def _estimate_tokens(text: str) -> int:
     return (len(text) + (PROMPT_CACHE_CHARS_PER_TOKEN - 1)) // PROMPT_CACHE_CHARS_PER_TOKEN
 
 
-def _resolve_prompt_cache_retention(retention: Optional[str]) -> Optional[str]:
+def _resolve_prompt_cache_retention(retention: Optional[str], model: str = "") -> Optional[str]:
     if retention is None:
         retention = os.getenv("OPENAI_PROMPT_CACHE_RETENTION")
     value = (retention or "").strip().lower()
+    model_clean = (model or "").strip().lower()
+    if model_clean.startswith(("gpt-5.4", "gpt-5.5")):
+        return "24h"
+    if model_clean.startswith("gpt-5.6"):
+        return None
     if value in {"in_memory", "24h"}:
         return value
     return None
@@ -435,7 +440,7 @@ def generate_card(
         settings=settings,
         prefix_hash=prompt_prefix_hash,
     )
-    prompt_cache_retention = _resolve_prompt_cache_retention(settings.prompt_cache_retention)
+    prompt_cache_retention = _resolve_prompt_cache_retention(settings.prompt_cache_retention, settings.model)
 
     input_text = shared_header + json.dumps(payload, ensure_ascii=False)
 
@@ -503,6 +508,7 @@ def generate_card(
         "prompt_cache_retention": prompt_cache_retention,
         "prompt_cache_key_removed": False,
         "prompt_cache_retention_removed": False,
+        "prompt_cache_retention_forced_24h": False,
         "cache_prefix_hash": prompt_prefix_hash[:16],
         "cache_prefix_chars": prompt_prefix_chars,
         "cache_prefix_estimated_tokens": prompt_prefix_estimated_tokens,
@@ -702,6 +708,7 @@ def generate_card(
     request_info["temperature_removed"] = send_meta.get("temperature_removed", False)
     request_info["prompt_cache_key_removed"] = send_meta.get("prompt_cache_key_removed", False)
     request_info["prompt_cache_retention_removed"] = send_meta.get("prompt_cache_retention_removed", False)
+    request_info["prompt_cache_retention_forced_24h"] = send_meta.get("prompt_cache_retention_forced_24h", False)
     request_info["retries"] = send_meta.get("retries", 0)
     request_info["cached_tokens"] = send_meta.get("cached_tokens", 0)
     request_info["prompt_tokens"] = send_meta.get("prompt_tokens", 0)
