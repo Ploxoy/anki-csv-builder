@@ -269,6 +269,7 @@ def test_prompt_cache_retention_is_model_aware(monkeypatch: pytest.MonkeyPatch) 
     assert gen._resolve_prompt_cache_retention(None, "gpt-5.4-mini") == "24h"
     assert gen._resolve_prompt_cache_retention("in_memory", "gpt-5.5") == "24h"
     assert gen._resolve_prompt_cache_retention("24h", "gpt-5.6-sol") is None
+    assert gen._resolve_prompt_cache_retention("24h", "gpt-6.1-sol") is None
     assert gen._resolve_prompt_cache_retention(None, "gpt-4.1") == "in_memory"
 
 

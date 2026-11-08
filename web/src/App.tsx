@@ -295,7 +295,7 @@ export default function App() {
       });
     }
     if (byId.size === 0) {
-      byId.set("gpt-5.6-luna", { id: "gpt-5.6-luna", label: "gpt-5.6-luna", available: false, source: "fallback" });
+      byId.set("gpt-6-luna", { id: "gpt-6-luna", label: "gpt-6-luna", available: false, source: "fallback" });
     }
     return Array.from(byId.values());
   }, [ttsOptions, settings.model]);

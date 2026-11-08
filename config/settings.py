@@ -14,11 +14,13 @@ from .pricing import AUDIO_MODEL_PRICING_USD_PER_1M_CHAR, MODEL_PRICING_USD_PER_
 # ==========================
 
 DEFAULT_MODELS: List[str] = [
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
+    "gpt-6-luna",
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.5-pro",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.4-nano",
@@ -26,16 +28,23 @@ DEFAULT_MODELS: List[str] = [
 ]
 
 _PREFERRED_ORDER: Dict[str, int] = {  # lower number = higher in list
-    "gpt-5.6-sol": 0,
-    "gpt-5.6": 1,
-    "gpt-5.6-terra": 2,
-    "gpt-5.6-luna": 3,
-    "gpt-5.5": 4,
-    "gpt-5.5-pro": 5,
-    "gpt-5.4": 6,
-    "gpt-5.4-mini": 7,
-    "gpt-5.4-nano": 8,
-    "gpt-5.4-pro": 9,
+    "gpt-6.1-sol": 0,
+    "gpt-6.1-terra": 1,
+    "gpt-6-luna": 2,
+    "gpt-6-astra": 3,
+    "gpt-6-sol": 4,
+    "gpt-6-terra": 5,
+    "gpt-6": 6,
+    "gpt-5.6-sol": 10,
+    "gpt-5.6": 11,
+    "gpt-5.6-terra": 12,
+    "gpt-5.6-luna": 13,
+    "gpt-5.5": 14,
+    "gpt-5.5-pro": 15,
+    "gpt-5.4": 16,
+    "gpt-5.4-mini": 17,
+    "gpt-5.4-nano": 18,
+    "gpt-5.4-pro": 19,
     "gpt-5": 20,
     "gpt-5-mini": 21,
     "gpt-5-nano": 22,
@@ -55,11 +64,12 @@ _BLOCK_SUBSTRINGS: Tuple[str, ...] = (
     "search",                      # search/auxiliary
     "vision", "vision-preview",    # vision-only/preview
     "distill", "distilled",        # distilled specialized models
-    "batch", "preview"             # service/preview/batch models
+    "batch", "preview",            # service/preview/batch models
+    "cyber", "codex",              # specialized security/coding models
 )
 
 # Allowed families (by prefix) for text generation
-_ALLOWED_PREFIXES: Tuple[str, ...] = ("gpt-5.6", "gpt-5.5", "gpt-5.4")
+_ALLOWED_PREFIXES: Tuple[str, ...] = ("gpt-6.1", "gpt-6", "gpt-5.6", "gpt-5.5", "gpt-5.4")
 
 # ==========================
 # Signal words and prompt profiles

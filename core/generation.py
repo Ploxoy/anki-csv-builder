@@ -289,7 +289,7 @@ def _resolve_prompt_cache_retention(retention: Optional[str], model: str = "") -
     model_clean = (model or "").strip().lower()
     if model_clean.startswith(("gpt-5.4", "gpt-5.5")):
         return "24h"
-    if model_clean.startswith("gpt-5.6"):
+    if model_clean.startswith(("gpt-6", "gpt-5.6")):
         return None
     if value in {"in_memory", "24h"}:
         return value

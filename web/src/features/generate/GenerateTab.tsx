@@ -256,7 +256,7 @@ export function GenerateTab({
           <div className="budget-comparison">
             {preRunComparison.map((item) => (
               <div className="budget-mini" key={item.model}>
-                <span>{item.model.replace("gpt-5.6-", "")}</span>
+                <span>{item.model.replace(/^gpt-6(?:\.1)?-|^gpt-5\.6-/, "")}</span>
                 <strong>{formatUsd(item.cost)}</strong>
               </div>
             ))}
@@ -430,7 +430,7 @@ export function GenerateTab({
               <div className="budget-comparison">
                 {actualComparison.map((item) => (
                   <div className="budget-mini" key={item.model}>
-                    <span>{item.model.replace("gpt-5.6-", "")}</span>
+                    <span>{item.model.replace(/^gpt-6(?:\.1)?-|^gpt-5\.6-/, "")}</span>
                     <strong>{formatUsd(item.cost)}</strong>
                   </div>
                 ))}

@@ -7,6 +7,13 @@ from typing import Dict
 # https://developers.openai.com/api/docs/pricing?latest-pricing=standard#text-tokens
 # Update these values when OpenAI adjusts rates.
 MODEL_PRICING_USD_PER_1M: Dict[str, Dict[str, float]] = {
+    "gpt-6.1-sol": {"input": 2.0, "cached_input": 0.1, "cache_write": 2.5, "output": 10.0},
+    "gpt-6.1-terra": {"input": 1.0, "cached_input": 0.05, "cache_write": 1.25, "output": 5.0},
+    "gpt-6-astra": {"input": 10.0, "cached_input": 1.0, "cache_write": 12.5, "output": 50.0},
+    "gpt-6-sol": {"input": 2.0, "cached_input": 0.2, "cache_write": 2.5, "output": 10.0},
+    "gpt-6-terra": {"input": 1.0, "cached_input": 0.05, "cache_write": 1.25, "output": 5.0},
+    "gpt-6-luna": {"input": 0.1, "cached_input": 0.01, "cache_write": 0.125, "output": 0.5},
+    "gpt-6": {"input": 2.0, "cached_input": 0.1, "cache_write": 2.5, "output": 10.0},
     "gpt-5.6-sol": {"input": 5.0, "cached_input": 0.5, "cache_write": 6.25, "output": 30.0},
     "gpt-5.6": {"input": 5.0, "cached_input": 0.5, "cache_write": 6.25, "output": 30.0},  # alias routes to GPT-5.6 Sol
     "gpt-5.6-terra": {"input": 2.0, "cached_input": 0.2, "cache_write": 2.5, "output": 12.0},

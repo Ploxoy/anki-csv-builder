@@ -17,6 +17,13 @@ export type BudgetImpact = {
 };
 
 export const TEXT_MODEL_PRICING_USD_PER_1M: Record<string, TextModelPricing> = {
+  "gpt-6.1-sol": { input: 2.0, cached_input: 0.1, cache_write: 2.5, output: 10.0 },
+  "gpt-6.1-terra": { input: 1.0, cached_input: 0.05, cache_write: 1.25, output: 5.0 },
+  "gpt-6-astra": { input: 10.0, cached_input: 1.0, cache_write: 12.5, output: 50.0 },
+  "gpt-6-sol": { input: 2.0, cached_input: 0.2, cache_write: 2.5, output: 10.0 },
+  "gpt-6-terra": { input: 1.0, cached_input: 0.05, cache_write: 1.25, output: 5.0 },
+  "gpt-6-luna": { input: 0.1, cached_input: 0.01, cache_write: 0.125, output: 0.5 },
+  "gpt-6": { input: 2.0, cached_input: 0.1, cache_write: 2.5, output: 10.0 },
   "gpt-5.6-sol": { input: 5.0, cached_input: 0.5, cache_write: 6.25, output: 30.0 },
   "gpt-5.6": { input: 5.0, cached_input: 0.5, cache_write: 6.25, output: 30.0 },
   "gpt-5.6-terra": { input: 2.0, cached_input: 0.2, cache_write: 2.5, output: 12.0 },
@@ -29,12 +36,12 @@ export const TEXT_MODEL_PRICING_USD_PER_1M: Record<string, TextModelPricing> = {
   "gpt-5.4-pro": { input: 30.0, output: 180.0 },
 };
 
-export const BUDGET_COMPARISON_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.5-pro"];
+export const BUDGET_COMPARISON_MODELS = ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"];
 
 // Conservative UI estimate for one generated card. Actual run_report remains authoritative.
 const EST_INPUT_TOKENS_PER_CARD = 1200;
 const EST_OUTPUT_TOKENS_PER_CARD = 450;
-const BASELINE_MODEL = "gpt-5.6-luna";
+const BASELINE_MODEL = "gpt-6-luna";
 
 export function resolveTextPricing(modelId?: string | null): TextModelPricing | null {
   const clean = (modelId || "").trim();
